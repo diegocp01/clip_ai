@@ -1,3 +1,4 @@
+import { readEvents } from './stream.js';
 import { createScene, renderDiagram, sample } from './scene.js';
 
 const $ = id => document.getElementById(id);
@@ -40,9 +41,9 @@ function switchView(kind) {
 function selectPart(part) { state.part = part; $('part-title').textContent = part.label; $('part-description').textContent = part.description; $('part-detail').hidden = false; }
 function closePart() { state.part = null; $('part-detail').hidden = true; viewer.clearSelection(); }
 function renderResult(result, metadata = {}) {
-  state.result = result;
+  if(!metadata.preview)state.result = result;
   $('result-title').textContent = result.title; $('result-reply').textContent = result.reply;
-  $('result-label').textContent = 'LET’S MAKE SENSE OF IT'; $('sample-badge').hidden = true; $('starters').hidden = true;
+  $('result-label').textContent = metadata.preview ? 'DRAWING…' : 'LET’S MAKE SENSE OF IT'; $('sample-badge').hidden = true; $('starters').hidden = true;
   $('visual-label').textContent = 'A NEW WAY TO LOOK AT IT';
   $('answer-cards').replaceChildren();
   result.cards.forEach((card, i) => {
@@ -51,7 +52,7 @@ function renderResult(result, metadata = {}) {
     title.append(number, document.createTextNode(card.title)); const body = document.createElement('p'); body.textContent = card.body; article.append(title, body); $('answer-cards').append(article);
   });
   const hasScene = result.scene.objects.length > 0, hasDiagram = result.diagram.nodes.length > 0;
-  viewer.update(result.scene.objects); renderDiagram($('diagram-host'), result.diagram, selectPart);
+  viewer.update(result.scene.objects, false, Boolean(metadata.preserveCamera), Boolean(metadata.preview)); renderDiagram($('diagram-host'), result.diagram, selectPart);
   $('scene-tab').hidden = !hasScene; $('diagram-tab').hidden = !hasDiagram; $('visual-empty').hidden = hasScene || hasDiagram;
   switchView(hasScene ? 'scene' : 'diagram');
   $('scene-count').textContent = hasScene ? `${result.scene.objects.length} parts to explore` : `${result.diagram.nodes.length} connected ideas`;
@@ -77,7 +78,7 @@ async function send(message) {
   const history = state.history.slice(-12).map(m => ({ role: m.role, content: m.content.slice(0, 4000) }));
   const previous = state.result; const image = state.image;
   state.controller = new AbortController(); busy(true); setStatus('Thinking it through…');
-  let received = false;
+  let received = false, previewing = false;
   try {
     const response = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Clippy-Session': state.token }, body: JSON.stringify({ message, tier: $('tier').value, history, previous, image }), signal: state.controller.signal });
     if (!response.ok) {
@@ -86,25 +87,20 @@ async function send(message) {
       throw new Error(reason);
     }
     if (!response.body) throw new Error('The server returned no response stream.');
-    const reader = response.body.getReader(), decoder = new TextDecoder(); let pending = '';
-    function handle(line) {
-      if (!line.trim()) return;
-      const event = JSON.parse(line);
+    function handle(event) {
+      if(event.type === 'preview'){renderResult(event.result,{preview:true,preserveCamera:previewing});previewing=true;}
       if (event.type === 'status') setStatus(event.message);
       if (event.type === 'error') throw new Error(event.message);
       if (event.type === 'result') {
-        renderResult(event.result, event); received = true;
+        renderResult(event.result, {...event,preserveCamera:previewing}); received = true; previewing=false;
         state.history.push({ role: 'user', content: message + (image ? '\n[Image attached]' : '') }, { role: 'assistant', content: event.result.reply });
         updateHistory(); $('prompt').value = ''; resizePrompt(); removeImage();
       }
     }
-    while (true) {
-      const { value, done } = await reader.read(); pending += decoder.decode(value, { stream: !done });
-      const lines = pending.split('\n'); pending = lines.pop(); for (const line of lines) handle(line);
-      if (done) { if (pending.trim()) handle(pending); break; }
-    }
+    for await(const event of readEvents(response))handle(event);
     if (!received) throw new Error('Codex finished without a visual answer. Your question is still here; try again.');
   } catch (e) {
+    if(previewing){if(previous)renderResult(previous);else{viewer.update([]);renderDiagram($('diagram-host'),{nodes:[],links:[]},selectPart);$('result-title').textContent='Drawing stopped';}}
     if (e.name === 'AbortError') error('Stopped. Your previous answer and question are still here.');
     else error(e.message || 'Something went wrong. Please try again.');
   } finally { state.controller = null; busy(false); }

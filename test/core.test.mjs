@@ -31,7 +31,7 @@ test('SDK provider forwards selected model, schema, image and cancellation; clea
   let seen;
   const controller=new AbortController();
   class FakeCodex{constructor(opts){seen={opts};}startThread(opts){seen.thread=opts;return {runStreamed:async(input,options)=>{seen.input=input;seen.options=options;return {events:(async function*(){yield {type:'item.completed',item:{type:'agent_message',text:JSON.stringify(result)}};yield {type:'turn.completed',usage:{output_tokens:10}};})()};}};}}
-  const out=await generate(normalizeRequest({message:'water',tier:'fast',image:'data:image/png;base64,iVBORw0KGgo='}),{signal:controller.signal,CodexClass:FakeCodex});
+  const out=await generate(normalizeRequest({message:'water',tier:'fast',image:'data:image/png;base64,iVBORw0KGgo='}),{signal:controller.signal,transport:null,CodexClass:FakeCodex});
   assert.equal(out.result.title,'Water');assert.equal(out.requestedTier,'fast');
   assert.equal(seen.thread.model,'gpt-6.1-terra');assert.equal(seen.thread.sandboxMode,'read-only');
   assert.equal(seen.thread.modelReasoningEffort,'low');
@@ -41,7 +41,7 @@ test('SDK provider forwards selected model, schema, image and cancellation; clea
 });
 test('SDK failure never fabricates a result',async()=>{
   class Failure{startThread(){return{runStreamed:async()=>({events:(async function*(){yield{type:'turn.failed',error:{message:'Tier unavailable'}};})()})};}}
-  await assert.rejects(generate(normalizeRequest({message:'x'}),{CodexClass:Failure}),/Tier unavailable/);
+  await assert.rejects(generate(normalizeRequest({message:'x'}),{transport:null,CodexClass:Failure}),/Tier unavailable/);
 });
 test('local HTTP server protects inference and streams validated requests',async t=>{
   let calls=0;

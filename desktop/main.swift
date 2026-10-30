@@ -43,7 +43,7 @@ final class ActivityMark: NSView {
     deinit { timer?.invalidate() }
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKScriptMessageHandler, URLSessionDataDelegate, AVSpeechSynthesizerDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler, URLSessionDataDelegate, AVSpeechSynthesizerDelegate {
     private var island: FloatingPanel!
     private var islandView: IslandView!
     private var overlay: FloatingPanel!
@@ -59,6 +59,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var expandedControls = [NSView]()
     private var sendButton: NSButton!
     private var micButton: NSButton!
+    private var talkButton: NSButton!
+    private var voiceRequested = false
+    private var voiceGeneration = 0
     private var captureButton: NSButton!
     private var voiceButton: NSButton!
     private var tierPicker: NSPopUpButton!
@@ -83,6 +86,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var responseBuffer = Data()
     private var responseStatus = 200
     private var resultReceived = false
+    private var previewVisible = false
     private var pendingMessage = ""
     private var busy = false
     private let speech = AVSpeechSynthesizer()
@@ -113,6 +117,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 return event
             }
             if event.keyCode == 53 {
+                if self.voiceRequested { self.stopRealtimeVoice() }
                 if self.recording { self.stopDictation(sendTranscript: false) }
                 else if self.busy { self.cancelRequest() }
                 self.hideVisuals(); self.setExpanded(false)
@@ -197,15 +202,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         collapseButton.layer?.backgroundColor = NSColor.clear.cgColor
         captureButton = button("Screen", frame: NSRect(x: 16, y: 14, width: 98, height: 26), action: #selector(captureScreen), symbol: "rectangle.dashed")
         captureButton.toolTip = "Attach one screenshot to your next question"
-        micButton = button("Dictate", frame: NSRect(x: 122, y: 14, width: 30, height: 26), action: #selector(toggleDictation), symbol: "mic", iconOnly: true)
-        voiceButton = button("Voice on", frame: NSRect(x: 160, y: 14, width: 30, height: 26), action: #selector(toggleVoice), symbol: "speaker.wave.2", iconOnly: true)
+        micButton = NSButton(title: "Dictate", target: self, action: #selector(toggleDictation))
+        talkButton = button("Talk", frame: NSRect(x: 122, y: 14, width: 64, height: 26), action: #selector(toggleRealtimeVoice), symbol: "waveform")
+        talkButton.toolTip = "Live AI voice · separately billed API usage · click End to stop the microphone"
+        voiceButton = button("Voice on", frame: NSRect(x: 194, y: 14, width: 30, height: 26), action: #selector(toggleVoice), symbol: "speaker.wave.2", iconOnly: true)
         voiceButton.contentTintColor = coral
         voiceButton.toolTip = "Spoken replies on · click to mute"
         sendButton = button("Send", frame: NSRect(x: 346, y: 57, width: 38, height: 36), action: #selector(sendOrCancel), symbol: "arrow.up", iconOnly: true)
         sendButton.layer?.backgroundColor = coral.cgColor
         sendButton.contentTintColor = .black
         sendButton.toolTip = "Send · Return"
-        tierPicker = NSPopUpButton(frame: NSRect(x: 206, y: 14, width: 90, height: 26))
+        tierPicker = NSPopUpButton(frame: NSRect(x: 238, y: 14, width: 90, height: 26))
         tierPicker.addItems(withTitles: ["Standard", "Fast"])
         tierPicker.selectItem(at: 1)
         tierPicker.font = .systemFont(ofSize: 11)
@@ -218,7 +225,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     @objc private func collapseIsland() { setExpanded(false) }
     @objc private func showIslandOptions(_ sender: NSButton) {
         let menu = NSMenu()
-        for (title, action) in [("New conversation", #selector(newConversation)), ("Hide drawing", #selector(hideVisuals)), ("Show last drawing", #selector(showLastVisual)), ("Enable text editing…", #selector(enableTextEditing)), ("Cancel text edit", #selector(cancelTextEdit))] {
+        for (title, action) in [("New conversation", #selector(newConversation)), ("Dictate on-device", #selector(toggleDictation)), ("Hide drawing", #selector(hideVisuals)), ("Show last drawing", #selector(showLastVisual)), ("Enable text editing…", #selector(enableTextEditing)), ("Cancel text edit", #selector(cancelTextEdit))] {
             let item = menu.addItem(withTitle: title, action: action, keyEquivalent: "")
             item.target = self
         }
@@ -236,12 +243,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         content.add(self, name: "clippy")
         content.addUserScript(WKUserScript(source: "window.clippyNative = true; window.clippyCaptionManaged = true;", injectionTime: .atDocumentStart, forMainFrameOnly: true))
         let config = WKWebViewConfiguration()
+        config.mediaTypesRequiringUserActionForPlayback = []
         config.userContentController = content
         config.websiteDataStore = .nonPersistent()
         webView = WKWebView(frame: overlay.contentView!.bounds, configuration: config)
         webView.autoresizingMask = [.width, .height]
         webView.setValue(false, forKey: "drawsBackground")
         webView.navigationDelegate = self
+        webView.uiDelegate = self
         overlay.contentView = webView
         positionOverlay()
     }
@@ -417,9 +426,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         voiceButton.contentTintColor = voiceEnabled ? coral : NSColor(white: 0.6, alpha: 1)
         voiceButton.toolTip = voiceEnabled ? "Spoken replies on · click to mute" : "Spoken replies off · click to enable"
         voiceButton.setAccessibilityLabel(voiceButton.title)
+        webView?.evaluateJavaScript("window.clippyVoice?.setMuted(\(!voiceEnabled)); void 0;")
         if !voiceEnabled { speech.stopSpeaking(at: .immediate) }
     }
-    @objc private func hideVisuals() { overlay.ignoresMouseEvents = true; overlay.orderOut(nil); captions.orderOut(nil); speech.stopSpeaking(at: .immediate) }
+    @objc private func hideVisuals() {
+        overlay.ignoresMouseEvents = true
+        if voiceRequested {
+            // Keep WebKit's live media document visible while hiding its marks.
+            webView.evaluateJavaScript("document.getElementById('overlay').hidden = true; void 0;")
+        } else { overlay.orderOut(nil) }
+        captions.orderOut(nil); speech.stopSpeaking(at: .immediate)
+    }
     @objc private func showLastVisual() {
         if let previous {
             render(previous)
@@ -428,6 +445,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
     }
     @objc private func newConversation() {
+        stopRealtimeVoice()
+        webView.evaluateJavaScript("window.clippyVoice?.setVisual(null); void 0;")
         cancelRequest()
         stopDictation(sendTranscript: false)
         hideVisuals()
@@ -481,6 +500,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
     private func generate(_ message: String) {
         guard !busy else { return }
+        if voiceRequested { stopRealtimeVoice() }
         stopDictation(sendTranscript: false)
         speech.stopSpeaking(at: .immediate)
         busy = true
@@ -533,12 +553,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private func handle(_ event: [String: Any]) {
         switch event["type"] as? String {
         case "status": setStatus(event["message"] as? String ?? "Thinking…")
+        case "preview":
+            guard let result = event["result"] as? [String: Any] else { return }
+            previewVisible = true
+            render(result, preview: true)
+            setStatus("Drawing…")
         case "error":
+            rollbackPreview()
             resultReceived = true
             showError(event["message"] as? String ?? "Codex could not finish. Try again.")
         case "result":
             guard let result = event["result"] as? [String: Any], let reply = result["reply"] as? String else { showError("Invalid visual response."); return }
             resultReceived = true
+            previewVisible = false
             previous = result
             history.append(["role": "user", "content": String(pendingMessage.prefix(4000))])
             history.append(["role": "assistant", "content": String(reply.prefix(4000))])
@@ -559,6 +586,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let status = responseStatus
         let body = responseBuffer
         finishRequest()
+        if !received { rollbackPreview() }
         if status >= 400 {
             let value = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any]
             showError(value?["error"] as? String ?? "Local server returned error \(status).")
@@ -571,22 +599,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         sendButton.setAccessibilityLabel("Send")
     }
     private func cancelRequest() {
+        rollbackPreview()
         requestGeneration += 1
         requestTask?.cancel()
         finishRequest()
         setStatus("Ready")
     }
 
-    private func render(_ result: [String: Any]) {
+    private func rollbackPreview() {
+        guard previewVisible else { return }
+        previewVisible = false
+        let json = previous.flatMap { try? JSONSerialization.data(withJSONObject: $0) }.flatMap { String(data: $0, encoding: .utf8) } ?? "null"
+        webView.evaluateJavaScript("window.clippyRollback(\(json)); void 0;")
+        if let previous { render(previous) } else if !voiceRequested { overlay.orderOut(nil) }
+    }
+    private func render(_ result: [String: Any], preview: Bool = false) {
         if overlayReady, let data = try? JSONSerialization.data(withJSONObject: result), let json = String(data: data, encoding: .utf8) {
-            webView.evaluateJavaScript("window.clippyRender(\(json));") { [weak self] _, error in
+            webView.evaluateJavaScript("window.clippyRender(\(json), \(preview)); \(preview ? "" : "window.clippyVoice?.setVisual(\(json));") void 0;") { [weak self] _, error in
                 if error != nil { self?.showError("Drawing renderer unavailable. Reopen Clippy after starting the server.") }
             }
         }
         overlay.orderFrontRegardless()
-        if let reply = result["reply"] as? String { showCaption(reply) }
+        if !preview, let reply = result["reply"] as? String { showCaption(reply) }
     }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { /* The module sends ready after clippyRender exists. */ }
+    func webView(_ webView: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin, initiatedByFrame frame: WKFrameInfo, type: WKMediaCaptureType, decisionHandler: @escaping (WKPermissionDecision) -> Void) {
+        let allowed = voiceRequested && frame.isMainFrame && type == .microphone && origin.protocol == "http" && origin.host == "127.0.0.1" && origin.port == 4317
+        decisionHandler(allowed ? .grant : .deny)
+    }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         if (error as NSError).code != NSURLErrorCancelled { overlayReady = false; setStatus("Drawing view unavailable") }
     }
@@ -606,8 +646,57 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         case "stopDictation": stopDictation(sendTranscript: true)
         case "speak": if let text = data["text"] as? String, text.count < 12000 { speak(text) }
         case "stopSpeaking": speech.stopSpeaking(at: .immediate)
+        case "voiceState":
+            guard data["generation"] as? Int == voiceGeneration else { return }
+            guard let state = data["state"] as? String else { return }
+            let text = String((data["message"] as? String ?? "").prefix(1500))
+            if state == "ended" || state == "error" {
+                voiceRequested = false; updateTalkButton()
+                if state == "error" { showError(text) } else { setStatus(text.isEmpty ? "Ready" : text) }
+            } else if voiceRequested {
+                if state == "transcript" { showCaption(text) } else { setStatus(text) }
+            }
+        case "voicePreview":
+            if voiceRequested, data["generation"] as? Int == voiceGeneration { overlay.orderFrontRegardless() }
+        case "voiceVisual":
+            if voiceRequested, data["generation"] as? Int == voiceGeneration, let result = data["result"] as? [String: Any], result["scene"] != nil, result["diagram"] != nil {
+                previous = result; render(result)
+            }
         default: break
         }
+    }
+    @objc private func toggleRealtimeVoice() {
+        if voiceRequested { stopRealtimeVoice(); return }
+        guard overlayReady else { showError("Wait for the drawing view to finish loading, then try Talk."); return }
+        cancelRequest(); stopDictation(sendTranscript: false); speech.stopSpeaking(at: .immediate)
+        voiceRequested = true; voiceGeneration += 1
+        overlay.orderFrontRegardless()
+        let generation = voiceGeneration
+        updateTalkButton(); setStatus("Connecting live voice…")
+        AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
+            DispatchQueue.main.async {
+                guard let self, self.voiceRequested, self.voiceGeneration == generation else { return }
+                guard granted else {
+                    self.voiceRequested = false; self.updateTalkButton()
+                    self.showError("Allow Clippy microphone access in Privacy & Security to use Talk."); return
+                }
+                self.webView.evaluateJavaScript("window.clippyVoice.setMuted(\(!self.voiceEnabled)); window.clippyVoice.start(\(generation)); void 0;") { [weak self] _, error in
+                    guard let self, self.voiceGeneration == generation else { return }
+                    if error != nil { self.stopRealtimeVoice(); self.showError("Live voice could not start. Reopen Clippy and try again.") }
+                }
+            }
+        }
+    }
+    private func updateTalkButton() {
+        talkButton.title = voiceRequested ? "End" : "Talk"
+        talkButton.image = NSImage(systemSymbolName: voiceRequested ? "stop.circle" : "waveform", accessibilityDescription: talkButton.title)
+        talkButton.contentTintColor = voiceRequested ? coral : NSColor(white: 0.76, alpha: 1)
+        talkButton.setAccessibilityLabel(voiceRequested ? "End live voice" : "Start live voice")
+    }
+    private func stopRealtimeVoice() {
+        voiceGeneration += 1; voiceRequested = false; updateTalkButton()
+        webView?.evaluateJavaScript("window.clippyVoice?.stop(); void 0;")
+        setStatus("Ready")
     }
     private func speak(_ text: String) {
         speech.stopSpeaking(at: .immediate)
@@ -643,6 +732,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 if captionsVisible { self.captions.orderFrontRegardless() }
                 guard let bytes, let image = NSImage(data: bytes), let bitmap = self.thumbnail(image) else { self.showError("Screen capture failed. Check Screen Recording permission."); return }
                 self.attachedImage = "data:image/png;base64," + bitmap.base64EncodedString()
+                if self.voiceRequested, let image = self.attachedImage {
+                    self.webView.callAsyncJavaScript("await window.clippyVoice.shareScreen(image)", arguments: ["image": image], in: nil, in: .page) { [weak self] result in
+                        guard let self else { return }
+                        switch result {
+                        case .success: self.attachedImage = nil; self.captureButton.title = "Screen"; self.setStatus("Screen shared · ask your question")
+                        case .failure: self.captureButton.title = "Remove screen"; self.showError("Screen attached for a typed question; live sharing failed.")
+                        }
+                    }
+                    return
+                }
                 self.captureButton.title = "Remove screen"
                 self.setStatus("Screen attached · sent only with your next question")
             }
@@ -662,6 +761,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
     @objc private func toggleDictation() { if recording { stopDictation(sendTranscript: true) } else { startDictation() } }
     private func startDictation() {
+        if voiceRequested { stopRealtimeVoice() }
         guard !busy && !recording && !requestingPermission else { return }
         guard let candidate = SFSpeechRecognizer(locale: Locale.current), candidate.supportsOnDeviceRecognition, candidate.isAvailable else { showError("On-device dictation unavailable for this Mac or language. Type instead."); return }
         recognizer = candidate
@@ -731,6 +831,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             setStatus("Review your words, then Send")
         } else { setStatus("Dictation stopped") }
         latestTranscript = ""
+    }
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard voiceRequested else { return .terminateNow }
+        stopRealtimeVoice()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { sender.reply(toApplicationShouldTerminate: true) }
+        return .terminateLater
     }
     func applicationWillTerminate(_ notification: Notification) {
         selectionEditor.cancel()

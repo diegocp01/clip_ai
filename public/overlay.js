@@ -1,7 +1,8 @@
 import { createScene, renderDiagram, sample } from './scene.js';
+import { VoiceConversation } from './voice.js';
 
 const $ = id => document.getElementById(id);
-let current = null, part = null;
+let current = null, part = null, streaming = false;
 const viewer = createScene($('scene-host'), selectPart);
 function post(action, extra = {}) { window.webkit?.messageHandlers?.clippy?.postMessage({ action, ...extra }); }
 function hidePart() { part = null; $('part').hidden = true; viewer.clearSelection(); }
@@ -15,9 +16,10 @@ function view(kind) {
   $('diagram-tab').classList.toggle('active', !scene); $('diagram-tab').setAttribute('aria-pressed', String(!scene));
   $('fit').hidden = !scene; $('scene-hint').hidden = !scene; hidePart();
 }
-function render(result) {
+function render(result, preview = false) {
+  const preserveCamera = streaming; streaming = preview;
   current = result; $('overlay').hidden = false; $('demo-label').hidden = true;
-  $('visual-title').textContent = result.title || 'Clippy';
+  $('visual-title').textContent = (result.title || 'Clippy') + (preview ? ' · Drawing…' : '');
   $('caption-text').textContent = result.reply || '';
   const showCaption = Boolean(result.reply) && !window.clippyCaptionManaged;
   $('caption').hidden = !showCaption;
@@ -35,11 +37,26 @@ function render(result) {
   $('overlay').classList.toggle('has-cards', cards.length > 0);
   const hasScene = objects.length > 0, hasDiagram = diagram.nodes.length > 0;
   $('view-tabs').hidden = !(hasScene && hasDiagram);
-  viewer.update(objects); renderDiagram($('diagram-host'), diagram, selectPart);
+  viewer.update(objects, false, preserveCamera, preview); renderDiagram($('diagram-host'), diagram, selectPart);
   view(hasScene ? 'scene' : 'diagram');
   if (!hasScene && !hasDiagram) { $('diagram-frame').hidden = true; $('fit').hidden = true; }
 }
 window.clippyRender = render;
+window.clippyRollback = result => { streaming = false; if(result)render(result);else $('overlay').hidden=true; };
+let voiceGeneration = 0;
+const voice = new VoiceConversation({
+  notify: event => post('voiceState',{...event,generation:voiceGeneration}),
+  render: result => { render(result); post('voiceVisual',{result,generation:voiceGeneration}); },
+  preview: result => { render(result,true); post('voicePreview',{generation:voiceGeneration}); },
+  rollback: result => window.clippyRollback(result),
+});
+window.clippyVoice = {
+  start: generation => {voiceGeneration=generation;return voice.start();}, stop: () => voice.stop(),
+  shareScreen: image => voice.shareScreen(image),
+  setVisual: result => { voice.previous=result; },
+  setMuted: value => voice.setMuted(value),
+};
+window.addEventListener('pagehide',()=>voice.stop());
 window.clippyHitTest = (x, y) => {
   if (!Number.isFinite(x) || !Number.isFinite(y) || $('overlay').hidden) return false;
   // elementFromPoint also respects clipping and hidden ancestors. Only real

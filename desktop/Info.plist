@@ -11,7 +11,7 @@
   <key>LSMinimumSystemVersion</key><string>14.2</string>
   <key>LSUIElement</key><true/>
   <key>NSHighResolutionCapable</key><true/>
-  <key>NSMicrophoneUsageDescription</key><string>Clippy uses your microphone only when you start dictation. Speech recognition stays on this Mac.</string>
+  <key>NSMicrophoneUsageDescription</key><string>Talk sends microphone audio to OpenAI for live conversation until you press End. Optional on-device dictation stays on this Mac.</string>
   <key>NSSpeechRecognitionUsageDescription</key><string>Clippy turns your speech into text using on-device recognition. You review the text before sending it to Codex.</string>
   <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
 </dict></plist>

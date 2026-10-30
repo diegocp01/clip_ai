@@ -26,7 +26,7 @@ Primary delivered artifact: `build/Clippy.app`, native AppKit island with transp
 
 ## Limits
 
-This reproduces the native island and floating visual interaction, not the entire HeyClicky product. Scenes use bounded primitives and diagrams, arrive after complete model output, and are not synchronized with token-streamed speech. Connected apps, arbitrary desktop automation and photorealistic custom mesh generation are outside this version.
+This reproduces the native island and floating visual interaction, not the entire HeyClicky product. Scenes use bounded primitives and diagrams. The streaming update below supersedes the original completed-output-only behavior; visuals are not synchronized with token-streamed speech. Connected apps, arbitrary desktop automation and photorealistic custom mesh generation are outside this version.
 
 HeyClicky was never installed or executed. Its read-only inspection disk image was unmounted after analysis. Source code and original app assets were not copied into the replacement runtime.
 
@@ -45,3 +45,24 @@ HeyClicky was never installed or executed. Its read-only inspection disk image w
 - CUA visually inspected the 192×28 resting pill and 400×144 composer with coral activity mark, icon controls, send button and collapse chevron.
 - Verified: click opens, chevron collapses, reopening preserves an unsent draft, … menu opens, New conversation clears the test draft, Escape collapses. Left app running in its compact state.
 - Removed hover-to-expand. Outside-click collapse is implemented with local/global mouse monitors; physical outside-click behavior was not separately established in CUA.
+
+## Realtime voice (feature branch)
+
+- Securely provisioned a local, Git-ignored API credential. No credentials are included in source, tests, receipts or logs.
+- All 17 automated tests, JavaScript syntax checks, native build, plist validation and ad-hoc signature verification passed.
+- Tests cover session authorization, credential isolation, call cleanup, microphone cancellation and voice-to-Codex tool routing.
+- A live Realtime client-secret request accepted the complete session configuration with HTTP 200 and model gpt-realtime-2.1. The ephemeral value was not displayed or persisted. No microphone audio was recorded or transmitted by this check.
+- Native microphone permission, end-to-end WebRTC audio, echo cancellation and interruption still require user testing. Configuration acceptance is not proof of those interactions.
+- Final inspection of the rebuilt Talk control was blocked because the Mac was locked. Earlier island appearance checks above predate this voice change.
+
+## Progressive visuals and native voice connection (2026-10-30)
+
+- A live SDK probe emitted only one completed agent message. Visuals now use the same bundled CLI via app-server, which exposes incremental agent-message deltas. Editing remains on the SDK.
+- A real Terra low/Fast water-molecule request emitted five validated previews at 15.524, 15.974, 16.176, 16.560 and 16.762 seconds; the final result completed at 18.247 seconds. This is one cold-start observation, not a speed guarantee.
+- 25 automated tests pass, including every-character JSON chunk boundaries, escaped text, bounded NDJSON decoding, fixed model/tier, temporary configuration isolation, cancellation and voice-preview rollback.
+- Native testing caught and fixed a WebKit fetch receiver error that Node mocks did not reveal. A regression test covers the receiver.
+- On the Mac, Talk reached Listening after microphone approval. Escape returned the island to Ready and stopped Talk. The user was unavailable for a spoken test, so playback, interruption and spoken drawing remain unverified.
+- Screen Recording permission and actual screenshot sharing have not been verified; no private screen was sent during this check.
+- A second live check through the authenticated HTTP route delivered previews at 14.380, 14.753, 14.986, 15.328 and 15.794 seconds, then the final result at 17.459 seconds. Local receipt: `research/evidence/progressive-visuals.json` (excluded from Git).
+- The native app generated and displayed a real solar-system visual. This established the typed request/rendering path; individual native preview frames were not separately captured.
+- Native build, plist/signature validation and JavaScript syntax checks passed. Left the app compact in Ready state, Talk stopped, with the original spoken-reply preference restored.
