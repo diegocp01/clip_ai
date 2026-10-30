@@ -6,11 +6,12 @@ import path from 'node:path';
 import { authStatus,generate,MODEL,REASONING_EFFORT } from './codex.mjs';
 import { normalizeRequest } from './schema.mjs';
 import { editText,normalizeEditRequest } from './edit.mjs';
+import { RealtimeService,VOICE_MODEL } from './realtime.mjs';
 
 const root=fileURLToPath(new URL('../',import.meta.url));
 const MAX_BODY=8*1024*1024;
 const mime={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml','.png':'image/png'};
-export function createServer({run=generate,runEdit=editText,checkAuth=authStatus}={}){
+export function createServer({run=generate,runEdit=editText,checkAuth=authStatus,voice=new RealtimeService()}={}){
   const token=randomBytes(32).toString('hex');
   let active=0;
   const server=http.createServer(async(req,res)=>{
@@ -25,6 +26,31 @@ export function createServer({run=generate,runEdit=editText,checkAuth=authStatus
     if(!hosts.has(req.headers.host)|| (origin&&!hosts.has(origin.replace(/^http:\/\//,''))))return json(403,{error:'Local access only.'});
     let pathname;try{pathname=decodeURIComponent(new URL(req.url,`http://127.0.0.1:${port}`).pathname);}catch{return json(400,{error:'Invalid path.'});}
     if(req.method==='GET'&&pathname==='/api/session')return json(200,{token});
+    if(req.method==='GET'&&pathname==='/api/realtime/status')return json(200,{configured:await voice.ready().catch(()=>false),model:VOICE_MODEL});
+    if(req.method==='POST'&&['/api/realtime/call','/api/realtime/stop'].includes(pathname)){
+      const supplied=Buffer.from(String(req.headers['x-clippy-session']||''));
+      if(supplied.length!==token.length||!timingSafeEqual(supplied,Buffer.from(token)))return json(403,{error:'Refresh your local session.'});
+      if(!req.headers['content-type']?.startsWith('application/json'))return json(415,{error:'Expected application/json.'});
+      const controller=new AbortController();
+      const timeout=setTimeout(()=>controller.abort(),25000);
+      const disconnect=()=>{if(!res.writableEnded)controller.abort();};res.on('close',disconnect);
+      try{
+        let size=0;const chunks=[];
+        for await(const chunk of req){size+=chunk.length;if(size>120000)throw new Error('Voice request too large.');chunks.push(chunk);}
+        const body=JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        if(!body||Array.isArray(body)||typeof body!=='object')throw new Error('Invalid voice request.');
+        if(pathname.endsWith('/stop')){
+          if(Object.keys(body).length!==1||typeof body.id!=='string'||body.id.length>100)throw new Error('Invalid voice session.');
+          await voice.close(body.id);return json(200,{stopped:true});
+        }
+        if(Object.keys(body).length!==1||!('sdp' in body))throw new Error('Only an SDP offer is accepted.');
+        const result=await voice.create(body.sdp,controller.signal);
+        if(controller.signal.aborted){await voice.close(result.id);return;}
+        return json(200,result);
+      }catch(error){if(!res.destroyed)json(400,{error:String(error.message).slice(0,300)});}
+      finally{clearTimeout(timeout);res.off('close',disconnect);}
+      return;
+    }
     if(req.method==='GET'&&pathname==='/api/status')return json(200,{model:MODEL,reasoningEffort:REASONING_EFFORT,defaultTier:'fast',authenticated:await checkAuth(),auth:'ChatGPT',tiers:['standard','fast'],note:'Uses your Codex allowance. Fast mode requires account access and consumes more usage.'});
     if(req.method==='POST'&&['/api/chat','/api/edit'].includes(pathname)){
       const editing=pathname==='/api/edit';
@@ -62,6 +88,7 @@ export function createServer({run=generate,runEdit=editText,checkAuth=authStatus
     catch{return json(404,{error:'Not found.'});}
   });
   server.requestTimeout=150000;
+  server.on('close',()=>{voice.closeAll().catch(()=>{});});
   return server;
 }
 if(process.argv[1]===fileURLToPath(import.meta.url)){

@@ -1,4 +1,5 @@
 import { createScene, renderDiagram, sample } from './scene.js';
+import { VoiceConversation } from './voice.js';
 
 const $ = id => document.getElementById(id);
 let current = null, part = null;
@@ -40,6 +41,18 @@ function render(result) {
   if (!hasScene && !hasDiagram) { $('diagram-frame').hidden = true; $('fit').hidden = true; }
 }
 window.clippyRender = render;
+let voiceGeneration = 0;
+const voice = new VoiceConversation({
+  notify: event => post('voiceState',{...event,generation:voiceGeneration}),
+  render: result => { render(result); post('voiceVisual',{result,generation:voiceGeneration}); },
+});
+window.clippyVoice = {
+  start: generation => {voiceGeneration=generation;return voice.start();}, stop: () => voice.stop(),
+  shareScreen: image => voice.shareScreen(image),
+  setVisual: result => { voice.previous=result; },
+  setMuted: value => voice.setMuted(value),
+};
+window.addEventListener('pagehide',()=>voice.stop());
 window.clippyHitTest = (x, y) => {
   if (!Number.isFinite(x) || !Number.isFinite(y) || $('overlay').hidden) return false;
   // elementFromPoint also respects clipping and hidden ancestors. Only real

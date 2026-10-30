@@ -45,3 +45,12 @@ HeyClicky was never installed or executed. Its read-only inspection disk image w
 - CUA visually inspected the 192×28 resting pill and 400×144 composer with coral activity mark, icon controls, send button and collapse chevron.
 - Verified: click opens, chevron collapses, reopening preserves an unsent draft, … menu opens, New conversation clears the test draft, Escape collapses. Left app running in its compact state.
 - Removed hover-to-expand. Outside-click collapse is implemented with local/global mouse monitors; physical outside-click behavior was not separately established in CUA.
+
+## Realtime voice (feature branch)
+
+- Securely provisioned a local, Git-ignored API credential. No credentials are included in source, tests, receipts or logs.
+- All 17 automated tests, JavaScript syntax checks, native build, plist validation and ad-hoc signature verification passed.
+- Tests cover session authorization, credential isolation, call cleanup, microphone cancellation and voice-to-Codex tool routing.
+- A live Realtime client-secret request accepted the complete session configuration with HTTP 200 and model gpt-realtime-2.1. The ephemeral value was not displayed or persisted. No microphone audio was recorded or transmitted by this check.
+- Native microphone permission, end-to-end WebRTC audio, echo cancellation and interruption still require user testing. Configuration acceptance is not proof of those interactions.
+- Final inspection of the rebuilt Talk control was blocked because the Mac was locked. Earlier island appearance checks above predate this voice change.
