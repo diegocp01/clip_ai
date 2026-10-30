@@ -6,14 +6,14 @@ Build with `npm run desktop:build`, then open `build/Clippy.app`. The app reuses
 
 ## Use
 
-- Type a question and press Return or Send. The native app calls the local Codex SDK backend and shows its real result in a transparent floating drawing panel above the current desktop. No sample drawing appears automatically.
+- Type a question and press Return or Send. The native app calls the local Codex backend and progressively shows validated visual parts in a transparent floating drawing panel above the current desktop. No sample drawing appears automatically.
 - Rotate, zoom or select 3D parts in the drawing. Follow-ups keep the previous scene and bounded conversation history in memory.
 - Drag the drawing using its drag handle. Hide drawing dismisses both the drawing and captions. The … menu or menu-bar paperclip can reopen the last drawing.
 - Captions float near the bottom of the display. Voice on/off toggles local macOS speech synthesis.
 - Talk starts an OpenAI Realtime voice conversation. End or Escape stops the microphone and connection. Collapse keeps the voice session running, indicated by the island’s activity state. The speaker button mutes output, not the microphone. … → Dictate on-device remains available separately.
 - Screen captures the main display once, with Clippy's panels temporarily hidden. It requests Screen Recording permission only when used. The screenshot remains in memory until sent or removed, and the temporary capture file is deleted immediately. Clicking Remove screen clears it. During Talk, Screen explicitly shares that single screenshot with the live voice session instead.
 - Standard/Fast selects the requested Codex service tier. Your account must support the selected tier; errors remain visible and never trigger a silent fallback.
-- Cancel aborts the active model request. Escape also cancels an active request, or otherwise hides drawings and collapses the island. … → New conversation clears the in-memory conversation and attachment.
+- Cancel aborts the active model request and restores the last completed visual. Escape also cancels an active request, or otherwise hides drawings and collapses the island. … → New conversation clears the in-memory conversation and attachment.
 
 ## Selected-text editing
 

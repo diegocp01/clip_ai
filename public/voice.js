@@ -1,8 +1,9 @@
+import { readEvents } from './stream.js';
 // WebRTC transports live audio directly to OpenAI. The long-lived API key
 // stays on the localhost server; this module never receives it.
 export class VoiceConversation {
-  constructor({notify=()=>{},render=()=>{},fetchImpl=globalThis.fetch,media=globalThis.navigator?.mediaDevices,Peer=globalThis.RTCPeerConnection,makeAudio=()=>new Audio()}={}) {
-    Object.assign(this,{notify,render,fetch:fetchImpl,media,Peer,makeAudio});
+  constructor({notify=()=>{},render=()=>{},preview=()=>{},rollback=()=>{},fetchImpl=globalThis.fetch.bind(globalThis),media=globalThis.navigator?.mediaDevices,Peer=globalThis.RTCPeerConnection,makeAudio=()=>new Audio()}={}) {
+    Object.assign(this,{notify,render,preview,rollback,fetch:fetchImpl,media,Peer,makeAudio});
     this.session=null;this.previous=null;this.muted=false;
   }
   emit(state,message='') {this.notify({state,message});}
@@ -82,18 +83,18 @@ export class VoiceConversation {
       if(!args||Object.keys(args).length!==1||typeof args.prompt!=='string'||!args.prompt.trim()||args.prompt.length>6000)throw new Error('Invalid drawing request.');
       s.drawing=true;ownsDrawing=true;s.drawCount++;this.emit('drawing','Drawing with Terra Fast…');
       const response=await this.post(s,'/api/chat',{message:args.prompt,tier:'fast',history:[],previous:this.previous,image:s.screen});
-      const body=await response.text();if(body.length>2000000)throw new Error('Drawing too large.');
       let result;
-      for(const line of body.trim().split('\n')){
-        const event=JSON.parse(line);
+      for await(const event of readEvents(response)){
+        if(this.session!==s)return;
         if(event.type==='error')throw new Error(event.message);
+        if(event.type==='preview'){s.previewing=true;this.preview(event.result);}
         if(event.type==='result')result=event.result;
       }
       if(!result)throw new Error('No drawing returned.');
       if(this.session!==s)return;
-      this.previous=result;this.render(result);
+      s.previewing=false;this.previous=result;this.render(result);
       output={shown:true,title:result.title,summary:result.reply};
-    } catch(error) {output={shown:false,error:String(error.message).slice(0,500)};}
+    } catch(error) {if(ownsDrawing&&s.previewing&&this.session===s){s.previewing=false;this.rollback(this.previous);}output={shown:false,error:String(error.message).slice(0,500)};}
     finally {if(ownsDrawing)s.drawing=false;}
     if(this.session!==s)return;
     this.send(s,{type:'conversation.item.create',item:{type:'function_call_output',call_id:item.call_id,output:JSON.stringify(output)}});
@@ -123,6 +124,7 @@ export class VoiceConversation {
     s.controller.abort();s.tracks?.getTracks().forEach(track=>track.stop());
     s.channel?.close();s.peer?.close();
     if(s.audio){s.audio.pause();s.audio.srcObject=null;}
+    if(s.previewing)this.rollback(this.previous);
     s.screen=null;void this.hangup(s);this.emit('ended','Voice ended');
   }
   fail(s,error) {if(this.session!==s)return;this.stop();this.emit('error',error.message||'Live voice failed.');}

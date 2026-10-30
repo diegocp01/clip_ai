@@ -73,7 +73,7 @@ export function createServer({run=generate,runEdit=editText,checkAuth=authStatus
       res.on('close',disconnect);
       res.writeHead(200,{'Content-Type':'application/x-ndjson; charset=utf-8','X-Accel-Buffering':'no'});
       const send=event=>{if(!res.destroyed&&!res.writableEnded)res.write(JSON.stringify(event)+'\n');};
-      try{const output=await (editing?runEdit:run)(request,{signal:controller.signal,onStatus:message=>send({type:'status',message})});send({type:'result',...output});}
+      try{const output=await (editing?runEdit:run)(request,{signal:controller.signal,onStatus:message=>send({type:'status',message}),onPreview:result=>send({type:'preview',result})});send({type:'result',...output});}
       catch(e){send({type:'error',message:controller.signal.aborted?(controller.signal.reason?.message||'Request cancelled.') : String(e.message||e).slice(0,1600)});}
       finally{clearTimeout(timer);res.off('close',disconnect);active--;res.end();}
       return;

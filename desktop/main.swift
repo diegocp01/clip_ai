@@ -86,6 +86,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var responseBuffer = Data()
     private var responseStatus = 200
     private var resultReceived = false
+    private var previewVisible = false
     private var pendingMessage = ""
     private var busy = false
     private let speech = AVSpeechSynthesizer()
@@ -552,12 +553,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private func handle(_ event: [String: Any]) {
         switch event["type"] as? String {
         case "status": setStatus(event["message"] as? String ?? "Thinking…")
+        case "preview":
+            guard let result = event["result"] as? [String: Any] else { return }
+            previewVisible = true
+            render(result, preview: true)
+            setStatus("Drawing…")
         case "error":
+            rollbackPreview()
             resultReceived = true
             showError(event["message"] as? String ?? "Codex could not finish. Try again.")
         case "result":
             guard let result = event["result"] as? [String: Any], let reply = result["reply"] as? String else { showError("Invalid visual response."); return }
             resultReceived = true
+            previewVisible = false
             previous = result
             history.append(["role": "user", "content": String(pendingMessage.prefix(4000))])
             history.append(["role": "assistant", "content": String(reply.prefix(4000))])
@@ -578,6 +586,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let status = responseStatus
         let body = responseBuffer
         finishRequest()
+        if !received { rollbackPreview() }
         if status >= 400 {
             let value = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any]
             showError(value?["error"] as? String ?? "Local server returned error \(status).")
@@ -590,20 +599,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         sendButton.setAccessibilityLabel("Send")
     }
     private func cancelRequest() {
+        rollbackPreview()
         requestGeneration += 1
         requestTask?.cancel()
         finishRequest()
         setStatus("Ready")
     }
 
-    private func render(_ result: [String: Any]) {
+    private func rollbackPreview() {
+        guard previewVisible else { return }
+        previewVisible = false
+        let json = previous.flatMap { try? JSONSerialization.data(withJSONObject: $0) }.flatMap { String(data: $0, encoding: .utf8) } ?? "null"
+        webView.evaluateJavaScript("window.clippyRollback(\(json)); void 0;")
+        if let previous { render(previous) } else if !voiceRequested { overlay.orderOut(nil) }
+    }
+    private func render(_ result: [String: Any], preview: Bool = false) {
         if overlayReady, let data = try? JSONSerialization.data(withJSONObject: result), let json = String(data: data, encoding: .utf8) {
-            webView.evaluateJavaScript("window.clippyRender(\(json)); window.clippyVoice?.setVisual(\(json)); void 0;") { [weak self] _, error in
+            webView.evaluateJavaScript("window.clippyRender(\(json), \(preview)); \(preview ? "" : "window.clippyVoice?.setVisual(\(json));") void 0;") { [weak self] _, error in
                 if error != nil { self?.showError("Drawing renderer unavailable. Reopen Clippy after starting the server.") }
             }
         }
         overlay.orderFrontRegardless()
-        if let reply = result["reply"] as? String { showCaption(reply) }
+        if !preview, let reply = result["reply"] as? String { showCaption(reply) }
     }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { /* The module sends ready after clippyRender exists. */ }
     func webView(_ webView: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin, initiatedByFrame frame: WKFrameInfo, type: WKMediaCaptureType, decisionHandler: @escaping (WKPermissionDecision) -> Void) {
@@ -639,6 +656,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             } else if voiceRequested {
                 if state == "transcript" { showCaption(text) } else { setStatus(text) }
             }
+        case "voicePreview":
+            if voiceRequested, data["generation"] as? Int == voiceGeneration { overlay.orderFrontRegardless() }
         case "voiceVisual":
             if voiceRequested, data["generation"] as? Int == voiceGeneration, let result = data["result"] as? [String: Any], result["scene"] != nil, result["diagram"] != nil {
                 previous = result; render(result)

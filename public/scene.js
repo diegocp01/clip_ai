@@ -96,7 +96,7 @@ export function createScene(host, onSelect) {
     renderer.setSize(width, height, false); camera.aspect = width / height; camera.updateProjectionMatrix();
   }
   const observer = new ResizeObserver(() => { resize(); reset(); }); observer.observe(host);
-  function update(objects, isSample = false) {
+  function update(objects, isSample = false, preserveCamera = false, preview = false) {
     selected = null;
     for (const mesh of meshes) { group.remove(mesh); mesh.geometry.dispose(); mesh.material.dispose(); }
     meshes = []; badges = []; labels.replaceChildren();
@@ -111,7 +111,11 @@ export function createScene(host, onSelect) {
       badge.setAttribute('aria-label', `Inspect ${part.label}`); badge.addEventListener('click', () => select(mesh));
       labels.append(badge); badges.push({ element: badge, mesh });
     }
-    resize(); reset();
+    resize();
+    if(!preserveCamera){
+      if(preview){camera.position.set(1.5,1.2,18);controls.target.set(0,0,0);controls.update();}
+      else reset();
+    }
   }
   function frame() {
     requestAnimationFrame(frame);
