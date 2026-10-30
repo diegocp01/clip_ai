@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f6f4ef">
+  <title>Clippy · Think out loud</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script type="importmap">{"imports":{"three":"/vendor/three/build/three.module.js","three/addons/":"/vendor/three/examples/jsm/"}}</script>
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="Clippy home"><svg class="brand-icon" viewBox="0 0 40 46" fill="none" aria-hidden="true"><path d="M27 32V12a9 9 0 0 0-18 0v22a13 13 0 0 0 26 0V16M16 14v19a5 5 0 0 0 10 0" stroke="currentColor" stroke-width="4.5" stroke-linecap="round"/><circle cx="15" cy="20" r="2" fill="#312c28"/><circle cx="24" cy="20" r="2" fill="#312c28"/></svg><span>clippy<span class="brand-dot">.</span></span><span class="local-pill">LOCAL LAB</span></a>
+    <div class="top-actions"><span id="connection" class="connection"><i></i><span>Connecting to Codex</span></span><button class="quiet-button" id="history-button" aria-label="Show conversation" aria-expanded="false">Conversation <span id="history-count">0</span></button><button class="icon-button" id="reset-button" title="Start fresh" aria-label="Start fresh"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 10a8 8 0 1 1 1.7 7M4 4v6h6"/></svg></button></div>
+  </header>
+  <main>
+    <div class="eyebrow"><span class="small-star">✳</span> A LITTLE COMPANY FOR YOUR CURIOSITY</div>
+    <section class="workspace" aria-label="Visual explanation">
+      <div class="explanation">
+        <p id="result-label" class="section-label">A PLACE TO FIGURE THINGS OUT</p>
+        <h1 id="result-title">Big ideas.<br><em>A little clearer.</em></h1>
+        <p id="result-reply" class="intro">Ask a question. Turn it around. Follow your curiosity.<br>Clippy brings what you're thinking to life.</p>
+        <div id="answer-cards" class="answer-cards"></div>
+        <div id="starters" class="starters" aria-label="Try a question">
+          <button data-prompt="Show me a water molecule in 3D and explain why it has that shape."><span class="starter-symbol">◎</span><span>Why is water shaped like this?</span><span class="arrow">↗</span></button>
+          <button data-prompt="Draw a simple visual diagram of how a transformer pays attention to words. Explain it intuitively."><span class="starter-symbol">⌘</span><span>Make attention make sense</span><span class="arrow">↗</span></button>
+          <button data-prompt="Build a labeled 3D model of the inner solar system. Explain that sizes and distances are not to scale."><span class="starter-symbol">✷</span><span>A tiny tour of our solar system</span><span class="arrow">↗</span></button>
+        </div>
+        <div id="result-meta" class="result-meta" hidden></div>
+      </div>
+      <div class="visual-panel">
+        <div class="visual-toolbar"><span id="visual-label" class="visual-label"><span class="live-dot"></span> PLAY A LITTLE</span><div class="view-tabs" role="group" aria-label="Visual view"><button id="scene-tab" class="active" aria-pressed="true">3D</button><button id="diagram-tab" aria-pressed="false" hidden>Diagram</button></div><button class="icon-button" id="fit-button" title="Reset view" aria-label="Reset 3D view"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 4H4v4m12-4h4v4M4 16v4h4m12-4v4h-4"/></svg></button></div>
+        <div id="visual-stage"><div id="scene-host" aria-label="Interactive 3D scene"></div><div id="diagram-host" hidden></div><div id="visual-empty" hidden><span>✳</span><p>Your next idea starts here.</p></div><span id="sample-badge">SAMPLE SCENE · H₂O</span></div>
+        <div class="visual-footer"><span id="visual-hint"><span class="drag-icon">↔</span> Drag to orbit · Scroll to zoom · Pick a part</span><span id="scene-count">3 atoms, endless questions</span></div>
+        <div id="part-detail" class="part-detail" hidden><button id="part-close" class="icon-button" aria-label="Close part details">×</button><span class="section-label">A CLOSER LOOK</span><h3 id="part-title"></h3><p id="part-description"></p><button class="part-ask" id="part-ask">Tell me more about this <span>↗</span></button></div>
+      </div>
+    </section>
+    <aside id="conversation" class="conversation" hidden aria-label="Conversation history"><div class="conversation-header"><h2>This conversation</h2><button id="history-close" class="icon-button" aria-label="Close conversation">×</button></div><p class="privacy-note">Kept in this tab. Starting fresh clears it.</p><div id="conversation-items"></div></aside>
+  </main>
+  <div class="composer-wrap">
+    <div id="error" class="error" role="alert" hidden><span id="error-text"></span><button id="error-close" aria-label="Dismiss error">×</button></div>
+    <div id="progress" class="progress" role="status" hidden><span class="thinking-dots"><i></i><i></i><i></i></span><span id="progress-text">Thinking it through…</span><span id="elapsed"></span></div>
+    <form id="composer" class="composer">
+      <div id="attachment" class="attachment" hidden><img id="attachment-preview" alt="Image attached to the next question"><div><strong>Image attached</strong><span>Sent to Codex with your next question</span></div><button type="button" id="remove-image" class="icon-button" aria-label="Remove attached image">×</button></div>
+      <div class="input-row"><span class="composer-spark" aria-hidden="true">✳</span><textarea id="prompt" rows="1" maxlength="6000" placeholder="What are you curious about?" aria-label="Ask Clippy"></textarea><button type="button" id="cancel-button" class="send-button cancel" aria-label="Stop generating" hidden>■</button><button id="send-button" class="send-button" type="submit" aria-label="Send question"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19V5m-6 6 6-6 6 6"/></svg></button></div>
+      <div class="composer-tools"><div class="tool-buttons"><button type="button" id="attach-button" class="tool-button" title="Attach an image"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m8 12 6-6a3 3 0 0 1 4 4l-8 8a5 5 0 0 1-7-7l8-8"/></svg><span>Image</span></button><button type="button" id="screen-button" class="tool-button" title="Share one screenshot"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4"/></svg><span>See my screen</span></button><button type="button" id="mic-button" class="tool-button" title="On-device dictation" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="9" y="2" width="6" height="13" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2m-7 9v3m-4 0h8"/></svg><span>Dictate</span></button><button type="button" id="speak-button" class="tool-button" title="Read the current answer using a local voice" aria-label="Read answer aloud" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m11 4-6 5H2v6h3l6 5V4Zm4 4a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0 14"/></svg></button></div><div class="model-controls"><span class="model-label">6.1 Terra</span><label class="sr-only" for="tier">Requested model speed</label><select id="tier" title="Speed depends on your plan; faster tiers consume more usage"><option value="standard">Standard</option><option value="fast" selected>Fast · 2.5× usage</option></select></div></div>
+    </form>
+    <div class="composer-note"><span id="footnote">Your Codex login. Your curiosity. No separate API key.</span><span class="shortcut">⌘ Enter to send</span></div>
+  </div>
+  <input type="file" id="image-input" accept="image/png,image/jpeg" hidden>
+</body>
+</html>

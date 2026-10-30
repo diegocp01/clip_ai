@@ -1,0 +1,18 @@
+{
+  "name": "clippy-codex",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server/index.mjs",
+    "test": "node --test test/*.test.mjs",
+    "check": "node --check server/index.mjs && node --check server/codex.mjs && node --check server/schema.mjs && node --check server/edit.mjs && node --check public/app.js && node --check public/scene.js && node --check public/overlay.js",
+    "smoke": "node scripts/smoke.mjs",
+    "desktop:build": "bash scripts/build-desktop.sh"
+  },
+  "dependencies": {
+    "@openai/codex-sdk": "0.166.0",
+    "ajv": "8.17.1",
+    "three": "0.180.0"
+  }
+}

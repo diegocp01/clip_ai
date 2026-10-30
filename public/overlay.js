@@ -1,0 +1,70 @@
+import { createScene, renderDiagram, sample } from './scene.js';
+
+const $ = id => document.getElementById(id);
+let current = null, part = null;
+const viewer = createScene($('scene-host'), selectPart);
+function post(action, extra = {}) { window.webkit?.messageHandlers?.clippy?.postMessage({ action, ...extra }); }
+function hidePart() { part = null; $('part').hidden = true; viewer.clearSelection(); }
+function selectPart(selected) {
+  part = selected; $('part-name').textContent = selected.label;
+  $('part-description').textContent = selected.description; $('part').hidden = false;
+}
+function view(kind) {
+  const scene = kind === 'scene'; $('scene-host').hidden = !scene; $('diagram-frame').hidden = scene;
+  $('scene-tab').classList.toggle('active', scene); $('scene-tab').setAttribute('aria-pressed', String(scene));
+  $('diagram-tab').classList.toggle('active', !scene); $('diagram-tab').setAttribute('aria-pressed', String(!scene));
+  $('fit').hidden = !scene; $('scene-hint').hidden = !scene; hidePart();
+}
+function render(result) {
+  current = result; $('overlay').hidden = false; $('demo-label').hidden = true;
+  $('visual-title').textContent = result.title || 'Clippy';
+  $('caption-text').textContent = result.reply || '';
+  const showCaption = Boolean(result.reply) && !window.clippyCaptionManaged;
+  $('caption').hidden = !showCaption;
+  $('overlay').classList.toggle('no-caption', !showCaption);
+  const objects = result.scene?.objects || [], diagram = result.diagram || { nodes: [], links: [] };
+  const cards = (result.cards || []).slice(0, 3);
+  $('cards').replaceChildren();
+  cards.forEach((card, i) => {
+    const article = document.createElement('article'); article.className = 'explanation-card';
+    const number = document.createElement('span'); number.className = 'card-number'; number.textContent = String(i + 1).padStart(2, '0');
+    const title = document.createElement('h2'); title.textContent = card.title;
+    const body = document.createElement('p'); body.textContent = card.body;
+    article.append(number, title, body); $('cards').append(article);
+  });
+  $('overlay').classList.toggle('has-cards', cards.length > 0);
+  const hasScene = objects.length > 0, hasDiagram = diagram.nodes.length > 0;
+  $('view-tabs').hidden = !(hasScene && hasDiagram);
+  viewer.update(objects); renderDiagram($('diagram-host'), diagram, selectPart);
+  view(hasScene ? 'scene' : 'diagram');
+  if (!hasScene && !hasDiagram) { $('diagram-frame').hidden = true; $('fit').hidden = true; }
+}
+window.clippyRender = render;
+window.clippyHitTest = (x, y) => {
+  if (!Number.isFinite(x) || !Number.isFinite(y) || $('overlay').hidden) return false;
+  // elementFromPoint also respects clipping and hidden ancestors. Only real
+  // painted controls/cards count; the transparent stage and its canvas do not.
+  const element = document.elementFromPoint(x, y);
+  const control = element?.closest('.overlay-tools, .scene-label, .explanation-card, #diagram-frame, #part, #caption, .scene-fallback');
+  if (control) {
+    const style = getComputedStyle(control);
+    if (style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0' &&
+      [...control.getClientRects()].some(rect => x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom)) return true;
+  }
+  return !$('scene-host').hidden && viewer.hitTest(x, y);
+};
+$('scene-tab').addEventListener('click', () => view('scene'));
+$('diagram-tab').addEventListener('click', () => view('diagram'));
+$('fit').addEventListener('click', () => viewer.reset());
+$('close').addEventListener('click', () => { $('overlay').hidden = true; post('closeOverlay'); });
+$('part-close').addEventListener('click', hidePart);
+$('part-ask').addEventListener('click', () => {
+  if (!part) return;
+  post('followup', { text: `Explain ${part.label} in ${current?.title || 'this visual'}. Highlight it in the visual.` }); hidePart();
+});
+$('drag-handle').addEventListener('mousedown', event => { if (event.button === 0) { event.preventDefault(); post('dragOverlay'); } });
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape') { if (!$('part').hidden) hidePart(); else { $('overlay').hidden = true; post('closeOverlay'); } }
+});
+if (new URLSearchParams(location.search).get('demo') === 'water') { render(sample); $('demo-label').hidden = false; }
+post('ready');
