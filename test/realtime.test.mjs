@@ -97,3 +97,42 @@ test('voice drawings use Terra Fast route, reject other tools, and deduplicate c
  assert.ok(f.sent.some(e=>e.item?.type==='function_call_output'&&JSON.parse(e.item.output).shown));
  f.voice.stop();
 });
+
+test('completed voice explanation calls stream a visual before confirming it is shown',async()=>{
+ const f=clientFixture();await f.voice.start();const s=f.voice.session;
+ const result={title:'Molecules',reply:'Atoms bond to form molecules.',scene:{objects:[]},diagram:{nodes:[{id:'o',label:'Oxygen',x:50,y:50,color:'#7298CF'}],links:[]},cards:[]};
+ let finish;const pending=new Promise(r=>finish=r);const requests=[];
+ f.voice.fetch=async(path,options)=>{
+  if(path==='/api/chat'){
+   requests.push(JSON.parse(options.body));
+   return new Response(new ReadableStream({start(controller){
+    controller.enqueue(new TextEncoder().encode(JSON.stringify({type:'preview',result})+'\n'));
+    pending.then(()=>{controller.enqueue(new TextEncoder().encode(JSON.stringify({type:'result',result})+'\n'));controller.close();});
+   }}));
+  }
+  return Response.json({stopped:true});
+ };
+ let previewed=false,rendered=false;f.voice.preview=()=>{previewed=true;};f.voice.render=()=>{rendered=true;};
+ const item={type:'function_call',name:'draw_visual',call_id:'implicit-molecules',arguments:JSON.stringify({prompt:'Explain how molecules work with labeled atoms and bonds.'})};
+ f.voice.handle(s,{type:'response.done',response:{status:'completed',output:[item]}});
+ await new Promise(r=>setImmediate(r));
+ assert.equal(requests.length,1);assert.equal(requests[0].mode,'draw');assert.equal(previewed,true);assert.equal(rendered,false);
+ assert.equal(f.sent.some(e=>e.item?.type==='function_call_output'),false);
+ finish();await new Promise(r=>setImmediate(r));
+ assert.equal(rendered,true);
+ const output=f.sent.find(e=>e.item?.type==='function_call_output');assert.equal(JSON.parse(output.item.output).shown,true);
+ assert.equal(f.sent.at(-1).type,'response.create');
+ f.voice.handle(s,{type:'response.done',response:{status:'completed',output:[item]}});await new Promise(r=>setImmediate(r));assert.equal(requests.length,1);
+ f.voice.stop();
+});
+test('cancelled voice responses cannot dispatch stale drawing calls',async()=>{
+ const f=clientFixture();await f.voice.start();const s=f.voice.session;
+ f.voice.handle(s,{type:'response.done',response:{status:'cancelled',output:[{type:'function_call',name:'draw_visual',call_id:'cancelled',arguments:JSON.stringify({prompt:'Old question'})}]}});
+ await new Promise(r=>setImmediate(r));assert.equal(f.requests.some(r=>r.path==='/api/chat'),false);assert.equal(s.seen.size,0);f.voice.stop();
+});
+test('voice drawing failures report shown:false so the voice can continue verbally',async()=>{
+ const f=clientFixture();await f.voice.start();const s=f.voice.session;
+ f.voice.fetch=async path=>path==='/api/chat'?new Response(JSON.stringify({type:'error',message:'Drawing model unavailable'})+'\n'):Response.json({stopped:true});
+ await f.voice.draw(s,{name:'draw_visual',call_id:'failed',arguments:JSON.stringify({prompt:'Explain molecule structure'})});
+ const output=f.sent.find(e=>e.item?.type==='function_call_output');assert.equal(JSON.parse(output.item.output).shown,false);assert.equal(f.sent.at(-1).type,'response.create');f.voice.stop();
+});

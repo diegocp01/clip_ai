@@ -65,7 +65,7 @@ export class VoiceConversation {
       case 'response.done':
         s.responding=false;
         if(event.response?.status==='failed'){this.fail(s,new Error('Realtime could not answer. Check API billing and model access.'));break;}
-        for(const item of event.response?.output||[])if(item.type==='function_call')void this.draw(s,item);
+        if(event.response?.status==='completed')for(const item of event.response.output||[])if(item.type==='function_call')void this.draw(s,item);
         this.flush(s);break;
       case 'error':
         if(event.error?.code!=='response_cancel_not_active')this.fail(s,new Error('Realtime voice error. Check your connection, API billing, and model access.'));
