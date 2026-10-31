@@ -11,7 +11,7 @@ for origin in [NSPoint.zero, NSPoint(x: -1710, y: 250)] {
     let right = NSRect(x: screen.minX + 947.5, y: left.minY, width: 762.5, height: 33.5)
     for expanded in [false, true] {
         let layout = IslandLayout(screen: screen, safeTop: 33.5, leftArea: left, rightArea: right, expanded: expanded)
-        expect(layout.frame.midX == screen.midX, "Island must follow display coordinates")
+        if expanded { expect(layout.frame.midX == screen.midX, "Island must follow display coordinates") }
         expect(layout.isNotched, "Hardware notch must be detected")
         if expanded {
             let bridge = layout.notchBridge!
@@ -24,11 +24,16 @@ for origin in [NSPoint.zero, NSPoint(x: -1710, y: 250)] {
             expect(layout.notchBridge == nil, "Collapsed island must not leave a connector below the notch")
             let onScreen = { (rect: NSRect, layout: IslandLayout) in rect.offsetBy(dx: layout.frame.minX, dy: layout.frame.minY) }
             let dot = layout.frame.width
-            expect(dot == 185 + 48, "Resting island must be only slightly wider than the camera")
+            expect(dot == 185 + 24, "Resting island must be only slightly wider than the camera")
+            expect(layout.frame.minX == left.maxX, "Resting island must not extend left of the camera")
+            expect(right.contains(onScreen(layout.dotArea, layout)), "Only the dot side may react to the pointer")
+            let hovered = IslandLayout(screen: screen, safeTop: 33.5, leftArea: left, rightArea: right, expanded: false, content: .dot, hovered: true)
+            expect(hovered.frame.width > dot && hovered.frame.minX == left.maxX, "Hover must grow the island to the right")
+            expect(hovered.dotFrame.width > layout.dotFrame.width && right.contains(onScreen(hovered.dotFrame, hovered)), "Hover must grow the dot beside the camera")
             expect(right.contains(onScreen(layout.dotFrame, layout)) && layout.frame.contains(onScreen(layout.dotFrame, layout)), "Dot must be visible entirely right of the physical camera")
             let audio = IslandLayout(screen: screen, safeTop: 33.5, leftArea: left, rightArea: right, expanded: false, content: .audio)
             expect(audio.frame.width > dot, "Audio must grow the island")
-            expect(audio.frame.midX == screen.midX, "Audio island must stay centered on the camera")
+            expect(audio.frame.minX == left.maxX, "Audio island must not extend left of the camera")
             expect(right.contains(onScreen(audio.activityFrame, audio)) && audio.frame.contains(onScreen(audio.activityFrame, audio)), "Activity indicator must be visible entirely right of the physical camera")
             for textWidth: CGFloat in [40, 600] {
                 let status = IslandLayout(screen: screen, safeTop: 33.5, leftArea: left, rightArea: right, expanded: false, content: .status(textWidth: textWidth))
@@ -51,6 +56,8 @@ for expanded in [false, true] {
 let unknown = IslandLayout(screen: external, safeTop: 30, leftArea: nil, rightArea: nil, expanded: false)
 expect(unknown.notchBridge == nil && unknown.frame.maxY == external.maxY - 30, "Missing notch bounds must fall back below the safe area")
 let audioPill = IslandLayout(screen: external, safeTop: 0, leftArea: nil, rightArea: nil, expanded: false, content: .audio)
+let hoveredPill = IslandLayout(screen: external, safeTop: 0, leftArea: nil, rightArea: nil, expanded: false, content: .dot, hovered: true)
+expect(hoveredPill.frame.width > 30 && hoveredPill.frame.midX == external.midX && hoveredPill.bounds.contains(hoveredPill.dotFrame), "Floating pill must grow around its dot on hover")
 expect(audioPill.frame.width == 40 && audioPill.bounds.contains(audioPill.activityFrame), "Floating pill must fit the waveform")
 let statusPill = IslandLayout(screen: external, safeTop: 0, leftArea: nil, rightArea: nil, expanded: false, content: .status(textWidth: 600))
 expect(statusPill.frame.width == 278 && statusPill.bounds.contains(statusPill.statusFrame), "Floating pill must cap and fit status text")
