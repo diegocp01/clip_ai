@@ -77,6 +77,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private let sensingLine = CAGradientLayer()
     private let sensingEye = CAGradientLayer()
     private var signalBar = SignalBar()
+    private let composerSignal = ComposerSignal(frame: ComposerSignal.stripFrame)
+    private var signalTask: URLSessionDataTask?
+    private var signalGeneration = 0
+    private var signalState = ""
     private var pointerOnIsland = false
     private let wakeSound = WakeSound()
     private var provider = AIProvider(rawValue: UserDefaults.standard.string(forKey: "aiProvider") ?? "") ?? .gpt
@@ -301,6 +305,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         loadingLine.opacity = 0
         for layer in [sensingLine, sensingEye, statusLine, loadingLine] { signalHost.layer?.addSublayer(layer) }
         islandView.addSubview(signalHost, positioned: .below, relativeTo: statusLabel)
+        islandView.addSubview(composerSignal)
+        expandedControls.append(composerSignal)
         buildGoo()
         prompt = NSTextField(frame: ComposerGeometry.input)
         prompt.placeholderString = ""
@@ -641,6 +647,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let sourceRadius = composerTransitioning ? composerSurface.currentRadius : (islandView.layer?.cornerRadius ?? 10)
         let sourceReveal = composerReveal
         expanded = value
+        if changed {
+            if value { composerSignal.signal = signalBar }
+            else { signalBar = composerSignal.signal; signalBar.pattern = nil }
+            composerSignal.setActive(value)
+            signalGeneration += 1
+            signalTask?.cancel(); signalTask = nil
+            signalState = ""
+            if value { refreshComposerSignal() }
+        }
         composerTransition += 1
         let generation = composerTransition
         composerTimer?.invalidate(); composerTimer = nil
@@ -1027,6 +1042,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         statusLabel.stringValue = text
         let working = ["Choosing model", "Thinking", "Drawing", "Replying", "Explaining", "Summarizing", "Translating", "Solving", "Exploring", "Speaking", "Listening", "Proofreading", "Rewriting"].contains { text.contains($0) }
         let problem = text == connectionProblem || text.contains("failed") || text.contains("unavailable")
+        refreshComposerSignal()
         activityMark.active = talking
         statusLabel.toolTip = text
         statusLabel.textColor = problem ? coral : .white
@@ -1042,6 +1058,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             }
         }
         layoutIsland()
+    }
+    private func refreshComposerSignal() {
+        guard expanded, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
+        let state = talking ? "speaking" : busy ? "working" : connectionProblem != nil ? "attention" : "ready"
+        guard signalState != state else { return }
+        signalState = state
+        signalGeneration += 1
+        let generation = signalGeneration
+        signalTask?.cancel()
+        let tokenRequest = URLRequest(url: baseURL.appendingPathComponent("api/session"), timeoutInterval: 3)
+        signalTask = URLSession.shared.dataTask(with: tokenRequest) { [weak self] data, _, _ in
+            DispatchQueue.main.async {
+                guard let self, self.expanded, self.signalGeneration == generation,
+                      let data, let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: String], let token = object["token"] else { return }
+                var request = URLRequest(url: baseURL.appendingPathComponent("api/signal"), timeoutInterval: 4)
+                request.httpMethod = "POST"
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                request.setValue(token, forHTTPHeaderField: "X-Clippy-Session")
+                request.httpBody = try? JSONSerialization.data(withJSONObject: ["state": state])
+                self.signalTask = URLSession.shared.dataTask(with: request) { [weak self] data, response, _ in
+                    DispatchQueue.main.async {
+                        guard let self, self.expanded, self.signalGeneration == generation,
+                              (response as? HTTPURLResponse)?.statusCode == 200,
+                              let data, let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: String], let pattern = object["pattern"] else { return }
+                        self.composerSignal.choose(pattern)
+                    }
+                }
+                self.signalTask?.resume()
+            }
+        }
+        signalTask?.resume()
     }
     private func setConnection(_ problem: String?) {
         guard problem != connectionProblem else { return }

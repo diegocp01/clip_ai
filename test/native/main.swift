@@ -349,3 +349,20 @@ let restoredChat = ChatPreferences(models: chatModels, defaults: preferences)
 expect(restoredChat.isAuto && restoredChat.manual.effort(for: "gpt") == "ultra", "Auto and manual settings persist independently")
 expect(choices.request(for: "gpt") == drawBefore, "Restoring chat must not mutate Draw")
 print("Chat Auto persistence and Draw isolation passed.")
+
+assert(ComposerSignal.stripFrame.maxY <= ComposerGeometry.size.height)
+assert(!ComposerSignal.stripFrame.intersects(ComposerGeometry.modelCaption))
+assert(!ComposerSignal.stripFrame.intersects(ComposerGeometry.input))
+for pattern in ["line", "eyes", "wave"] {
+    var signal = SignalBar(); signal.pattern = pattern
+    for i in 0..<900 {
+        signal.step(1.0 / 30, pointer: i < 450 ? -1 : 1)
+        let bars = signal.bars(line: CGRect(x: 45, y: 3.75, width: 130, height: 2.5), room: 24)
+        for rect in [bars.left, bars.right] {
+            assert(rect.width > 0 && rect.height > 0)
+            assert(rect.minX >= 0 && rect.maxX <= 220 && rect.minY >= 0 && rect.maxY <= 10)
+        }
+    }
+    assert(signal.isEyes == (pattern == "eyes"))
+}
+print("Expanded signal stays within its strip and clear of caption/input.")
