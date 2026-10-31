@@ -2,17 +2,36 @@ import AppKit
 
 /// Expanded-only metrics. The compact signal/hover geometry is independent.
 enum ComposerGeometry {
-    static let size = NSSize(width: 440, height: 176)
+    static let size = NSSize(width: 480, height: 238)
     static let cornerRadius: CGFloat = 28
-    static let prompt = NSRect(x: 18, y: 65, width: 344, height: 48)
-    static let send = NSRect(x: 374, y: 65, width: 48, height: 48)
-    static let collapse = NSRect(x: 392, y: 134, width: 30, height: 26)
-    static let provider = NSRect(x: 310, y: 134, width: 74, height: 26)
-    static let screen = NSRect(x: 18, y: 18, width: 100, height: 30)
-    static let talk = NSRect(x: 126, y: 18, width: 70, height: 30)
-    static let voice = NSRect(x: 204, y: 18, width: 32, height: 30)
-    static let tier = NSRect(x: 250, y: 18, width: 120, height: 30)
-    static let more = NSRect(x: 386, y: 18, width: 36, height: 30)
+    static let prompt = NSRect(x: 90, y: 112, width: 300, height: 68)
+    static let input = NSRect(x: 106, y: 135, width: 226, height: 22)
+    static let send = NSRect(x: 342, y: 128, width: 36, height: 36)
+    static let collapse = NSRect(x: 420, y: 194, width: 28, height: 28)
+    static let screen = NSRect(x: 52, y: 88, width: 36, height: 36)
+    static let talk = NSRect(x: 110, y: 40, width: 36, height: 36)
+    static let voice = NSRect(x: 182, y: 16, width: 36, height: 36)
+    static let tier = NSRect(x: 334, y: 40, width: 36, height: 36)
+    static let provider = NSRect(x: 262, y: 16, width: 36, height: 36)
+    static let more = NSRect(x: 392, y: 88, width: 36, height: 36)
+
+    /// A shallow bowl with flat shoulders at the camera edge. Coordinates scale
+    /// with the window during the existing compact-to-expanded morph.
+    static func shellPath(in rect: NSRect) -> NSBezierPath {
+        let w = rect.width, h = rect.height
+        func point(_ x: CGFloat, _ y: CGFloat) -> NSPoint {
+            NSPoint(x: rect.minX + x * w, y: rect.minY + y * h)
+        }
+        let path = NSBezierPath()
+        path.move(to: point(0.035, 1))
+        path.line(to: point(0.965, 1))
+        path.curve(to: point(1, 0.93), controlPoint1: point(0.99, 1), controlPoint2: point(1, 0.98))
+        path.curve(to: point(0.5, 0), controlPoint1: point(1, 0.34), controlPoint2: point(0.80, 0))
+        path.curve(to: point(0, 0.93), controlPoint1: point(0.20, 0), controlPoint2: point(0, 0.34))
+        path.curve(to: point(0.035, 1), controlPoint1: point(0, 0.98), controlPoint2: point(0.01, 1))
+        path.close()
+        return path
+    }
 
     /// Keep the real compact frame as the source: never flatten the material
     /// into a one-pixel strip or jump it below the camera before opening.
@@ -103,11 +122,11 @@ struct IslandLayout {
         let center = notch?.midX ?? screen.midX
         let top = screen.maxY - max(safeTop, notch == nil ? 4 : 0)
         frame = NSRect(x: center - width / 2, y: top - height, width: width, height: height)
-        statusFrame = expanded ? NSRect(x: 48, y: 137, width: 256, height: 20)
+        statusFrame = expanded ? NSRect(x: 210, y: 199, width: 195, height: 20)
                                : NSRect(x: 26, y: 2, width: textWidth, height: 18)
-        activityFrame = expanded ? NSRect(x: 18, y: 137, width: 24, height: 20)
+        activityFrame = expanded ? NSRect(x: 180, y: 199, width: 24, height: 20)
                                  : NSRect(x: 8, y: 1, width: 24, height: 20)
-        if expanded { lineFrame = NSRect(x: 28.5, y: 140, width: 3, height: 14) }
+        if expanded { lineFrame = NSRect(x: 193, y: 202, width: 3, height: 14) }
         else if awake { lineFrame = NSRect(x: 10, y: 3, width: width - 20, height: 2) }
         else { lineFrame = NSRect(x: content == .idle ? (width - 3) / 2 : 12, y: (height - 14) / 2, width: 3, height: 14) }
         wakeArea = NSRect(x: 0, y: 0, width: width, height: height)
