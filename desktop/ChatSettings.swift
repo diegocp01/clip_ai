@@ -19,7 +19,7 @@ final class ChatPreferences {
         manual = DrawingPreferences(models: models, defaults: defaults, namespace: "chat")
     }
     var isAuto: Bool {
-        get { defaults.bool(forKey: "chatAuto") }
+        get { defaults.object(forKey: "chatAuto") == nil || defaults.bool(forKey: "chatAuto") }
         set { defaults.set(newValue, forKey: "chatAuto") }
     }
     func request(for provider: String) -> [String: String] {

@@ -345,11 +345,12 @@ print("Selected-text word counting, badge geometry and selection identity passed
 let chatModels = try JSONDecoder().decode([DrawingModel].self, from: Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[2])))
 let chat = ChatPreferences(models: chatModels, defaults: preferences)
 let drawBefore = choices.request(for: "gpt")
-chat.isAuto = true
+expect(chat.isAuto, "Chat defaults to Auto before the user makes a selection")
 expect(chat.request(for: "gpt")["model"] == "auto" && chat.request(for: "gpt")["reasoningEffort"] == "auto", "Auto owns both model and effort")
 expect(chat.request(for: "gpt")["mode"] == "chat", "Auto is chat only")
 expect(choices.request(for: "gpt") == drawBefore, "Auto must not mutate Draw preferences")
 chat.isAuto = false
+expect(!ChatPreferences(models: chatModels, defaults: preferences).isAuto, "An explicit manual choice survives relaunch")
 chat.manual.select(model: "gpt-6-astra", provider: "gpt")
 chat.manual.select(effort: "ultra", provider: "gpt")
 expect(chat.request(for: "gpt")["reasoningEffort"] == "ultra", "Chat supports all GPT reasoning efforts")
