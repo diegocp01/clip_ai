@@ -107,7 +107,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var captureButton: NSButton!
     private var voiceButton: NSButton!
     private var providerControl: NSButton!
-    private var modelCaption: NSTextField!
+    private var modelCaption: NSButton!
+    private lazy var drawingSettings = DrawingPreferences(models: DrawingModel.bundled())
+    private var modelHoverStarted: TimeInterval?
+    private var modelMenuLatched = false
     private var expanded = false
     private var overlayReady = false
     private var hitTestTimer: Timer?
@@ -305,12 +308,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         expandedControls.append(prompt)
         collapseButton = button("Collapse island", frame: ComposerGeometry.collapse, action: #selector(collapseIsland), symbol: "chevron.up", iconOnly: true)
         collapseButton.toolTip = "Make smaller · Esc or ⌃⌥Space"
-        modelCaption = NSTextField(labelWithString: "")
+        modelCaption = NSButton(title: "", target: self, action: #selector(showModelSettings))
         modelCaption.frame = ComposerGeometry.modelCaption
         modelCaption.font = .systemFont(ofSize: 10, weight: .light)
-        modelCaption.textColor = NSColor.white.withAlphaComponent(0.46)
+        modelCaption.isBordered = false
+        modelCaption.contentTintColor = NSColor.white.withAlphaComponent(0.46)
+        modelCaption.toolTip = "Hover or click to choose a model and reasoning effort"
         modelCaption.alignment = .center
-        modelCaption.lineBreakMode = .byTruncatingTail
+        modelCaption.cell?.lineBreakMode = .byTruncatingTail
         islandView.addSubview(modelCaption)
         expandedControls.append(modelCaption)
         captureButton = button("Screen", frame: ComposerGeometry.screen, action: #selector(captureScreen), symbol: "rectangle.dashed", iconOnly: true)
@@ -452,6 +457,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             updateDwell(pointer: pointer, inside: false, dt: dt)
             let point = island.isVisible && menuTrackingDepth == 0
                 ? NSPoint(x: pointer.x - island.frame.minX, y: pointer.y - island.frame.minY) : nil
+            if menuTrackingDepth == 0 {
+                let overCaption = point.map { ComposerGeometry.modelCaption.insetBy(dx: -6, dy: -5).contains($0) } ?? false
+                if overCaption && !busy && !modelCaption.isHidden {
+                    if modelHoverStarted == nil { modelHoverStarted = now }
+                    if !modelMenuLatched, now - (modelHoverStarted ?? now) >= 0.25 {
+                        modelMenuLatched = true
+                        showModelSettings()
+                    }
+                } else {
+                    modelHoverStarted = nil
+                    modelMenuLatched = false
+                }
+            }
             composerSurface.updateHover(at: point, details: [
                 attachedImage == nil ? "Attach a screenshot to your next question." : "Remove the attached screenshot.",
                 voiceRequested ? "End the live voice conversation." : "Start a live voice conversation.",
@@ -1058,14 +1076,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             ?? NSImage(systemSymbolName: provider == .claude ? "sparkle" : "cpu", accessibilityDescription: name)
         providerControl.setAccessibilityLabel("Model: \(name). Switch to \(next)")
         providerControl.toolTip = "Using \(name) · click to switch to \(next)"
-        modelCaption.stringValue = provider == .claude ? "Claude · …" : "GPT · …"
+        updateDrawingSettings()
     }
-    private func updateModelCaption(_ status: [String: Any]) {
-        guard status["provider"] as? String == provider.rawValue,
-              let model = status["model"] as? String,
-              let effort = status["reasoningEffort"] as? String else { return }
-        let name = ["gpt-6.1-terra": "GPT-6.1 Terra", "claude-sonnet-5-5": "Claude Sonnet 5.5"][model] ?? model
-        modelCaption.stringValue = "\(name) · \(effort.capitalized) effort"
+    private func updateDrawingSettings() {
+        modelCaption.title = drawingSettings.caption(for: provider.rawValue)
+        modelCaption.setAccessibilityLabel("\(modelCaption.title). Choose model and reasoning effort")
+        let settings = drawingSettings.request(for: provider.rawValue)
+        if let data = try? JSONSerialization.data(withJSONObject: settings), let json = String(data: data, encoding: .utf8) {
+            webView?.evaluateJavaScript("window.clippyVoice?.setDrawingSettings(\(json)); void 0;")
+        }
+    }
+    @objc private func showModelSettings() {
+        guard expanded, !busy, !composerTransitioning, menuTrackingDepth == 0 else { return }
+        modelMenuLatched = true
+        composerSurface.updateHover(at: nil, details: [])
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        let current = drawingSettings.model(for: provider.rawValue)
+        let heading = NSMenuItem(title: "Drawing model", action: nil, keyEquivalent: "")
+        heading.isEnabled = false
+        menu.addItem(heading)
+        for model in drawingSettings.choices(for: provider.rawValue) {
+            let item = NSMenuItem(title: model.name, action: #selector(selectDrawingModel(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = model.id
+            item.state = current.id == model.id ? .on : .off
+            menu.addItem(item)
+        }
+        menu.addItem(.separator())
+        let effortHeading = NSMenuItem(title: "Reasoning effort", action: nil, keyEquivalent: "")
+        effortHeading.isEnabled = false
+        menu.addItem(effortHeading)
+        for effort in current.efforts {
+            let item = NSMenuItem(title: DrawingPreferences.effortTitle(effort), action: #selector(selectDrawingEffort(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = effort
+            item.state = drawingSettings.effort(for: provider.rawValue) == effort ? .on : .off
+            menu.addItem(item)
+        }
+        menu.popUp(positioning: nil, at: NSPoint(x: modelCaption.frame.minX, y: modelCaption.frame.minY), in: islandView)
+    }
+    @objc private func selectDrawingModel(_ item: NSMenuItem) {
+        guard let id = item.representedObject as? String else { return }
+        drawingSettings.select(model: id, provider: provider.rawValue)
+        updateDrawingSettings()
+    }
+    @objc private func selectDrawingEffort(_ item: NSMenuItem) {
+        guard let effort = item.representedObject as? String else { return }
+        drawingSettings.select(effort: effort, provider: provider.rawValue)
+        updateDrawingSettings()
     }
     // Remembered across launches, and applies to the next question.
     private func setProvider(_ value: AIProvider) {
@@ -1086,7 +1145,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             DispatchQueue.main.async {
                 guard let self else { return }
                 if let data, let value = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any], value["model"] != nil {
-                    self.updateModelCaption(value)
                     self.setConnection(value["authenticated"] as? Bool == true ? nil : self.provider.signInRequired)
                     self.webView.load(URLRequest(url: baseURL.appendingPathComponent("overlay.html")))
                     self.startHealthMonitor()
@@ -1117,7 +1175,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 guard let data, let value = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any], value["model"] != nil else {
                     self.setConnection(serverUnavailable); return
                 }
-                self.updateModelCaption(value)
                 if value["authenticated"] as? Bool != true { self.setConnection(self.provider.signInRequired) }
                 else { self.setConnection(self.overlayReady ? nil : drawingUnavailable) }
                 if !self.overlayReady { self.webView.load(URLRequest(url: baseURL.appendingPathComponent("overlay.html"))) }
@@ -1164,6 +1221,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         responseBuffer = Data()
         responseStatus = 200
         resultReceived = false
+        let selectedSettings = drawingSettings.request(for: provider.rawValue)
         let tokenRequest = URLRequest(url: baseURL.appendingPathComponent("api/session"), timeoutInterval: 10)
         requestTask = URLSession.shared.dataTask(with: tokenRequest) { [weak self] data, _, error in
             DispatchQueue.main.async {
@@ -1175,7 +1233,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 request.httpMethod = "POST"
                 request.setValue("application/json", forHTTPHeaderField: "Content-Type")
                 request.setValue(token, forHTTPHeaderField: "X-Clippy-Session")
-                let body: [String: Any] = ["message": message, "tier": "fast", "provider": self.provider.rawValue, "history": Array(self.history.suffix(12)), "previous": self.previous as Any? ?? NSNull(), "image": self.attachedImage as Any? ?? NSNull()]
+                let body: [String: Any] = ["message": message, "tier": "fast", "provider": selectedSettings["provider"]!, "model": selectedSettings["model"]!, "reasoningEffort": selectedSettings["reasoningEffort"]!, "history": Array(self.history.suffix(12)), "previous": self.previous as Any? ?? NSNull(), "image": self.attachedImage as Any? ?? NSNull()]
                 guard let encoded = try? JSONSerialization.data(withJSONObject: body) else { self.finishRequest(); self.showError("Could not prepare the request."); return }
                 request.httpBody = encoded
                 self.requestTask = self.streamingSession.dataTask(with: request)
@@ -1291,6 +1349,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         switch action {
         case "ready":
             overlayReady = true
+            updateDrawingSettings()
             if connectionProblem == drawingUnavailable { setConnection(nil) }
             if let previous { render(previous) }
         case "followup": if let text = data["text"] as? String, !text.isEmpty, text.count <= 6000 { generate(text) }
@@ -1327,6 +1386,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         overlay.orderFrontRegardless()
         let generation = voiceGeneration
         updateTalkButton(); setStatus("Connecting live voice…")
+        updateDrawingSettings()
         AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
             DispatchQueue.main.async {
                 guard let self, self.voiceRequested, self.voiceGeneration == generation else { return }

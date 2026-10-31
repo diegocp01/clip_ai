@@ -297,3 +297,23 @@ for point in [NSPoint(x: -1, y: 100), NSPoint(x: 480, y: 0), NSPoint(x: 240, y: 
     expect(ComposerGeometry.option(at: point) == nil, "Leaving the shell clears the option")
 }
 print("Composer hover sectors and central input exclusion passed.")
+
+// Selection persistence and provider isolation use the same catalog as the server.
+let models = try JSONDecoder().decode([DrawingModel].self, from: Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[1])))
+let suite = "clippy-model-tests-\(UUID().uuidString)"
+let preferences = UserDefaults(suiteName: suite)!
+defer { preferences.removePersistentDomain(forName: suite) }
+let choices = DrawingPreferences(models: models, defaults: preferences)
+expect(choices.model(for: "gpt").id == "gpt-6.1-terra", "GPT default must stay Terra")
+choices.select(model: "gpt-6.1-sol", provider: "gpt")
+choices.select(effort: "high", provider: "gpt")
+expect(choices.model(for: "claude").id == "claude-sonnet-5-5", "Provider selections must stay independent")
+choices.select(model: "claude-opus-5-5", provider: "gpt")
+expect(choices.model(for: "gpt").id == "gpt-6.1-sol", "Reject cross-provider models")
+choices.select(effort: "invalid", provider: "gpt")
+expect(choices.effort(for: "gpt") == "high", "Reject unsupported efforts")
+let restored = DrawingPreferences(models: models, defaults: preferences)
+expect(restored.request(for: "gpt")["model"] == "gpt-6.1-sol" && restored.request(for: "gpt")["reasoningEffort"] == "high", "Model and effort must survive a relaunch")
+restored.select(model: "gpt-6.1-terra", provider: "gpt")
+expect(restored.effort(for: "gpt") == "low", "Each model keeps its own effort")
+print("Drawing model and effort preferences passed.")

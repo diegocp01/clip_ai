@@ -71,3 +71,15 @@ test('disconnect cancels active model generation',async t=>{
   const reader=res.body.getReader();await reader.read();controller.abort();
   await Promise.race([cancelled,new Promise((_,reject)=>{const timer=setTimeout(()=>reject(new Error('not cancelled')),2000);timer.unref();})]);
 });
+
+test('drawing selections validate provider and effort and reach the GPT transport',async()=>{
+  const request=normalizeRequest({message:'water',model:'gpt-6.1-sol',reasoningEffort:'high'});
+  let seen;
+  const out=await generate(request,{transport:async args=>{seen=args;return {raw:JSON.stringify(result),usage:null};}});
+  assert.equal(seen.model,'gpt-6.1-sol');assert.equal(seen.reasoningEffort,'high');
+  assert.equal(seen.tier,'fast');assert.equal(out.model,'gpt-6.1-sol');assert.equal(out.reasoningEffort,'high');
+  for(const input of [
+    {model:'claude-opus-5-5'}, {provider:'claude',model:'gpt-6.1-sol'},
+    {model:'arbitrary-model'}, {reasoningEffort:'ultra'}, {reasoningEffort:'--tools'}
+  ])assert.throws(()=>normalizeRequest({message:'test',...input}));
+});

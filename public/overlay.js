@@ -56,6 +56,7 @@ window.clippyVoice = {
   setVisual: result => { voice.previous=result; },
   setMuted: value => voice.setMuted(value),
   setProvider: value => voice.setProvider(value),
+  setDrawingSettings: value => voice.setDrawingSettings(value),
 };
 window.addEventListener('pagehide',()=>voice.stop());
 window.clippyHitTest = (x, y) => {

@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node server/index.mjs",
     "test": "node --test test/*.test.mjs",
-    "check": "node --check server/index.mjs && node --check server/codex.mjs && node --check server/claude.mjs && node --check server/schema.mjs && node --check server/edit.mjs && node --check public/app.js && node --check public/scene.js && node --check public/overlay.js && node --check server/realtime.mjs && node --check public/voice.js && node --check server/codex-stream.mjs && node --check server/visual-stream.mjs && node --check public/stream.js",
+    "check": "node --check server/index.mjs && node --check server/codex.mjs && node --check server/claude.mjs && node --check server/schema.mjs && node --check server/edit.mjs && node --check public/app.js && node --check public/scene.js && node --check public/overlay.js && node --check server/realtime.mjs && node --check public/voice.js && node --check server/codex-stream.mjs && node --check server/visual-stream.mjs && node --check public/stream.js && node --check server/drawing-settings.mjs",
     "smoke": "node scripts/smoke.mjs",
     "desktop:build": "bash scripts/build-desktop.sh"
   },
