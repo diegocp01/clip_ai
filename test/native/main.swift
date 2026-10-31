@@ -345,6 +345,28 @@ let narrowReplySize = ReplyCardLayout.size(text: "Readable", available: NSSize(w
 assert(narrowReplySize.width <= 312)
 print("Reply cards fit short, long and narrow-screen answers without limiting text.")
 
+let replyScreen = NSRect(x: 0, y: 0, width: 1440, height: 900)
+let replyComposer = NSRect(x: 480, y: 700, width: 480, height: 200)
+let anchoredReply = ReplyCardLayout.frame(size: shortReplySize, under: replyComposer, visibleFrame: replyScreen)
+expect(anchoredReply.midX == replyComposer.midX, "The reply must center under the semicircle")
+expect(anchoredReply.maxY == replyComposer.minY - ReplyCardLayout.gap, "The reply belongs below the semicircle, not at the bottom of the screen")
+let collapsedReply = ReplyCardLayout.frame(size: shortReplySize, under: NSRect(x: 700, y: 880, width: 40, height: 20), visibleFrame: replyScreen)
+expect(collapsedReply.maxY == 880 - ReplyCardLayout.gap, "The reply follows a collapsed notch without overlap")
+let externalScreen = NSRect(x: -1920, y: -300, width: 1920, height: 1080)
+let edgeReply = ReplyCardLayout.frame(size: longReplySize, under: NSRect(x: -1900, y: 600, width: 480, height: 200), visibleFrame: externalScreen)
+expect(externalScreen.contains(edgeReply), "The full reply stays on the source display, including negative screen origins")
+let greetingResult: [String: Any] = ["title": "Hello", "reply": "Hi! How can I help?", "scene": ["objects": []], "diagram": ["nodes": [], "links": []], "cards": [], "annotations": []]
+expect(!ReplyCardLayout.hasVisual(greetingResult), "A greeting must not create a second title-only drawing overlay")
+for visual in [
+    ["scene": ["objects": [["id": "oxygen"]]]],
+    ["diagram": ["nodes": [["id": "idea"]]]],
+    ["cards": [["title": "Context"]]],
+    ["annotations": [["kind": "circle"]]]
+] as [[String: Any]] {
+    expect(ReplyCardLayout.hasVisual(visual), "Real visuals must remain available alongside the one reply bubble")
+}
+print("Single replies anchor below the composer; titles alone never count as a drawing.")
+
 // Reopening and relaunching should feel fresh without an API or context access.
 var greetings = OpeningGreeting(defaults: preferences)
 var seenGreetings = Set<String>()
