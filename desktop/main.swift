@@ -17,7 +17,8 @@ final class FloatingPanel: NSPanel {
 }
 final class IslandView: NSView {
     var onExpand: (() -> Void)?
-    override func mouseDown(with event: NSEvent) { onExpand?() }
+    var acceptsClick: (() -> Bool)?
+    override func mouseDown(with event: NSEvent) { if acceptsClick?() != false { onExpand?() } }
     override func accessibilityPerformPress() -> Bool { onExpand?(); return true }
 }
 
@@ -76,6 +77,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var tipY = Spring(stiffness: 210, damping: 20)
     private var tether = GooTether()
     private var droplet: GooDroplet?
+    private var pointerOnGlue = false { didSet { gooPanel.ignoresMouseEvents = !pointerOnGlue } }
     private var wakeEnds: (rest: IslandLayout, awake: IslandLayout)?
     private var wakeRegion = NSRect.zero
     private var frameTimer: Timer?
@@ -216,6 +218,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         islandView.layer?.borderWidth = 0.5
         islandView.layer?.cornerCurve = .continuous
         islandView.onExpand = { [weak self] in if self?.expanded == false { self?.setExpanded(true, focus: true) } }
+        // While idle only the green area opens it. Text and errors stay clickable anywhere.
+        islandView.acceptsClick = { [weak self] in
+            guard let self, self.currentStatus == "Ready", !self.talking, !self.expanded else { return true }
+            return self.pointerOnIsland || self.wakeRegion.insetBy(dx: 0, dy: -1).contains(NSEvent.mouseLocation)
+        }
         island.contentView = islandView
         islandView.setAccessibilityElement(true)
         islandView.setAccessibilityRole(.button)
@@ -287,17 +294,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         _ = button("More options", frame: NSRect(x: 352, y: 14, width: 32, height: 26), action: #selector(showIslandOptions(_:)), symbol: "ellipsis", iconOnly: true)
         setExpanded(false)
     }
-    // Liquid can reach past the island, so it has its own click-through panel below it.
-    // Inside the island's window it would block clicks on the menu bar.
+    // Liquid can reach past the island, so it has its own panel below it, click-through
+    // unless the pointer is on the liquid. In the island's window it would block the menu bar.
     private func buildGoo() {
         gooPanel = panel(.zero, level: island.level)
         gooPanel.title = "Clippy liquid edge"
         gooPanel.ignoresMouseEvents = true
         gooPanel.setAccessibilityElement(false)
-        let host = NSView(frame: .zero)
+        let host = IslandView(frame: .zero)
         host.layer = CALayer()
         host.wantsLayer = true
         host.autoresizingMask = [.width, .height]
+        host.onExpand = islandView.onExpand
         gooPanel.contentView = host
         gooFill.fillColor = NSColor.black.cgColor
         gooInnerMask.fillColor = NSColor.white.cgColor
@@ -365,7 +373,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let inside = island.isVisible && region.contains(pointer)
         if wakeEnds?.rest.isNotched == true, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             let outline = IslandOutline(rect: island.frame)
-            if tether.update(inside: inside, distance: outline.distance(to: pointer), pressed: NSEvent.pressedMouseButtons != 0, dt: dt) { separateGoo() }
+            let clickedAway = NSEvent.pressedMouseButtons != 0 && !pointerOnGlue
+            if tether.update(inside: inside, distance: outline.distance(to: pointer), pressed: clickedAway, dt: dt) { separateGoo() }
         } else { tether.attached = inside }
         guard tether.attached != pointerOnIsland else { return }
         pointerOnIsland = tether.attached
@@ -548,6 +557,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             stopFrames()
             wakeRegion = .zero
             wake.jump(to: 0); tether.attached = false; pointerOnIsland = false; droplet = nil
+            if pointerOnGlue { pointerOnGlue = false }
         }
         updateSignal(content: content, layout: layout)
         if island.frame.isEmpty || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
@@ -610,6 +620,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         stepGoo(dt)
         if wake.isSettled, wake.value == 0, droplet == nil, tipX.isSettled, tipY.isSettled {
             stopFrames()
+            if pointerOnGlue { pointerOnGlue = false }
             layoutIsland()
         }
     }
@@ -653,7 +664,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             // The blob reaches most of the way, then the pointer pulls away from it.
             let anchor = outline.point(at: outline.nearest(to: pointer))
             let gap = outline.rect.contains(pointer) ? 0 : hypot(pointer.x - anchor.x, pointer.y - anchor.y)
-            let reach = min(gap * 0.8, 70) / max(gap, 1)
+            let reach = min(gap * 0.9, 70) / max(gap, 1)
             target = CGPoint(x: anchor.x + (pointer.x - anchor.x) * reach, y: anchor.y + (pointer.y - anchor.y) * reach)
             tipX.stiffness = 210; tipY.stiffness = 210; tipX.damping = 20; tipY.damping = 20
         } else {
@@ -662,6 +673,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
         tipX.target = target.x; tipY.target = target.y
         tipX.step(dt); tipY.step(dt)
+        let onGlue = pointerOnIsland && GooShape.touches(outline: outline, tip: CGPoint(x: tipX.value, y: tipY.value), point: pointer)
+        if onGlue != pointerOnGlue { pointerOnGlue = onGlue }
         if var drop = droplet {
             drop.center.x += drop.velocity.x * dt; drop.center.y += drop.velocity.y * dt
             drop.radius -= 28 * dt
@@ -683,7 +696,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
         let fill = CGMutablePath()
         fill.addPath(liquid)
-        fill.addPath(GooShape.shoulders(rect: outline.rect), transform: toPanel)
+        fill.addPath(GooShape.shoulders(rect: outline.rect, radius: mix(8, 16, min(max(wake.value, 0), 1))), transform: toPanel)
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         let local = CGRect(origin: .zero, size: bounds.size)

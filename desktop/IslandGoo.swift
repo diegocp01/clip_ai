@@ -113,6 +113,11 @@ enum GooShape {
         path.closeSubpath()
         return path
     }
+    /// Whether a point is on the blob, with some room around it because the pointer pulls ahead of the tip.
+    static func touches(outline: IslandOutline, tip: CGPoint, point: CGPoint) -> Bool {
+        guard !outline.rect.contains(point), let blob = blob(outline: outline, tip: tip) else { return false }
+        return blob.contains(point) || blob.copy(strokingWithWidth: 24, lineCap: .round, lineJoin: .round, miterLimit: 1).contains(point)
+    }
     /// Concave corners that melt the island's top edge into the menu bar.
     static func shoulders(rect: CGRect, radius: CGFloat = 8) -> CGPath {
         let path = CGMutablePath()

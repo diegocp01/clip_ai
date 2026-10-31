@@ -40,7 +40,7 @@ struct IslandLayout {
         if let notch, !expanded {
             let leftWing: CGFloat, rightWing: CGFloat
             switch content {
-            case .idle: leftWing = hovered ? 44 : 0; rightWing = hovered ? 44 : 24
+            case .idle: leftWing = hovered ? 24 : 0; rightWing = 24
             case .audio: leftWing = 0; rightWing = 36
             case .status(let textWidth): leftWing = min(textWidth + 20, 130); rightWing = 24
             }
@@ -49,7 +49,7 @@ struct IslandLayout {
             let drop: CGFloat = awake ? 10 : 0
             frame = NSRect(x: notch.minX - leftWing, y: notch.minY - drop,
                            width: notch.width + leftWing + rightWing, height: notch.height + drop)
-            cornerRadius = awake ? 14 : 10
+            cornerRadius = awake ? 18 : 10
             notchBridge = nil
             statusFrame = NSRect(x: 12, y: (notch.height - 18) / 2, width: max(leftWing - 20, 0), height: 18)
             activityFrame = NSRect(x: leftWing + notch.width + (rightWing - 24) / 2,

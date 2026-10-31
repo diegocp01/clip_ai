@@ -28,7 +28,7 @@ for origin in [NSPoint.zero, NSPoint(x: -1710, y: 250)] {
             expect(layout.frame.minX == left.maxX, "Resting island must not extend left of the camera")
             expect(right.contains(onScreen(layout.wakeArea, layout)), "Only the line's side may wake the island")
             let hovered = IslandLayout(screen: screen, safeTop: 33.5, leftArea: left, rightArea: right, expanded: false, content: .idle, hovered: true)
-            expect(hovered.frame.width == 185 + 88 && hovered.frame.midX == screen.midX, "Hover must grow the island evenly on both sides")
+            expect(hovered.frame.width == 185 + 48 && hovered.frame.midX == screen.midX, "Hover must grow only slightly and evenly past the camera, leaving no empty blocks")
             expect(onScreen(hovered.wakeArea, hovered) == hovered.frame, "The whole awake island must keep it awake")
             expect(hovered.frame.maxY == screen.maxY && hovered.frame.minY < left.minY, "Awake island must stay on the screen edge and hang below the camera")
             let sensing = onScreen(hovered.lineFrame, hovered)
@@ -105,6 +105,14 @@ for tip in [CGPoint(x: 200, y: 150), CGPoint(x: 400, y: 220), CGPoint(x: 390, y:
     expect(box.insetBy(dx: -1, dy: -1).contains(tip), "Blob must reach its tip")
     expect(box.intersects(island.rect), "Blob must stay joined to the island")
 }
+// Clicks count on the blob and just around it, never on the island itself or further away.
+let tip = CGPoint(x: 200, y: 150)
+expect(GooShape.touches(outline: island, tip: tip, point: CGPoint(x: 200, y: 160)), "A point inside the blob must count")
+expect(GooShape.touches(outline: island, tip: tip, point: CGPoint(x: 200, y: 142)), "A point just past the tip must count")
+expect(!GooShape.touches(outline: island, tip: tip, point: CGPoint(x: 200, y: 100)), "A point far past the tip must not count")
+expect(!GooShape.touches(outline: island, tip: tip, point: CGPoint(x: 300, y: 160)), "A point beside the blob must not count")
+expect(!GooShape.touches(outline: island, tip: tip, point: CGPoint(x: 200, y: 220)), "The island handles its own clicks")
+expect(!GooShape.touches(outline: island, tip: CGPoint(x: 200, y: 220), point: CGPoint(x: 200, y: 180)), "No blob must mean no click")
 expect(GooShape.blob(outline: island, tip: CGPoint(x: 200, y: 220)) == nil, "A tip inside the island must draw nothing")
 expect(GooShape.blob(outline: island, tip: CGPoint(x: 200, y: 199.5)) == nil, "A tip on the edge must draw nothing")
 print("Native island layout checks passed (notched, shifted, external, and missing bounds).")
