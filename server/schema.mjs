@@ -37,6 +37,11 @@ const requestSchema = object({
 });
 const ajv = new Ajv({allErrors:true});
 const validateResult = ajv.compile(resultSchema);
+export const threeDResultSchema = {...resultSchema,properties:{...resultSchema.properties,
+  scene:object({objects:{...resultSchema.properties.scene.properties.objects,minItems:1}}),
+  diagram:object({nodes:array(resultSchema.properties.diagram.properties.nodes.items,0),links:array(resultSchema.properties.diagram.properties.links.items,0)}),
+  cards:array(resultSchema.properties.cards.items,0),
+}};
 const validateRequest = ajv.compile(requestSchema);
 export function assertResult(value) {
   // Old conversation visuals remain readable after the annotation upgrade.
@@ -47,6 +52,11 @@ export function assertResult(value) {
   }
   const ids = new Set(value.diagram.nodes.map(n=>n.id));
   if (value.diagram.links.some(l=>!ids.has(l.from)||!ids.has(l.to))) throw new Error('The model returned a link to a missing diagram node. Please try again.');
+  return value;
+}
+export function assertThreeDResult(value) {
+  assertResult(value);
+  if(!value.scene.objects.length||value.diagram.nodes.length||value.cards.length)throw Error('The 3D response needs a model, not a diagram or text cards. Please try again.');
   return value;
 }
 export function normalizeRequest(value) {

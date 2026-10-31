@@ -1,5 +1,6 @@
 import {synthesizeSpeech,normalizeSpeech} from './speech.mjs';
-import {generateExplanation,normalizeExplanation} from './html-explanation.mjs';
+import {generateExplanation,normalizeExplanation,assertExplanation} from './html-explanation.mjs';
+import {chooseDrawFormat} from './draw-format.mjs';
 import {normalizeComparison,runComparison} from './comparison.mjs';
 import http from 'node:http';
 import {chooseScreenContext,normalizeScreenRequest} from './screen-context.mjs';
@@ -21,7 +22,7 @@ import { RealtimeService,VOICE_MODEL } from './realtime.mjs';
 const root=fileURLToPath(new URL('../',import.meta.url));
 const MAX_BODY=8*1024*1024;
 const mime={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml','.png':'image/png'};
-export function createServer({run=generate,runHTML=generateExplanation,runSpeech=synthesizeSpeech,runClaude=generateWithClaude,runEdit=editText,checkAuth=authStatus,checkClaude=claudeAuthStatus,voice=new RealtimeService(),chooseStatus=chooseLoadingStatus,routeChat=chooseChatRoute,routePresentation=choosePresentation,routeEdit=chooseEditAction,routeScreen=chooseScreenContext,directSignal=createSignalDirector()}={}){
+export function createServer({run=generate,runHTML=generateExplanation,runSpeech=synthesizeSpeech,runClaude=generateWithClaude,runEdit=editText,checkAuth=authStatus,checkClaude=claudeAuthStatus,voice=new RealtimeService(),chooseStatus=chooseLoadingStatus,routeChat=chooseChatRoute,routePresentation=choosePresentation,routeDrawFormat=chooseDrawFormat,routeEdit=chooseEditAction,routeScreen=chooseScreenContext,directSignal=createSignalDirector()}={}){
   const token=randomBytes(32).toString('hex');
   let active=0,speaking=0;
   const server=http.createServer(async(req,res)=>{
@@ -161,8 +162,9 @@ export function createServer({run=generate,runHTML=generateExplanation,runSpeech
       }finally{clearTimeout(timer);res.off('close',disconnect);active-=2;res.end();}
       return;
     }
-    if(req.method==='POST'&&['/api/chat','/api/edit'].includes(pathname)){
+    if(req.method==='POST'&&['/api/ask','/api/chat','/api/edit'].includes(pathname)){
       const editing=pathname==='/api/edit';
+      const routedDraw=pathname==='/api/ask';
       const supplied=Buffer.from(String(req.headers['x-clippy-session']||''));
       if(supplied.length!==token.length||!timingSafeEqual(supplied,Buffer.from(token)))return json(403,{error:'Reload the app to refresh your local session.'});
       if(!req.headers['content-type']?.startsWith('application/json'))return json(415,{error:'Expected application/json.'});
@@ -171,7 +173,11 @@ export function createServer({run=generate,runHTML=generateExplanation,runSpeech
       try{
         let size=0;const chunks=[];
         for await(const chunk of req){size+=chunk.length;if(size>MAX_BODY){json(413,{error:'Image/request too large (8 MB limit).'});return;}chunks.push(chunk);}
-        request=(editing?normalizeEditRequest:normalizeRequest)(JSON.parse(Buffer.concat(chunks).toString('utf8')));
+        const body=JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        // Only the native/voice ask path accepts a previous HTML teaching panel.
+        const previousHTML=routedDraw&&body?.previous?.sections?assertExplanation(body.previous):null;
+        request=(editing?normalizeEditRequest:normalizeRequest)(previousHTML?{...body,previous:null}:body);
+        if(previousHTML)request.previousHTML=previousHTML;
       }catch(e){if(!res.writableEnded)json(400,{error:e.message});return;}
       const automaticPresentation=!editing&&request.mode==='auto';
       let auto=!editing&&request.mode==='chat'&&request.model==='auto';
@@ -217,10 +223,21 @@ export function createServer({run=generate,runHTML=generateExplanation,runSpeech
           request={...request,provider:route.provider,model:route.model,reasoningEffort:route.reasoningEffort};
           send({type:'route',...route});
         }
-        const options={signal:controller.signal,onStatus:message=>send({type:'status',message}),onPreview:result=>send({type:'preview',result})};
+        let format=null;
+        if(routedDraw&&request.mode==='draw') {
+          send({type:'status',message:'Choosing 3D or HTML…'});
+          const choice=await routeDrawFormat(request,{signal:controller.signal});
+          controller.signal.throwIfAborted();
+          format=choice==='html'?'html':'3d';
+          request={...request,visualFormat:format};
+          send({type:'draw-format',format,source:['3d','html'].includes(choice)?'decisions':'fallback'});
+        }
+        const options={signal:controller.signal,onStatus:message=>send({type:'status',message}),onPreview:result=>send({type:'preview',...(format?{format}:{}),result})};
         const output=editing ? await runEdit(request,options)
+          : format==='html'?await runHTML({...request,previous:request.previousHTML??null},options)
           : await runWithLoadingStatus(claude?runClaude:run,request,options,{chooseStatus:automaticPresentation&&request.mode==='draw'?async()=>'Drawing…':chooseStatus});
-        send({type:'result',provider:request.provider,mode:request.mode,...output});
+        controller.signal.throwIfAborted();
+        send({type:'result',provider:request.provider,mode:request.mode,...(format?{format}:{}),...output});
       }
       catch(e){send({type:'error',message:controller.signal.aborted?(controller.signal.reason?.message||'Request cancelled.') : String(e.message||e).slice(0,1600)});}
       finally{clearTimeout(timer);res.off('close',disconnect);active--;res.end();}

@@ -25,6 +25,13 @@ test('rotate and zoom are bounded, and need a 3D model',()=>{
 test('an unknown part tells the voice what it can point at',()=>{
   assert.throws(()=>normalizeCursorSteps({steps:[{action:'point',target:'neutron'}]},known),/Known parts: oxygen, hydrogen/);
 });
+test('HTML reveal is a bounded pointer action that opens only the chosen summary',()=>{
+  const revealed=[];
+  const steps=normalizeCursorSteps({steps:[{action:'reveal',target:'answer'}]},{targets:['answer'],canOrbit:false});
+  const player=new CursorPlayer({locate:()=>({x:200,y:100,r:20}),reveal:(id,open)=>revealed.push({id,open})});
+  player.play(steps);run(player,0,750);
+  assert.deepEqual(revealed,[{id:'answer',open:true}]);assert.deepEqual(player.position,{x:200,y:100});
+});
 test('the voice sees part ids and labels from both kinds of visual, once each',()=>{
   const visual={scene:{objects:[{id:'o',label:'Oxygen',description:'long'},{id:'o',label:'Again'}]},diagram:{nodes:[{id:'n',label:'Node'}]}};
   assert.deepEqual(visualParts(visual),[{id:'o',label:'Oxygen'},{id:'n',label:'Node'}]);
@@ -200,7 +207,7 @@ test('the live voice is offered the cursor tool, and told it is not the real mou
   const config=voiceConfiguration();
   const tool=config.tools.find(item=>item.name==='use_cursor');
   assert.ok(tool);
-  assert.deepEqual(tool.parameters.properties.steps.items.properties.action.enum,['point','circle','write','rotate','zoom','clear']);
+  assert.deepEqual(tool.parameters.properties.steps.items.properties.action.enum,['point','circle','write','rotate','zoom','reveal','clear']);
   assert.match(config.instructions,/use_cursor/);
   assert.match(config.instructions,/real mouse/);
 });

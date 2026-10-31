@@ -366,6 +366,20 @@ for visual in [
     expect(ReplyCardLayout.hasVisual(visual), "Real visuals must remain available alongside the one reply bubble")
 }
 print("Single replies anchor below the composer; titles alone never count as a drawing.")
+expect(ReplyCardLayout.hasVisual(["sections": [["html": "<p>Explanation</p>"]]]), "HTML results must support Continue just like 3D")
+let continueReplySize = ReplyCardLayout.size(text: "Wings create lift.", available: replyScreen.size, canContinue: true)
+let plainReplySize = ReplyCardLayout.size(text: "Wings create lift.", available: replyScreen.size)
+expect(continueReplySize.height == plainReplySize.height + 32, "Continue gets its own footer without covering answer text")
+let replyFixture = ReplyCard(frame: NSRect(origin: .zero, size: continueReplySize))
+var continued = false
+replyFixture.onContinue = { continued = true }
+let continueControl = replyFixture.subviews.compactMap { $0 as? NSButton }.first { $0.title == "Continue" }!
+replyFixture.show("Wings create lift.", live: false, canContinue: true)
+expect(!continueControl.isHidden && replyFixture.text == "Wings create lift.", "Draw exposes Continue without changing the answer")
+continueControl.performClick(nil)
+expect(continued, "Continue must start the native voice continuation callback")
+replyFixture.show("Hi!", live: false)
+expect(continueControl.isHidden, "Plain chat does not offer Draw continuation")
 
 // Reopening and relaunching should feel fresh without an API or context access.
 var greetings = OpeningGreeting(defaults: preferences)

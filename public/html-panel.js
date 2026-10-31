@@ -59,9 +59,10 @@ export class HTMLPanel {
     const left=frame.left+box.left,width=Math.min(box.width,frame.right-left-24),rx=width/2,ry=box.height/2;
     return {x:left+rx,y,r:Math.max(rx,ry),rx,ry,noteX:-rx,noteY:ry+21};
   }
-  reveal(id){
+  reveal(id,open=false){
     const node=this.part(id);
     if(!node)return;
+    if(open){const details=node.closest('details');if(details)details.open=true;}
     const box=node.getBoundingClientRect();
     if(box.top<16||box.bottom>this.frame.clientHeight-40)node.scrollIntoView({block:'center',behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'});
   }

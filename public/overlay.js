@@ -80,7 +80,7 @@ function locatePart(id) {
 const cursor = new VoiceCursor({
   root: $('overlay'), locate: locatePart,
   orbit: (yaw, pitch) => viewer.orbit(yaw, pitch), zoom: factor => viewer.zoom(factor),
-  reveal: id => { if (htmlResult) htmlPanel.reveal(id); },
+  reveal: (id,open) => { if (htmlResult) htmlPanel.reveal(id,open); },
   center: () => {
     const root = $('overlay').getBoundingClientRect();
     if (!htmlResult) return { x: root.width / 2, y: root.height / 2 };
@@ -112,6 +112,7 @@ $('html-panel').addEventListener('load', () => {
   for (const type of ['pointerdown', 'wheel']) $('html-panel').contentDocument?.addEventListener(type, () => cursor.cancel(), { passive: true });
 });
 window.clippyRender = render;
+window.clippyRenderHTML = renderHTML;
 window.clippyRollback = result => { streaming = false; if(result)render(result);else{$('overlay').hidden=true;post('visualCleared');} };
 let voiceGeneration = 0;
 const pendingScreens = new Map();
@@ -131,7 +132,7 @@ function captureScreen({signal}) {
 const voice = new VoiceConversation({
   captureScreen,
   cursor: voiceCursor,
-  renderHTML:result=>{renderHTML(result);post('voicePreview',{generation:voiceGeneration});},
+  renderHTML:result=>{renderHTML(result);post('voiceHTML',{result,generation:voiceGeneration});},
   previewHTML:result=>{renderHTML(result,true);post('voicePreview',{generation:voiceGeneration});},
   rollbackHTML:result=>{if(result)renderHTML(result);else{clearHTML();$('overlay').hidden=true;post('visualCleared');}},
   notify: event => {
@@ -151,12 +152,13 @@ const voice = new VoiceConversation({
   rollback: result => window.clippyRollback(result),
 });
 window.clippyVoice = {
-  start: generation => {voiceGeneration=generation;return voice.start();}, stop: () => voice.stop(),
+  start: (generation,continuation=null) => {voiceGeneration=generation;return voice.start(continuation);}, stop: () => voice.stop(),
   shareScreen: image => voice.shareScreen(image),
   setPointSharing: enabled => voice.setPointSharing(enabled),
   sharePoint: (image,context) => voice.sharePoint(image,context),
   finishScreenCapture: (id,image,error) => pendingScreens.get(id)?.(image,error),
-  setVisual: result => { voice.previous=result;if(!result){voice.previousHTML=null;clearHTML();} },
+  setVisual: result => { voice.previous=result;voice.previousHTML=null;if(!result)clearHTML(); },
+  setHTML: result => { voice.previousHTML=result;voice.previous=null; },
   setMuted: value => voice.setMuted(value),
   setProvider: value => voice.setProvider(value),
   setDrawingSettings: value => voice.setDrawingSettings(value),
