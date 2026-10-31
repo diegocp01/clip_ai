@@ -24,24 +24,25 @@ enum SelectionSummary {
 
     /// Read only the focused app's exposed selection. Never synthesize Copy,
     /// inspect the clipboard or request permission. The snapshot is scoped to this edit.
-    static func readSelection(pid: pid_t) -> Snapshot? {
-        guard pid != ProcessInfo.processInfo.processIdentifier,
-              AXIsProcessTrusted(), !IsSecureEventInputEnabled() else { return nil }
+    static func readSelection(pid: pid_t, diagnostic: (String) -> Void = { _ in }) -> Snapshot? {
+        guard pid != ProcessInfo.processInfo.processIdentifier else { diagnostic("Clip has focus"); return nil }
+        guard AXIsProcessTrusted() else { diagnostic("Accessibility access unavailable"); return nil }
+        guard !IsSecureEventInputEnabled() else { diagnostic("Secure input active"); return nil }
         let app = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(app, 0.15)
         var focused: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(app, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
-              let focused, CFGetTypeID(focused) == AXUIElementGetTypeID() else { return nil }
+        let focusedResult = AXUIElementCopyAttributeValue(app, kAXFocusedUIElementAttribute as CFString, &focused)
+        guard focusedResult == .success, let focused, CFGetTypeID(focused) == AXUIElementGetTypeID() else { diagnostic("No focused field (\(focusedResult.rawValue))"); return nil }
         let element = focused as! AXUIElement
         AXUIElementSetMessagingTimeout(element, 0.15)
         var subrole: CFTypeRef?
         let subroleResult = AXUIElementCopyAttributeValue(element, kAXSubroleAttribute as CFString, &subrole)
-        guard subroleResult == .success || subroleResult == .attributeUnsupported else { return nil }
-        guard subrole as? String != kAXSecureTextFieldSubrole as String else { return nil }
+        guard [.success, .attributeUnsupported, .noValue].contains(subroleResult) else { diagnostic("Field unavailable (\(subroleResult.rawValue))"); return nil }
+        guard subrole as? String != kAXSecureTextFieldSubrole as String else { diagnostic("Secure field"); return nil }
         var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, kAXSelectedTextAttribute as CFString, &value) == .success,
-              let text = value as? String, !text.isEmpty, text.utf16.count <= 1_000_000,
-              !IsSecureEventInputEnabled() else { return nil }
+        let selectedResult = AXUIElementCopyAttributeValue(element, kAXSelectedTextAttribute as CFString, &value)
+        guard selectedResult == .success, let text = value as? String, !text.isEmpty, text.utf16.count <= 1_000_000,
+              !IsSecureEventInputEnabled() else { diagnostic("No exposed selection (\(selectedResult.rawValue))"); return nil }
         var rangeValue: CFTypeRef?
         var range: CFRange?
         if AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &rangeValue) == .success,

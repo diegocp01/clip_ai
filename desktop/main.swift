@@ -770,10 +770,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         selectionReadPending = automatic
         // The request begins before the composer takes keyboard focus.
         selectionReadQueue.async { [weak self] in
-            let snapshot = SelectionSummary.readSelection(pid: pid)
+            var diagnostic = "No selection"
+            let snapshot = SelectionSummary.readSelection(pid: pid) { diagnostic = $0 }
             DispatchQueue.main.async {
                 guard let self, self.expanded, self.selectionReadGeneration == generation else { return }
                 self.selectionReadPending = false
+                if snapshot == nil && diagnostic == "Accessibility access unavailable" {
+                    let help = "Enable selected-text access · More → Enable text editing"
+                    self.selectionIndicator.stringValue = "Enable selected-text access"
+                    self.selectionIndicator.setAccessibilityLabel(help)
+                    self.selectionIndicator.isHidden = false
+                }
                 let foreground = NSWorkspace.shared.frontmostApplication?.processIdentifier
                 guard foreground == pid || foreground == ProcessInfo.processInfo.processIdentifier else {
                     self.selectionOwnsOpening = true // Never steal focus after the user switches apps.
