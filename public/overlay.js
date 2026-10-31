@@ -28,7 +28,7 @@ function render(result, preview = false) {
   const cards = (result.cards || []).slice(0, 3);
   $('cards').replaceChildren();
   cards.forEach((card, i) => {
-    const article = document.createElement('article'); article.className = 'explanation-card';
+    const article = document.createElement('article'); article.className = 'explanation-card glass-surface';
     const number = document.createElement('span'); number.className = 'card-number'; number.textContent = String(i + 1).padStart(2, '0');
     const title = document.createElement('h2'); title.textContent = card.title;
     const body = document.createElement('p'); body.textContent = card.body;
