@@ -462,3 +462,37 @@ expect(voiceIdentity.listening, "User interruption takes priority over reply aud
 for _ in 0..<90 { voiceIdentity.step(input: 1, output: 1, userSpeaking: true, fresh: false, dt: 1.0 / 30) }
 expect(voiceIdentity.listening && voiceIdentity.level == 0, "Stale audio cannot leave a speaking indicator stuck on")
 print("Voice identity passed: input, playback, interruption and stale-level recovery.")
+let attentionBounds = NSRect(origin: .zero, size: ComposerGeometry.size)
+expect(ComposerAttention.pointer(NSPoint(x: 40, y: 170), in: attentionBounds) != nil, "Pointer tracking includes the whole bowl, not just the signal strip")
+expect(ComposerAttention.pointer(NSPoint(x: 10, y: 10), in: attentionBounds) == nil, "Points outside the curved shell do not attract the signal")
+expect(ComposerAttention.pointer(NSPoint(x: -30, y: 170), in: attentionBounds) == nil, "Outside-screen motion is ignored")
+var follows = ComposerAttention()
+for _ in 0..<90 { follows.step(1.0 / 30, pointer: NSPoint(x: -1, y: 0.6)) }
+expect(follows.horizontal < -0.9 && follows.vertical > 0.5, "Follow reacts to horizontal and vertical pointer movement")
+for _ in 0..<90 { follows.step(1.0 / 30, pointer: NSPoint(x: 1, y: -0.6)) }
+expect(follows.horizontal > 0.9 && follows.vertical < -0.5, "Follow changes direction with the pointer")
+for mode in ["wander", "drift_left", "drift_right"] {
+    var a = ComposerAttention(), b = ComposerAttention(); a.mode = mode; b.mode = mode
+    var minX: CGFloat = 10, maxX: CGFloat = -10
+    var bodies = ["line", "eyes", "wave"].map { pattern -> SignalBar in var bar = SignalBar(); bar.pattern = pattern; return bar }
+    for _ in 0..<900 {
+        a.step(1.0 / 30, pointer: NSPoint(x: -1, y: -1)); b.step(1.0 / 30, pointer: NSPoint(x: 1, y: 1))
+        expect(abs(a.horizontal - b.horizontal) < 0.00001 && abs(a.vertical - b.vertical) < 0.00001, "Independent behavior must ignore the actual mouse")
+        minX = min(minX, a.horizontal); maxX = max(maxX, a.horizontal)
+        for index in bodies.indices {
+            bodies[index].step(1.0 / 30, pointer: a.horizontal, swayScale: 0.4)
+            let line = CGRect(x: 45 + a.horizontal * 10, y: 3.75 + a.vertical * 0.7, width: 130, height: 2.5)
+            let pair = bodies[index].bars(line: line, room: 24)
+            expect(NSRect(x: 0, y: 0, width: 220, height: 10).contains(pair.left) && NSRect(x: 0, y: 0, width: 220, height: 10).contains(pair.right), "Independent motion stays within its strip")
+        }
+    }
+    expect(maxX - minX > 1, "Independent motion must travel without pointer input")
+}
+var transitions = ComposerAttention()
+for _ in 0..<90 { transitions.step(1.0 / 30, pointer: NSPoint(x: 1, y: 0)) }
+let beforeSwitch = transitions.horizontal
+transitions.mode = "wander"; transitions.step(1.0 / 30, pointer: NSPoint(x: -1, y: 0))
+expect(abs(transitions.horizontal - beforeSwitch) < 0.1, "Changing attention mode must not snap the signal")
+transitions.mode = "follow"; transitions.step(1.0 / 30, pointer: nil)
+expect(!transitions.following, "Follow mode wanders when the mouse leaves")
+print("Composer mouse attention, autonomous motion, bounds and smooth switching passed.")
