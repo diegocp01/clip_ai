@@ -121,6 +121,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var voiceButton: NSButton!
     private var providerControl: NSButton!
     private var modelCaption: NSButton!
+    private var openingGreetings = OpeningGreeting()
+    private var openingGreeting: String?
+    private var openingCaptionTimer: Timer?
     private var compareBoth = UserDefaults.standard.bool(forKey: "chatCompareBoth")
     private var pendingComparison = false
     private lazy var comparisonPanel: ComparisonPanel = {
@@ -552,7 +555,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 ? NSPoint(x: pointer.x - island.frame.minX, y: pointer.y - island.frame.minY) : nil
             if menuTrackingDepth == 0 {
                 let overCaption = point.map { ComposerGeometry.modelCaption.insetBy(dx: -6, dy: -5).contains($0) } ?? false
-                if overCaption && !busy && !modelCaption.isHidden {
+                if overCaption && !busy && openingGreeting == nil && !modelCaption.isHidden {
                     if modelHoverStarted == nil { modelHoverStarted = now }
                     if !modelMenuLatched, now - (modelHoverStarted ?? now) >= 0.25 {
                         modelMenuLatched = true
@@ -720,6 +723,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         if !value { updateSendHover(at: nil) }
         expanded = value
         if changed {
+            if value { beginOpeningGreeting() } else { endOpeningGreeting() }
             if value { composerSignal.signal = signalBar }
             else { signalBar = composerSignal.signal; signalBar.pattern = nil }
             composerSignal.setActive(value)
@@ -1310,17 +1314,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         providerControl.toolTip = "Chat: \(name) · choose Codex, Claude or Both"
         updateDrawingSettings()
     }
-    private func updateDrawingSettings() {
+    private func updateModelCaption() {
+        if let openingGreeting {
+            modelCaption.title = openingGreeting
+            modelCaption.setAccessibilityLabel("\(openingGreeting) Choose chat model and reasoning effort")
+            return
+        }
         modelCaption.title = compareBoth ? "Codex + Claude · Text comparison" : chatSettings.isAuto ? autoRouteCaption ?? chatSettings.caption(for: chatProvider.rawValue)
             : chatSettings.caption(for: chatProvider.rawValue)
         modelCaption.setAccessibilityLabel("\(modelCaption.title). Choose chat model and reasoning effort")
+    }
+    private func updateDrawingSettings() {
+        updateModelCaption()
         let settings = drawingSettings.request(for: provider.rawValue)
         if let data = try? JSONSerialization.data(withJSONObject: settings), let json = String(data: data, encoding: .utf8) {
             webView?.evaluateJavaScript("window.clippyVoice?.setDrawingSettings(\(json)); void 0;")
         }
     }
+    private func beginOpeningGreeting() {
+        endOpeningGreeting()
+        openingGreeting = openingGreetings.next()
+        updateModelCaption()
+        let started = ProcessInfo.processInfo.systemUptime
+        let timer = Timer(timeInterval: 0.05, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            guard self.expanded else { self.endOpeningGreeting(); return }
+            let frame = OpeningCaptionFrame.at(ProcessInfo.processInfo.systemUptime - started,
+                reducedMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+            if !frame.greeting && self.openingGreeting != nil {
+                self.openingGreeting = nil
+                self.updateModelCaption()
+            }
+            self.modelCaption.alphaValue = frame.opacity
+            if frame.finished { self.endOpeningGreeting() }
+        }
+        openingCaptionTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+    private func endOpeningGreeting() {
+        openingCaptionTimer?.invalidate(); openingCaptionTimer = nil
+        openingGreeting = nil
+        modelCaption.alphaValue = 1
+        updateModelCaption()
+    }
     @objc private func showModelSettings() {
         guard expanded, !busy, !composerTransitioning, menuTrackingDepth == 0 else { return }
+        endOpeningGreeting()
         modelMenuLatched = true
         composerSurface.updateHover(at: nil)
         let menu = NSMenu(); menu.autoenablesItems = false

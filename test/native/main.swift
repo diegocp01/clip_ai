@@ -407,3 +407,21 @@ assert(longReplySize.height > shortReplySize.height && longReplySize.height <= 3
 let narrowReplySize = ReplyCardLayout.size(text: "Readable", available: NSSize(width: 360, height: 600))
 assert(narrowReplySize.width <= 312)
 print("Reply cards fit short, long and narrow-screen answers without limiting text.")
+
+// Reopening and relaunching should feel fresh without an API or context access.
+var greetings = OpeningGreeting(defaults: preferences)
+var seenGreetings = Set<String>()
+for _ in OpeningGreeting.phrases {
+    let line = greetings.next()
+    expect(!line.isEmpty && line.split(whereSeparator: { $0.isWhitespace }).count <= 5, "Opening greetings must contain at most five words")
+    expect(seenGreetings.insert(line).inserted, "A greeting deck must not repeat before exhaustion")
+}
+let lastGreeting = preferences.string(forKey: "lastOpeningGreeting")
+var relaunchedGreetings = OpeningGreeting(defaults: preferences)
+expect(relaunchedGreetings.next() != lastGreeting, "Relaunch must not repeat the last greeting")
+expect(OpeningCaptionFrame.at(2, reducedMotion: false).greeting, "Keep the greeting readable before fading")
+expect(OpeningCaptionFrame.at(3.8, reducedMotion: false).opacity < 1, "Greeting fades slowly")
+expect(!OpeningCaptionFrame.at(4.6, reducedMotion: false).greeting, "Restore the selector during its fade in")
+expect(OpeningCaptionFrame.at(5, reducedMotion: false).finished, "Always finish with the model selector")
+expect(OpeningCaptionFrame.at(3.3, reducedMotion: true).finished && OpeningCaptionFrame.at(3.3, reducedMotion: true).opacity == 1, "Reduced motion restores the selector without fading")
+print("Opening greeting variety, five-word limit and fade timing passed.")
