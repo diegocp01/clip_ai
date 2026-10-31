@@ -5,6 +5,7 @@ import AppKit
 final class ComposerSignal: NSView {
     static let stripFrame = NSRect(x: 130, y: 190, width: 220, height: 10)
     var signal = SignalBar()
+    var microphoneLevel: CGFloat = 0
     private let bars = [CAGradientLayer(), CAGradientLayer()]
     private let wave = CAShapeLayer()
     private var waveMix = Spring(stiffness: 40, damping: 12)
@@ -65,11 +66,14 @@ final class ComposerSignal: NSView {
         render(staticLine: false)
     }
     private func render(staticLine: Bool) {
-        let line = CGRect(x: bounds.midX - 65, y: bounds.midY - 1.25, width: 130, height: 2.5)
+        let energy = staticLine ? 0 : min(1, max(0, microphoneLevel))
+        let height = 2.5 + energy * 0.5
+        let line = CGRect(x: bounds.midX - 65, y: bounds.midY - height / 2, width: 130, height: height)
         let pair = staticLine ? (left: line, right: line) : signal.bars(line: line, room: 24)
         let blend = staticLine ? 0 : min(max(waveMix.value, 0), 1)
         CATransaction.begin(); CATransaction.setDisableActions(true)
         for (bar, rect) in zip(bars, [pair.left, pair.right]) {
+            bar.shadowOpacity = Float(0.6 + energy * 0.4)
             bar.frame = rect; bar.cornerRadius = rect.height / 2; bar.opacity = Float(1 - blend)
         }
         let path = CGMutablePath()
@@ -78,6 +82,7 @@ final class ComposerSignal: NSView {
             let p = CGPoint(x: line.minX + line.width * t, y: line.midY + sin(t * .pi) * sin(t * .pi * 4 - signal.time * 1.8) * 2.2)
             if i == 0 { path.move(to: p) } else { path.addLine(to: p) }
         }
+        wave.shadowOpacity = Float(0.6 + energy * 0.4)
         wave.path = path; wave.opacity = Float(blend)
         CATransaction.commit()
     }

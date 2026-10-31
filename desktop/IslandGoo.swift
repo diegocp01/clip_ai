@@ -143,3 +143,26 @@ enum GooShape {
         return path
     }
 }
+
+
+/// Separate microphone and playback envelopes make speaker identity visible.
+struct VoiceEnergy {
+    private(set) var input: CGFloat = 0
+    private(set) var output: CGFloat = 0
+    private(set) var listening = true
+    var level: CGFloat { max(input, output) }
+    mutating func step(input targetInput: CGFloat, output targetOutput: CGFloat,
+                       userSpeaking: Bool, fresh: Bool, dt: Double) {
+        func smooth(_ value: CGFloat, _ raw: CGFloat) -> CGFloat {
+            let target = fresh && raw.isFinite ? min(1, max(0, raw)) : 0
+            let response = target > value ? 0.065 : 0.18
+            let next = value + (target - value) * CGFloat(1 - exp(-min(max(dt, 0), 0.1) / response))
+            return next < 0.001 ? 0 : next
+        }
+        input = smooth(input, targetInput); output = smooth(output, targetOutput)
+        // Realtime speech detection gives a user's interruption priority over playback.
+        if fresh && userSpeaking { listening = true }
+        else if output > 0.04 { listening = false }
+        else if output < 0.015 { listening = true }
+    }
+}

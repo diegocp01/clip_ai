@@ -451,3 +451,14 @@ for origin in [NSPoint.zero, NSPoint(x: -1900, y: 300)] {
     }
 }
 print("Voice shell geometry passed: bounded energy, pinned top, camera clearance, external displays and stable composer.")
+
+var voiceIdentity = VoiceEnergy()
+for _ in 0..<30 { voiceIdentity.step(input: 0.7, output: 0, userSpeaking: true, fresh: true, dt: 1.0 / 30) }
+expect(voiceIdentity.listening && voiceIdentity.input > 0.6 && voiceIdentity.output == 0, "Microphone drives the green listening signal")
+for _ in 0..<30 { voiceIdentity.step(input: 0.01, output: 0.8, userSpeaking: false, fresh: true, dt: 1.0 / 30) }
+expect(!voiceIdentity.listening && voiceIdentity.output > 0.7, "Playback drives the white reply waveform")
+voiceIdentity.step(input: 0.5, output: 0.8, userSpeaking: true, fresh: true, dt: 1.0 / 30)
+expect(voiceIdentity.listening, "User interruption takes priority over reply audio")
+for _ in 0..<90 { voiceIdentity.step(input: 1, output: 1, userSpeaking: true, fresh: false, dt: 1.0 / 30) }
+expect(voiceIdentity.listening && voiceIdentity.level == 0, "Stale audio cannot leave a speaking indicator stuck on")
+print("Voice identity passed: input, playback, interruption and stale-level recovery.")

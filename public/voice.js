@@ -30,7 +30,7 @@ export class VoiceConversation {
       const tracks=await this.media.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true},video:false});
       if(this.session!==s){tracks.getTracks().forEach(t=>t.stop());return;}
       s.tracks=tracks;
-      s.meter=this.makeMeter(level=>{if(this.session===s)this.notify({state:'level',level});});
+      s.meter=this.makeMeter(({input,output})=>{if(this.session===s)this.notify({state:'level',input,output,userSpeaking:s.userSpeaking});});
       s.meter.muted=this.muted;s.meter.attach('input',tracks);
       s.peer=new this.Peer();s.audio=this.makeAudio();s.audio.autoplay=true;s.audio.muted=this.muted;
       s.peer.ontrack=event=>{

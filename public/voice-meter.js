@@ -1,5 +1,5 @@
 // Local level-only metering. Audio stays in the existing WebRTC session;
-// the native animation receives a single normalized number, never samples.
+// the native animation receives separate normalized input/output levels, never samples.
 export function voiceLevel(samples) {
   if (!samples.length) return 0;
   let sum = 0;
@@ -30,13 +30,13 @@ export class VoiceMeter {
     } catch { /* Optional decoration must never interrupt Talk. */ }
   }
   sample() {
-    let level = 0;
+    const levels = {input:0, output:0};
     for (const [name, node] of this.nodes) {
       if (name === 'output' && this.muted) continue;
-      try { node.analyser.getFloatTimeDomainData(node.data); level = Math.max(level, voiceLevel(node.data)); }
+      try { node.analyser.getFloatTimeDomainData(node.data); if(name==='input'||name==='output')levels[name] = voiceLevel(node.data); }
       catch { /* A detached stream settles to zero. */ }
     }
-    this.notify(level);
+    this.notify(levels);
   }
   stop() {
     if (this.timer !== undefined) this.cancel(this.timer);

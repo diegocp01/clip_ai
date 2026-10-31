@@ -222,9 +222,10 @@ test('Talk meters existing input and output streams, forwards levels, and ignore
  assert.equal(attached[0].name,'input');assert.equal(attached[0].stream,f.tracks);
  const remote={};session.peer.ontrack({streams:[remote]});
  assert.equal(attached[1].name,'output');assert.equal(attached[1].stream,remote);
- sample(0.65);assert.deepEqual(f.events.at(-1),{state:'level',level:0.65});
+ sample({input:0.65,output:0.1});assert.deepEqual(f.events.at(-1),{state:'level',input:0.65,output:0.1,userSpeaking:false});
+ f.voice.handle(session,{type:'input_audio_buffer.speech_started'});sample({input:0.7,output:0.4});assert.equal(f.events.at(-1).userSpeaking,true);
  f.voice.setMuted(true);assert.equal(meter.muted,true);
  f.voice.stop();assert.equal(stopped,1);
- const count=f.events.length;sample(1);assert.equal(f.events.length,count);
+ const count=f.events.length;sample({input:1,output:1});assert.equal(f.events.length,count);
  await new Promise(r=>setImmediate(r));
 });

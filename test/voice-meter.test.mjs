@@ -23,9 +23,9 @@ test('meter combines input and output, suppresses muted output and tears down wi
   }
   const meter = new VoiceMeter(level => levels.push(level), {Context, schedule:fn=>{tick=fn;return 42;},cancel:id=>{cancelled=id;}});
   meter.attach('input', {amplitude:0.004});meter.attach('output', {amplitude:0.1});tick();
-  assert.ok(levels.at(-1) > 0.6);
-  meter.muted = true; tick();assert.equal(levels.at(-1),0);
-  meter.attach('input', {amplitude:0.05});tick();assert.ok(levels.at(-1)>0.2);
+  assert.ok(levels.at(-1).output > 0.6);assert.equal(levels.at(-1).input,0);
+  meter.muted = true; tick();assert.deepEqual(levels.at(-1),{input:0,output:0});
+  meter.attach('input', {amplitude:0.05});tick();assert.ok(levels.at(-1).input>0.2);
   assert.equal(sources[0].disconnected,true);
   meter.stop();assert.equal(cancelled,42);assert.equal(closed,1);
   assert.ok(sources.every(s=>s.disconnected));assert.equal(meter.nodes.size,0);
