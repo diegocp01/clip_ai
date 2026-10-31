@@ -62,6 +62,7 @@ function captureScreen({signal}) {
 const voice = new VoiceConversation({
   captureScreen,
   notify: event => {
+    if(event.state==='level'){post('voiceState',{...event,generation:voiceGeneration});return;}
     if(event.state==='connecting')liveVoice=true;
     if(['ended','error'].includes(event.state))liveVoice=false;
     if(event.state==='transcript') {

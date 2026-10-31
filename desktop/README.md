@@ -77,3 +77,9 @@ Realtime captions follow audio transcript delta/done events and the completed au
 ### Opening greeting
 
 Each fresh opening briefly replaces the idle model caption with a short greeting (at most five words). A shuffled local set avoids repeats until its 24 lines are used, remembers the last line across launches, and works offline without sending any user context. It holds for 3.2 seconds, fades out over 1.2 seconds, then fades the current model selector back in over 0.5 seconds. Reduced Motion uses a simple timed replacement. Clicking opens model settings immediately; automatic hover menus wait until the greeting is gone. Closing cancels the timer, and reopening starts a fresh line. Repositioning an already-open composer does not restart it. Work and voice status retain their existing priority.
+
+### Voice-reactive compact notch
+
+During Realtime Talk, the white waveform and compact black shell follow the measured energy of the microphone and audible reply stream. The shell grows up to 20 points wider and 4 points deeper, keeps its top pinned, and eases back during silence. Expanded composer controls stay still. Reduce Motion keeps the shell and voice bars static. Muted reply audio does not drive the effect; microphone input still can. Missing or stale levels settle to zero.
+
+Metering reuses the existing voice streams, requests no extra microphone access, and sends only a normalized level to the native UI at 30 Hz. Raw samples stay local and are not retained. Ending Talk closes the meter, audio graph and native timer. Verify on a Mac by speaking softly/loudly, listening to a reply, muting replies, expanding/collapsing, enabling Reduce Motion and ending Talk; check the physical camera clearance as well as a non-notched display.

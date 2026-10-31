@@ -28,6 +28,7 @@ final class IslandView: NSView {
 final class ActivityMark: NSView {
     private var timer: Timer?
     private var phase: CGFloat = 0
+    var audioLevel: CGFloat? { didSet { needsDisplay = true } }
     var active = false {
         didSet {
             guard active != oldValue else { return }
@@ -44,7 +45,9 @@ final class ActivityMark: NSView {
         NSColor.white.withAlphaComponent(0.12).setFill()
         NSBezierPath(ovalIn: bounds.insetBy(dx: 1, dy: 0)).fill()
         for i in 0..<4 {
-            let height: CGFloat = active ? 4 + abs(sin(phase + CGFloat(i) * 0.85)) * 10 : [5, 10, 13, 7][i]
+            let moving = active && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+            let height: CGFloat = audioLevel.map { moving ? 3 + $0 * [7, 13, 10, 6][i] : 5 }
+                ?? (moving ? 4 + abs(sin(phase + CGFloat(i) * 0.85)) * 10 : [5, 10, 13, 7][i])
             NSColor.white.withAlphaComponent(active ? 1 : 0.8).setFill()
             NSBezierPath(roundedRect: NSRect(x: 4 + CGFloat(i) * 4, y: (bounds.height - height) / 2, width: 2, height: height), xRadius: 1, yRadius: 1).fill()
         }
@@ -72,6 +75,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var signalHost: NSView!
     private let statusLine = CALayer()
     private let loadingLine = CAShapeLayer()
+    private var voiceMeterTimer: Timer?
+    private var voiceMeterLevel: CGFloat = 0
+    private var voiceMeterUpdated: CFTimeInterval = 0
+    private var voiceEnvelope: CGFloat = 0
+    private var voiceMeterTick = CACurrentMediaTime()
     private var startupLoading = true
     private var loadingFinishing = false
     private var loadingStarted: CFTimeInterval = 0
@@ -877,7 +885,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let makeLayout = { [expanded] (hovered: Bool) in
             IslandLayout(screen: screen.frame, safeTop: screen.safeAreaInsets.top,
                          leftArea: screen.auxiliaryTopLeftArea, rightArea: screen.auxiliaryTopRightArea,
-                         expanded: expanded, content: content, hovered: hovered)
+                         expanded: expanded, content: content, hovered: hovered, audioLevel: self.voiceEnvelope)
         }
         let layout = makeLayout(awake)
         updateLoadingLine(layout: content == .loading ? layout : nil)
@@ -916,7 +924,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
         updateSignal(content: content, layout: layout)
         if updateFrame {
-            if island.frame.isEmpty || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            if island.frame.isEmpty || (content == .audio && voiceRequested) || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
                 island.setFrame(layout.frame, display: true)
             } else if island.frame != layout.frame {
                 NSAnimationContext.runAnimationGroup { context in
@@ -1735,6 +1743,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         case "voiceState":
             guard data["generation"] as? Int == voiceGeneration else { return }
             guard let state = data["state"] as? String else { return }
+            if state == "level" {
+                if voiceRequested, let value = data["level"] as? Double, value.isFinite {
+                    voiceMeterLevel = CGFloat(min(1, max(0, value)))
+                    voiceMeterUpdated = CACurrentMediaTime()
+                }
+                return
+            }
             let text = data["message"] as? String ?? ""
             guard text.utf16.count <= 64000 else { return }
             if state == "ended" || state == "error" {
@@ -1789,7 +1804,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             }
         }
     }
+    private func updateVoiceMeter() {
+        if !voiceRequested {
+            voiceMeterTimer?.invalidate(); voiceMeterTimer = nil
+            voiceMeterLevel = 0; voiceEnvelope = 0; voiceMeterUpdated = 0
+            activityMark.audioLevel = nil
+            return
+        }
+        activityMark.audioLevel = voiceEnvelope
+        guard voiceMeterTimer == nil else { return }
+        voiceMeterTick = CACurrentMediaTime()
+        let timer = Timer(timeInterval: 1.0 / 30, repeats: true) { [weak self] _ in self?.stepVoiceMeter() }
+        voiceMeterTimer = timer; RunLoop.main.add(timer, forMode: .common)
+    }
+    private func stepVoiceMeter() {
+        guard voiceRequested else { return }
+        let now = CACurrentMediaTime(), dt = min(now - voiceMeterTick, 0.1)
+        voiceMeterTick = now
+        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        let target: CGFloat = !reduceMotion && now - voiceMeterUpdated < 0.25 ? voiceMeterLevel : 0
+        let response = target > voiceEnvelope ? 0.065 : 0.18
+        voiceEnvelope += (target - voiceEnvelope) * CGFloat(1 - exp(-dt / response))
+        if reduceMotion || voiceEnvelope < 0.001 { voiceEnvelope = 0 }
+        activityMark.audioLevel = voiceEnvelope
+        guard !expanded, !composerTransitioning, !startupLoading else { return }
+        let screen = island.screen ?? NSScreen.main ?? NSScreen.screens[0]
+        let layout = IslandLayout(screen: screen.frame, safeTop: screen.safeAreaInsets.top,
+                                  leftArea: screen.auxiliaryTopLeftArea, rightArea: screen.auxiliaryTopRightArea,
+                                  expanded: false, content: .audio, audioLevel: voiceEnvelope)
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        if island.frame != layout.frame { island.setFrame(layout.frame, display: true) }
+        activityMark.frame = layout.activityFrame
+        signalHost.frame = islandView.bounds
+        CATransaction.commit()
+        gooPanel.orderOut(nil)
+    }
     private func updateTalkButton() {
+        updateVoiceMeter()
         talkButton.title = voiceRequested ? "End" : "Talk"
         talkButton.image = NSImage(systemSymbolName: voiceRequested ? "stop.circle" : "waveform", accessibilityDescription: talkButton.title)
         talkButton.contentTintColor = voiceRequested ? coral : NSColor(white: 0.76, alpha: 1)

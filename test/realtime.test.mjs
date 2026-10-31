@@ -43,7 +43,7 @@ test('voice HTTP requests require local session and reject client configuration 
  assert.equal((await fetch(url+'/api/realtime/call',{method:'POST',headers,body:JSON.stringify({sdp,model:'wrong'})})).status,400);
  const response=await fetch(url+'/api/realtime/call',{method:'POST',headers,body:JSON.stringify({sdp})});assert.equal(response.status,200);assert.equal(count,1);
 });
-function clientFixture(mediaOverride) {
+function clientFixture(mediaOverride, overrides = {}) {
  const events=[],requests=[],sent=[];let stopped=0,closed=0;
  const tracks={getTracks:()=>[{stop(){stopped++;}}],getAudioTracks:()=>[{stop(){stopped++;}}]};
  class Peer {
@@ -59,7 +59,7 @@ function clientFixture(mediaOverride) {
   if(path==='/api/chat')return new Response(JSON.stringify({type:'result',result:{title:'Water',reply:'Water schematic',scene:{objects:[]},diagram:{nodes:[],links:[]},cards:[]}})+'\n');
   throw new Error('Unexpected route');
  };
- const voice=new VoiceConversation({notify:event=>events.push(event),render:result=>events.push({result}),fetchImpl,Peer,media:mediaOverride||{getUserMedia:async()=>tracks},makeAudio:()=>({play:async()=>{},pause(){}})});
+ const voice=new VoiceConversation({notify:event=>events.push(event),render:result=>events.push({result}),fetchImpl,Peer,media:mediaOverride||{getUserMedia:async()=>tracks},makeAudio:()=>({play:async()=>{},pause(){}}),...overrides});
  return{voice,events,requests,sent,tracks,stopped:()=>stopped,closed:()=>closed};
 }
 test('ending voice stops microphone, playback, connection, pending work and requests hangup',async()=>{
@@ -211,4 +211,20 @@ test('a late completed response cannot replace the current voice reply',async()=
  f.voice.handle(s,{type:'response.done',response:{id:'new',status:'completed',output:[{type:'message',content:[{type:'audio',transcript:'Current reply.'}]}]}});
  assert.equal(f.events.filter(e=>e.state==='transcript').at(-1).message,'Current reply.');
  f.voice.stop();
+});
+
+
+test('Talk meters existing input and output streams, forwards levels, and ignores stale callbacks after stopping',async()=>{
+ let sample, stopped=0;const attached=[];
+ const meter={attach:(name,stream)=>attached.push({name,stream}),stop:()=>stopped++};
+ const f=clientFixture(undefined,{makeMeter:notify=>{sample=notify;return meter;}});
+ await f.voice.start();const session=f.voice.session;
+ assert.equal(attached[0].name,'input');assert.equal(attached[0].stream,f.tracks);
+ const remote={};session.peer.ontrack({streams:[remote]});
+ assert.equal(attached[1].name,'output');assert.equal(attached[1].stream,remote);
+ sample(0.65);assert.deepEqual(f.events.at(-1),{state:'level',level:0.65});
+ f.voice.setMuted(true);assert.equal(meter.muted,true);
+ f.voice.stop();assert.equal(stopped,1);
+ const count=f.events.length;sample(1);assert.equal(f.events.length,count);
+ await new Promise(r=>setImmediate(r));
 });
