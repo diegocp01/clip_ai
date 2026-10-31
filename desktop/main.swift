@@ -106,7 +106,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var voiceGeneration = 0
     private var captureButton: NSButton!
     private var voiceButton: NSButton!
-    private var tierPicker: NSPopUpButton!
     private var providerControl: NSPopUpButton!
     private var expanded = false
     private var overlayReady = false
@@ -321,26 +320,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         sendButton.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 18, weight: .thin)
         sendButton.contentTintColor = .white
         sendButton.toolTip = "Send · Return"
-        tierPicker = NSPopUpButton(frame: ComposerGeometry.tier)
-        tierPicker.addItems(withTitles: ["Standard", "Fast"])
-        tierPicker.selectItem(at: 1)
-        tierPicker.item(at: 0)?.image = NSImage(systemSymbolName: "leaf", accessibilityDescription: "Standard")
-        tierPicker.item(at: 1)?.image = NSImage(systemSymbolName: "bolt.fill", accessibilityDescription: "Fast")
-        tierPicker.imagePosition = .imageOnly
-        (tierPicker.cell as? NSPopUpButtonCell)?.arrowPosition = .noArrow
-        tierPicker.setAccessibilityLabel("Reasoning mode")
-        tierPicker.contentTintColor = .white
-        tierPicker.font = .systemFont(ofSize: 11)
-        tierPicker.bezelStyle = .accessoryBarAction
-        tierPicker.isBordered = false
-        tierPicker.wantsLayer = true
-        tierPicker.layer?.cornerRadius = ComposerGeometry.tier.height / 2
-        tierPicker.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.055).cgColor
-        tierPicker.layer?.borderWidth = 0.5
-        tierPicker.layer?.borderColor = NSColor.white.withAlphaComponent(0.15).cgColor
-        tierPicker.toolTip = "GPT-6.1 Terra · Low reasoning. Fast uses more Codex allowance."
-        islandView.addSubview(tierPicker)
-        expandedControls.append(tierPicker)
+        let drawButton = button("Draw", frame: ComposerGeometry.draw, action: #selector(sendPrompt), symbol: "pencil.tip.crop.circle", iconOnly: true)
+        drawButton.toolTip = "Draw your prompt · type an idea, then click Draw"
         providerControl = NSPopUpButton(frame: ComposerGeometry.provider)
         providerControl.addItems(withTitles: ["GPT", "Claude"])
         providerControl.item(at: 0)?.image = mascot("mascot-gpt", description: "GPT") ?? NSImage(systemSymbolName: "cpu", accessibilityDescription: "GPT")
@@ -487,7 +468,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 voiceRequested ? "End the live voice conversation." : "Start a live voice conversation.",
                 voiceEnabled ? "Mute spoken replies." : "Turn spoken replies on.",
                 "Choose GPT or Claude.",
-                tierPicker.isEnabled ? "Choose Standard or Fast reasoning." : "Reasoning modes are available with GPT.",
+                "Draw your prompt with the selected model.",
                 "Open settings and additional actions."
             ])
             return
@@ -1081,9 +1062,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
     private func updateProviderControl() {
         providerControl.selectItem(at: provider == .claude ? 1 : 0)
-        // Standard and Fast are Codex service tiers.
-        tierPicker.isEnabled = provider == .gpt
-        tierPicker.toolTip = provider == .gpt ? "GPT-6.1 Terra · Low reasoning. Fast uses more Codex allowance." : "Standard and Fast only apply to GPT."
     }
     // Remembered across launches, and applies to the next question.
     private func setProvider(_ value: AIProvider) {
@@ -1191,7 +1169,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 request.httpMethod = "POST"
                 request.setValue("application/json", forHTTPHeaderField: "Content-Type")
                 request.setValue(token, forHTTPHeaderField: "X-Clippy-Session")
-                let body: [String: Any] = ["message": message, "tier": ["standard", "fast"][self.tierPicker.indexOfSelectedItem], "provider": self.provider.rawValue, "history": Array(self.history.suffix(12)), "previous": self.previous as Any? ?? NSNull(), "image": self.attachedImage as Any? ?? NSNull()]
+                let body: [String: Any] = ["message": message, "tier": "fast", "provider": self.provider.rawValue, "history": Array(self.history.suffix(12)), "previous": self.previous as Any? ?? NSNull(), "image": self.attachedImage as Any? ?? NSNull()]
                 guard let encoded = try? JSONSerialization.data(withJSONObject: body) else { self.finishRequest(); self.showError("Could not prepare the request."); return }
                 request.httpBody = encoded
                 self.requestTask = self.streamingSession.dataTask(with: request)

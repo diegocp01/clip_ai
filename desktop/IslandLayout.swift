@@ -11,12 +11,12 @@ enum ComposerGeometry {
     static let screen = NSRect(x: 52, y: 88, width: 36, height: 36)
     static let talk = NSRect(x: 110, y: 40, width: 36, height: 36)
     static let voice = NSRect(x: 182, y: 16, width: 36, height: 36)
-    static let tier = NSRect(x: 334, y: 40, width: 36, height: 36)
+    static let draw = NSRect(x: 334, y: 40, width: 36, height: 36)
     static let provider = NSRect(x: 262, y: 16, width: 36, height: 36)
     static let more = NSRect(x: 392, y: 88, width: 36, height: 36)
 
-    static let optionFrames = [screen, talk, voice, provider, tier, more]
-    static let optionNames = ["Screen", "Talk", "Voice", "Model", "Reasoning", "More"]
+    static let optionFrames = [screen, talk, voice, provider, draw, more]
+    static let optionNames = ["Screen", "Talk", "Voice", "Model", "Draw", "More"]
     static let hoverTitle = NSRect(x: 90, y: 113, width: 300, height: 16)
     static let hoverDetail = NSRect(x: 70, y: 94, width: 340, height: 16)
     static let optionCenter = NSPoint(x: size.width / 2, y: size.height)
