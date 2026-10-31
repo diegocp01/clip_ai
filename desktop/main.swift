@@ -6,6 +6,7 @@ import Carbon
 
 private let baseURL = URL(string: "http://127.0.0.1:4317")!
 private let coral = NSColor(calibratedRed: 1, green: 0.47, blue: 0.36, alpha: 1)
+private let signalGreen = NSColor(calibratedRed: 0.29, green: 0.93, blue: 0.47, alpha: 1)
 private let serverUnavailable = "Local server unavailable"
 private let drawingUnavailable = "Drawing view unavailable"
 private let signInRequired = "Sign in with codex login"
@@ -59,11 +60,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var statusItem: NSStatusItem!
     private var statusLabel: NSTextField!
     private var activityMark: ActivityMark!
-    private var statusDot: NSView!
-    private var dotEffects: NSView!
-    private var hoverIcon: NSImageView!
-    private let dotPing = CALayer()
-    private var dotHovered = false
+    private var signalHost: NSView!
+    private let statusLine = CALayer()
+    private let sensingLine = CAGradientLayer()
+    private let sensingGlow = CAGradientLayer()
+    private var signalPoint: CGFloat = -1
+    private var pointerOnIsland = false
     private var collapseButton: NSButton!
     private var outsideClickMonitor: Any?
     private var prompt: NSTextField!
@@ -208,37 +210,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         islandView.addSubview(statusLabel)
         activityMark = ActivityMark(frame: .zero)
         islandView.addSubview(activityMark)
-        statusDot = NSView(frame: .zero)
-        statusDot.wantsLayer = true
-        statusDot.layer?.cornerRadius = 4
-        statusDot.layer?.backgroundColor = coral.cgColor
         // A layer-hosting view: AppKit resets shadows and sublayers on layers it backs itself.
-        dotEffects = NSView(frame: NSRect(x: 0, y: 0, width: 44, height: 44))
-        dotEffects.layer = CALayer()
-        dotEffects.wantsLayer = true
-        dotEffects.isHidden = true
-        let dotCircle = CGRect(x: 16, y: 16, width: 12, height: 12)
-        let dotGlow = CALayer()
-        dotGlow.frame = dotCircle
-        dotGlow.cornerRadius = 6
-        dotGlow.backgroundColor = NSColor.systemGreen.cgColor
-        dotGlow.shadowColor = NSColor.systemGreen.cgColor
-        dotGlow.shadowOffset = .zero
-        dotGlow.shadowRadius = 7
-        dotGlow.shadowOpacity = 1
-        dotPing.frame = dotCircle
-        dotPing.cornerRadius = 6
-        dotPing.backgroundColor = NSColor.systemGreen.cgColor
-        dotPing.opacity = 0
-        dotEffects.layer?.addSublayer(dotPing)
-        dotEffects.layer?.addSublayer(dotGlow)
-        islandView.addSubview(dotEffects)
-        hoverIcon = NSImageView(image: NSImage(systemSymbolName: "paperclip", accessibilityDescription: nil) ?? NSImage())
-        hoverIcon.contentTintColor = NSColor(white: 0.85, alpha: 1)
-        hoverIcon.setAccessibilityElement(false)
-        hoverIcon.isHidden = true
-        islandView.addSubview(hoverIcon)
-        islandView.addSubview(statusDot)
+        signalHost = NSView(frame: .zero)
+        signalHost.layer = CALayer()
+        signalHost.wantsLayer = true
+        signalHost.layer?.masksToBounds = true
+        signalHost.autoresizingMask = [.width, .height]
+        sensingGlow.type = .radial
+        sensingGlow.colors = [signalGreen.withAlphaComponent(0.4).cgColor, signalGreen.withAlphaComponent(0).cgColor]
+        sensingGlow.opacity = 0
+        sensingLine.startPoint = CGPoint(x: 0, y: 0.5)
+        sensingLine.endPoint = CGPoint(x: 1, y: 0.5)
+        sensingLine.colors = [signalGreen.withAlphaComponent(0), signalGreen.withAlphaComponent(0.55), NSColor(calibratedRed: 0.8, green: 1, blue: 0.86, alpha: 1), signalGreen.withAlphaComponent(0.55), signalGreen.withAlphaComponent(0)].map(\.cgColor)
+        sensingLine.cornerRadius = 1
+        sensingLine.shadowColor = signalGreen.cgColor
+        sensingLine.shadowOffset = .zero
+        sensingLine.shadowRadius = 5
+        sensingLine.shadowOpacity = 1
+        sensingLine.opacity = 0
+        statusLine.backgroundColor = coral.cgColor
+        statusLine.shadowColor = coral.cgColor
+        statusLine.shadowOffset = .zero
+        statusLine.shadowRadius = 4
+        statusLine.shadowOpacity = 0.8
+        for layer in [sensingGlow, sensingLine, statusLine] { signalHost.layer?.addSublayer(layer) }
+        islandView.addSubview(signalHost, positioned: .below, relativeTo: statusLabel)
         prompt = NSTextField(frame: NSRect(x: 16, y: 54, width: 320, height: 42))
         prompt.placeholderString = "Ask me anything…"
         prompt.setAccessibilityLabel("Ask Clippy")
@@ -310,17 +306,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private func startOverlayHitTesting() {
         // The transparent WebView has a rectangular native surface. Test its
         // actual drawn objects so the empty area behaves like the desktop.
-        let timer = Timer(timeInterval: 0.05, repeats: true) { [weak self] _ in self?.updateOverlayHitTesting(); self?.updateDotHover() }
+        let timer = Timer(timeInterval: 0.05, repeats: true) { [weak self] _ in self?.updateOverlayHitTesting(); self?.updatePointer() }
         hitTestTimer = timer
         RunLoop.main.add(timer, forMode: .common)
     }
-    private func updateDotHover() {
+    private func updatePointer() {
         // The pointer can rest on the screen's top edge, which a rect excludes.
         let area = islandView.hoverArea.offsetBy(dx: island.frame.minX, dy: island.frame.minY).insetBy(dx: 0, dy: -1)
         let hovering = island.isVisible && area.contains(NSEvent.mouseLocation)
-        guard hovering != dotHovered else { return }
-        dotHovered = hovering
-        layoutIsland()
+        if hovering != pointerOnIsland {
+            pointerOnIsland = hovering
+            if hovering { steerSignal() }
+            layoutIsland()
+        } else if hovering { steerSignal() }
     }
     private func updateOverlayHitTesting() {
         guard overlay.isVisible, overlayReady else {
@@ -450,14 +448,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         if !value { island.resignKey() }
     }
     private var talking: Bool { voiceRequested || recording || currentStatus == "Speaking" }
-    // Resting: a green dot. Audio live: the waveform. Anything else to say: text and dot.
+    // Resting: a green line. Audio live: the waveform. Anything else to say: text and line.
     @discardableResult private func layoutIsland() -> IslandLayout {
-        let content: IslandContent = talking ? .audio : currentStatus == "Ready" ? .dot : .status(textWidth: ceil(statusLabel.cell?.cellSize.width ?? 52))
-        let alive = dotHovered && content == .dot && !expanded
+        let content: IslandContent = talking ? .audio : currentStatus == "Ready" ? .idle : .status(textWidth: ceil(statusLabel.cell?.cellSize.width ?? 52))
+        let awake = pointerOnIsland && content == .idle && !expanded
         let screen = island?.screen ?? NSScreen.main ?? NSScreen.screens[0]
         let layout = IslandLayout(screen: screen.frame, safeTop: screen.safeAreaInsets.top,
                                   leftArea: screen.auxiliaryTopLeftArea, rightArea: screen.auxiliaryTopRightArea,
-                                  expanded: expanded, content: content, hovered: alive)
+                                  expanded: expanded, content: content, hovered: awake)
         islandView.layer?.cornerRadius = layout.cornerRadius
         islandView.layer?.maskedCorners = layout.isNotched && !expanded
             ? [.layerMinXMinYCorner, .layerMaxXMinYCorner]
@@ -466,50 +464,64 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         islandView.layer?.borderWidth = layout.isNotched ? 0 : 0.5
         statusLabel.frame = layout.statusFrame
         activityMark.frame = layout.activityFrame
-        islandView.hoverArea = content == .dot && !expanded ? layout.dotArea : .zero
-        animateDot(alive, frame: layout.dotFrame)
-        if let frame = layout.hoverIconFrame {
-            hoverIcon.frame = frame
-            if hoverIcon.isHidden { hoverIcon.alphaValue = 0; hoverIcon.isHidden = false }
-        } else { hoverIcon.isHidden = true }
+        islandView.hoverArea = content == .idle && !expanded ? layout.wakeArea : .zero
+        updateSignal(awake: awake, content: content, layout: layout)
         if case .status = content { statusLabel.isHidden = false } else { statusLabel.isHidden = !expanded }
         activityMark.isHidden = content != .audio
-        statusDot.isHidden = content == .audio
         islandView.toolTip = expanded ? nil : "\(currentStatus) · Click to open · ⌃⌥Space"
         islandView.setAccessibilityLabel("Clippy: \(currentStatus)")
         if island.frame.isEmpty || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             island.setFrame(layout.frame, display: true)
-            statusDot.frame = layout.dotFrame
-            hoverIcon.alphaValue = 1
-        } else if island.frame != layout.frame || statusDot.frame != layout.dotFrame {
+        } else if island.frame != layout.frame {
             NSAnimationContext.runAnimationGroup { context in
-                // Overshoots slightly at rest so the dot feels springy; the composer just opens.
+                // Overshoots slightly at rest so the island feels springy; the composer just opens.
                 context.duration = expanded ? 0.18 : 0.26
                 if !expanded { context.timingFunction = CAMediaTimingFunction(controlPoints: 0.3, 1.5, 0.5, 1) }
                 island.animator().setFrame(layout.frame, display: true)
-                statusDot.animator().frame = layout.dotFrame
-                hoverIcon.animator().alphaValue = 1
             }
         }
         return layout
     }
-    // While hovered the dot glows and sends out a repeating ping.
-    private func animateDot(_ alive: Bool, frame: NSRect) {
-        statusDot.layer?.cornerRadius = frame.width / 2
-        dotEffects.frame = NSRect(x: frame.midX - 22, y: frame.midY - 22, width: 44, height: 44)
-        dotEffects.isHidden = !alive
-        guard alive, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { dotPing.removeAllAnimations(); return }
-        guard dotPing.animation(forKey: "ping") == nil else { return }
-        let scale = CABasicAnimation(keyPath: "transform.scale")
-        scale.fromValue = 1; scale.toValue = 2.6
-        let fade = CABasicAnimation(keyPath: "opacity")
-        fade.fromValue = 0.6; fade.toValue = 0
-        let ping = CAAnimationGroup()
-        ping.animations = [scale, fade]
-        ping.duration = 1.1
-        ping.repeatCount = .infinity
-        ping.timingFunction = CAMediaTimingFunction(name: .easeOut)
-        dotPing.add(ping, forKey: "ping")
+    // The upright line lies down along the bottom edge when woken, and breathes while idle.
+    private func updateSignal(awake: Bool, content: IslandContent, layout: IslandLayout) {
+        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        CATransaction.begin()
+        CATransaction.setDisableActions(reduceMotion)
+        CATransaction.setAnimationDuration(expanded ? 0.18 : 0.26)
+        CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(controlPoints: 0.2, 0.8, 0.2, 1))
+        signalHost.layer?.cornerRadius = layout.cornerRadius
+        signalHost.layer?.maskedCorners = islandView.layer?.maskedCorners ?? []
+        statusLine.frame = layout.lineFrame
+        statusLine.cornerRadius = min(layout.lineFrame.width, layout.lineFrame.height) / 2
+        statusLine.opacity = awake || content == .audio ? 0 : 1
+        sensingLine.frame = layout.lineFrame
+        sensingLine.opacity = awake ? 1 : 0
+        sensingGlow.frame = layout.bounds
+        sensingGlow.opacity = awake ? 1 : 0
+        CATransaction.commit()
+        guard content == .idle, !awake, !expanded, !reduceMotion else { statusLine.removeAnimation(forKey: "pulse"); return }
+        guard statusLine.animation(forKey: "pulse") == nil else { return }
+        let pulse = CABasicAnimation(keyPath: "opacity")
+        pulse.fromValue = 1; pulse.toValue = 0.4
+        pulse.duration = 1.6
+        pulse.autoreverses = true
+        pulse.repeatCount = .infinity
+        pulse.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        statusLine.add(pulse, forKey: "pulse")
+    }
+    // The brightest point of the line and its glow lean toward the pointer.
+    private func steerSignal() {
+        let frame = island.frame
+        let point = min(max((NSEvent.mouseLocation.x - frame.minX) / max(frame.width, 1), 0.15), 0.85)
+        guard abs(point - signalPoint) > 0.004 else { return }
+        signalPoint = point
+        CATransaction.begin()
+        CATransaction.setDisableActions(NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+        CATransaction.setAnimationDuration(0.25)
+        sensingLine.locations = [0, point * 0.4, point, point + (1 - point) * 0.6, 1].map { NSNumber(value: Double($0)) }
+        sensingGlow.startPoint = CGPoint(x: point, y: 0.1)
+        sensingGlow.endPoint = CGPoint(x: point + 0.3, y: 1)
+        CATransaction.commit()
     }
     @objc private func reposition() { setExpanded(expanded); positionOverlay() }
     private func positionOverlay() {
@@ -527,8 +539,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         activityMark.active = talking
         statusLabel.toolTip = text
         statusLabel.textColor = problem ? coral : .white
-        statusDot.layer?.backgroundColor = (connectionProblem == nil && !working && !problem ? NSColor.systemGreen : coral).cgColor
-        // One-off notices fade back to the dot; while the composer is open they wait for it to close.
+        let lineColor = (connectionProblem == nil && !working && !problem ? signalGreen : coral).cgColor
+        statusLine.backgroundColor = lineColor
+        statusLine.shadowColor = lineColor
+        // One-off notices fade back to the line; while the composer is open they wait for it to close.
         settleTimer?.invalidate(); settleTimer = nil
         if text != "Ready" && text != connectionProblem && !working && !busy && !talking {
             settleTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: false) { [weak self] _ in
