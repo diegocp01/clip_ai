@@ -92,6 +92,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var lastPointerCheck: CFTimeInterval = 0
     private var collapseButton: NSButton!
     private var outsideClickMonitor: Any?
+    private var menuTrackingDepth = 0
     private var prompt: NSTextField!
     private var expandedControls = [NSView]()
     private var sendButton: NSButton!
@@ -102,7 +103,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var captureButton: NSButton!
     private var voiceButton: NSButton!
     private var tierPicker: NSPopUpButton!
-    private var providerControl: NSSegmentedControl!
+    private var providerControl: NSPopUpButton!
     private var expanded = false
     private var overlayReady = false
     private var hitTestTimer: Timer?
@@ -152,10 +153,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         buildCaptions()
         buildMenu()
         registerShortcut()
+        NotificationCenter.default.addObserver(self, selector: #selector(menuBeganTracking), name: NSMenu.didBeginTrackingNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(menuEndedTracking), name: NSMenu.didEndTrackingNotification, object: nil)
         keyboardMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .leftMouseDown, .rightMouseDown]) { [weak self] event in
-            guard let self else { return event }
+            guard let self, self.menuTrackingDepth == 0 else { return event }
             if event.type != .keyDown {
-                if self.expanded && event.window !== self.island { self.setExpanded(false) }
+                if self.expanded, let window = event.window, window !== self.island,
+                   window.level.rawValue < NSWindow.Level.popUpMenu.rawValue,
+                   !self.island.frame.contains(window.convertPoint(toScreen: event.locationInWindow)) {
+                    self.setExpanded(false)
+                }
                 return event
             }
             if event.keyCode == 53 {
@@ -168,13 +175,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             return event
         }
         outsideClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
-            guard let self, self.expanded, !self.island.frame.contains(NSEvent.mouseLocation) else { return }
+            guard let self, self.menuTrackingDepth == 0, self.expanded, !self.island.frame.contains(NSEvent.mouseLocation) else { return }
             self.setExpanded(false)
         }
         NotificationCenter.default.addObserver(self, selector: #selector(reposition), name: NSApplication.didChangeScreenParametersNotification, object: nil)
         island.orderFrontRegardless()
         checkServer(startIfNeeded: true)
     }
+
+    // Native popup menus use their own windows. Selecting a circular menu or
+    // pressing Escape inside it must not trigger the composer's outside click.
+    @objc private func menuBeganTracking(_ notification: Notification) { menuTrackingDepth += 1 }
+    @objc private func menuEndedTracking(_ notification: Notification) { menuTrackingDepth = max(0, menuTrackingDepth - 1) }
 
     private func panel(_ rect: NSRect, level: NSWindow.Level) -> FloatingPanel {
         let p = FloatingPanel(contentRect: rect, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
@@ -273,12 +285,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let promptSurface = NSView(frame: ComposerGeometry.prompt)
         promptSurface.wantsLayer = true
         promptSurface.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.045).cgColor
-        promptSurface.layer?.cornerRadius = 14
+        promptSurface.layer?.cornerRadius = ComposerGeometry.cornerRadius
         promptSurface.layer?.borderWidth = 0.5
         promptSurface.layer?.borderColor = NSColor.white.withAlphaComponent(0.12).cgColor
         islandView.addSubview(promptSurface)
         expandedControls.append(promptSurface)
-        let promptField = ComposerPrompt(frame: ComposerGeometry.prompt.insetBy(dx: 12, dy: 13))
+        let promptField = ComposerPrompt(frame: ComposerGeometry.input)
         promptField.focusSurface = promptSurface
         prompt = promptField
         prompt.placeholderString = "Ask me anything…"
@@ -296,10 +308,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         collapseButton.toolTip = "Make smaller · Esc or ⌃⌥Space"
         collapseButton.layer?.backgroundColor = NSColor.clear.cgColor
         collapseButton.layer?.borderWidth = 0
-        captureButton = button("Screen", frame: ComposerGeometry.screen, action: #selector(captureScreen), symbol: "rectangle.dashed")
+        captureButton = button("Screen", frame: ComposerGeometry.screen, action: #selector(captureScreen), symbol: "rectangle.dashed", iconOnly: true)
         captureButton.toolTip = "Attach one screenshot to your next question"
         micButton = NSButton(title: "Dictate", target: self, action: #selector(toggleDictation))
-        talkButton = button("Talk", frame: ComposerGeometry.talk, action: #selector(toggleRealtimeVoice), symbol: "waveform")
+        talkButton = button("Talk", frame: ComposerGeometry.talk, action: #selector(toggleRealtimeVoice), symbol: "waveform", iconOnly: true)
         talkButton.toolTip = "Live AI voice · separately billed API usage · click End to stop the microphone"
         voiceButton = button("Voice on", frame: ComposerGeometry.voice, action: #selector(toggleVoice), symbol: "speaker.wave.2", iconOnly: true)
         voiceButton.contentTintColor = .systemBlue
@@ -311,25 +323,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         tierPicker = NSPopUpButton(frame: ComposerGeometry.tier)
         tierPicker.addItems(withTitles: ["Standard", "Fast"])
         tierPicker.selectItem(at: 1)
+        tierPicker.item(at: 0)?.image = NSImage(systemSymbolName: "leaf", accessibilityDescription: "Standard")
+        tierPicker.item(at: 1)?.image = NSImage(systemSymbolName: "bolt.fill", accessibilityDescription: "Fast")
+        tierPicker.imagePosition = .imageOnly
+        (tierPicker.cell as? NSPopUpButtonCell)?.arrowPosition = .noArrow
+        tierPicker.setAccessibilityLabel("Reasoning mode")
+        tierPicker.contentTintColor = .white
         tierPicker.font = .systemFont(ofSize: 11)
         tierPicker.bezelStyle = .accessoryBarAction
         tierPicker.isBordered = false
         tierPicker.wantsLayer = true
         tierPicker.layer?.cornerRadius = ComposerGeometry.tier.height / 2
         tierPicker.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.055).cgColor
+        tierPicker.layer?.borderWidth = 0.5
+        tierPicker.layer?.borderColor = NSColor.white.withAlphaComponent(0.15).cgColor
         tierPicker.toolTip = "GPT-6.1 Terra · Low reasoning. Fast uses more Codex allowance."
         islandView.addSubview(tierPicker)
         expandedControls.append(tierPicker)
-        providerControl = NSSegmentedControl(labels: ["GPT", "Claude"], trackingMode: .selectOne, target: self, action: #selector(providerChanged))
-        providerControl.frame = ComposerGeometry.provider
-        providerControl.segmentStyle = .capsule
+        providerControl = NSPopUpButton(frame: ComposerGeometry.provider)
+        providerControl.addItems(withTitles: ["GPT", "Claude"])
+        providerControl.item(at: 0)?.image = mascot("mascot-gpt", description: "GPT") ?? NSImage(systemSymbolName: "cpu", accessibilityDescription: "GPT")
+        providerControl.item(at: 1)?.image = mascot("mascot-claude", description: "Claude") ?? NSImage(systemSymbolName: "sparkle", accessibilityDescription: "Claude")
+        providerControl.imagePosition = .imageOnly
+        (providerControl.cell as? NSPopUpButtonCell)?.arrowPosition = .noArrow
+        providerControl.target = self
+        providerControl.action = #selector(providerChanged)
+        providerControl.isBordered = false
+        providerControl.contentTintColor = .white
+        providerControl.wantsLayer = true
+        providerControl.layer?.cornerRadius = 18
+        providerControl.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.055).cgColor
+        providerControl.layer?.borderWidth = 0.5
+        providerControl.layer?.borderColor = NSColor.white.withAlphaComponent(0.15).cgColor
         providerControl.setAccessibilityLabel("Model")
-        providerControl.setToolTip("GPT · Codex SDK", forSegment: 0)
-        providerControl.setToolTip("Claude · Claude CLI", forSegment: 1)
-        for segment in 0...1 {
-            providerControl.setWidth(34, forSegment: segment)
-            providerControl.setImageScaling(.scaleProportionallyDown, forSegment: segment)
-        }
+        providerControl.toolTip = "GPT uses the Codex SDK · Claude uses the Claude CLI"
         islandView.addSubview(providerControl)
         expandedControls.append(providerControl)
         updateProviderControl()
@@ -886,25 +913,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         setStatus("Ready")
     }
 
-    @objc private func providerChanged() { setProvider(providerControl.selectedSegment == 1 ? .claude : .gpt) }
-    // The mascot not in use dims. Without its image, a segment keeps its text label.
-    private func mascot(_ name: String, description: String, selected: Bool) -> NSImage? {
+    @objc private func providerChanged() { setProvider(providerControl.indexOfSelectedItem == 1 ? .claude : .gpt) }
+    private func mascot(_ name: String, description: String) -> NSImage? {
         guard let url = Bundle.main.url(forResource: name, withExtension: "png"), let source = NSImage(contentsOf: url) else { return nil }
-        let height: CGFloat = 19, size = NSSize(width: height * source.size.width / max(source.size.height, 1), height: height)
+        let height: CGFloat = 24, size = NSSize(width: height * source.size.width / max(source.size.height, 1), height: height)
         let image = NSImage(size: size, flipped: false) { rect in
-            source.draw(in: rect, from: .zero, operation: .sourceOver, fraction: selected ? 1 : 0.42)
+            source.draw(in: rect)
             return true
         }
         image.accessibilityDescription = description
         return image
     }
     private func updateProviderControl() {
-        providerControl.selectedSegment = provider == .claude ? 1 : 0
-        for (segment, name, description, value) in [(0, "mascot-gpt", "GPT", AIProvider.gpt), (1, "mascot-claude", "Claude", AIProvider.claude)] {
-            guard let image = mascot(name, description: description, selected: provider == value) else { continue }
-            providerControl.setImage(image, forSegment: segment)
-            providerControl.setLabel("", forSegment: segment)
-        }
+        providerControl.selectItem(at: provider == .claude ? 1 : 0)
         // Standard and Fast are Codex service tiers.
         tierPicker.isEnabled = provider == .gpt
         tierPicker.toolTip = provider == .gpt ? "GPT-6.1 Terra · Low reasoning. Fast uses more Codex allowance." : "Standard and Fast only apply to GPT."
