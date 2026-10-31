@@ -12,9 +12,9 @@ xcrun swiftc -swift-version 5 -O \
   "$project_dir/desktop/WakeSound.swift" "$project_dir/desktop/ComposerSurface.swift" "$project_dir/desktop/IslandLayout.swift" "$project_dir/desktop/IslandGoo.swift" "$project_dir/desktop/IslandLiquid.swift" "$project_dir/desktop/SelectionEditor.swift" "$project_dir/desktop/main.swift" -o "$app_dir/Contents/MacOS/Clippy"
 cp "$project_dir/desktop/Resources/wake-chime.wav" "$app_dir/Contents/Resources/wake-chime.wav"
 cp "$project_dir/desktop/Info.plist" "$app_dir/Contents/Info.plist"
-python3 - "$project_dir" "$(command -v node)" "$project_dir/node_modules/.bin/codex" "$app_dir/Contents/Resources/runtime.json" <<'PYCONFIG'
+python3 - "$project_dir" "$(command -v node)" "$project_dir/node_modules/.bin/codex" "$app_dir/Contents/Resources/runtime.json" "$(command -v claude || true)" <<'PYCONFIG'
 import json,sys
-with open(sys.argv[4], 'w') as f: json.dump({'project':sys.argv[1], 'node':sys.argv[2], 'codex':sys.argv[3]},f)
+with open(sys.argv[4], 'w') as f: json.dump({'project':sys.argv[1], 'node':sys.argv[2], 'codex':sys.argv[3], 'claude':sys.argv[5]},f)
 PYCONFIG
 plutil -lint "$app_dir/Contents/Info.plist"
 codesign --force --sign - "$app_dir"

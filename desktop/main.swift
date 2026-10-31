@@ -9,7 +9,12 @@ private let coral = NSColor(calibratedRed: 1, green: 0.47, blue: 0.36, alpha: 1)
 private let signalGreen = NSColor(calibratedRed: 0.29, green: 0.93, blue: 0.47, alpha: 1)
 private let serverUnavailable = "Local server unavailable"
 private let drawingUnavailable = "Drawing view unavailable"
-private let signInRequired = "Sign in with codex login"
+
+/// Which backend answers composer questions: GPT through the Codex SDK, or Claude through the Claude CLI.
+enum AIProvider: String {
+    case gpt, claude
+    var signInRequired: String { self == .claude ? "Sign in with claude auth login" : "Sign in with codex login" }
+}
 
 final class FloatingPanel: NSPanel {
     override var canBecomeKey: Bool { true }
@@ -70,6 +75,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var signalBar = SignalBar()
     private var pointerOnIsland = false
     private let wakeSound = WakeSound()
+    private var provider = AIProvider(rawValue: UserDefaults.standard.string(forKey: "aiProvider") ?? "") ?? .gpt
     private var gooPanel: FloatingPanel!
     private let gooFill = CAShapeLayer()
     private let gooLiquid = CALayer()
@@ -861,14 +867,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         setStatus("Ready")
     }
 
+    // Hook for the composer's GPT/Claude toggle: read `provider` to show the current choice and
+    // call this when it changes. It's remembered across launches and applies to the next question.
+    private func setProvider(_ value: AIProvider) {
+        guard value != provider else { return }
+        provider = value
+        UserDefaults.standard.set(value.rawValue, forKey: "aiProvider")
+        // Each backend has its own sign-in, which decides whether the line can be green.
+        pollServer()
+    }
+    private var statusURL: URL { URL(string: "api/status?provider=\(provider.rawValue)", relativeTo: baseURL)!.absoluteURL }
     private func checkServer(startIfNeeded: Bool, retries: Int = 12) {
-        var request = URLRequest(url: baseURL.appendingPathComponent("api/status"))
+        var request = URLRequest(url: statusURL)
         request.timeoutInterval = 8
         URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
             DispatchQueue.main.async {
                 guard let self else { return }
                 if let data, let value = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any], value["model"] != nil {
-                    self.setConnection(value["authenticated"] as? Bool == true ? nil : signInRequired)
+                    self.setConnection(value["authenticated"] as? Bool == true ? nil : self.provider.signInRequired)
                     self.webView.load(URLRequest(url: baseURL.appendingPathComponent("overlay.html")))
                     self.startHealthMonitor()
                 } else if startIfNeeded && error != nil {
@@ -890,7 +906,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         healthTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in self?.pollServer() }
     }
     private func pollServer() {
-        var request = URLRequest(url: baseURL.appendingPathComponent("api/status"))
+        var request = URLRequest(url: statusURL)
         request.timeoutInterval = 12
         URLSession.shared.dataTask(with: request) { [weak self] data, _, _ in
             DispatchQueue.main.async {
@@ -898,7 +914,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 guard let data, let value = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any], value["model"] != nil else {
                     self.setConnection(serverUnavailable); return
                 }
-                if value["authenticated"] as? Bool != true { self.setConnection(signInRequired) }
+                if value["authenticated"] as? Bool != true { self.setConnection(self.provider.signInRequired) }
                 else { self.setConnection(self.overlayReady ? nil : drawingUnavailable) }
                 if !self.overlayReady { self.webView.load(URLRequest(url: baseURL.appendingPathComponent("overlay.html"))) }
             }
@@ -913,6 +929,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         var env = ProcessInfo.processInfo.environment
         env["PATH"] = URL(fileURLWithPath: node).deletingLastPathComponent().path + ":/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
         if let codex = config["codex"] { env["CLIPPY_CODEX_BIN"] = codex }
+        if let claude = config["claude"], !claude.isEmpty { env["CLIPPY_CLAUDE_BIN"] = claude }
         process.environment = env
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
@@ -954,7 +971,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 request.httpMethod = "POST"
                 request.setValue("application/json", forHTTPHeaderField: "Content-Type")
                 request.setValue(token, forHTTPHeaderField: "X-Clippy-Session")
-                let body: [String: Any] = ["message": message, "tier": ["standard", "fast"][self.tierPicker.indexOfSelectedItem], "history": Array(self.history.suffix(12)), "previous": self.previous as Any? ?? NSNull(), "image": self.attachedImage as Any? ?? NSNull()]
+                let body: [String: Any] = ["message": message, "tier": ["standard", "fast"][self.tierPicker.indexOfSelectedItem], "provider": self.provider.rawValue, "history": Array(self.history.suffix(12)), "previous": self.previous as Any? ?? NSNull(), "image": self.attachedImage as Any? ?? NSNull()]
                 guard let encoded = try? JSONSerialization.data(withJSONObject: body) else { self.finishRequest(); self.showError("Could not prepare the request."); return }
                 request.httpBody = encoded
                 self.requestTask = self.streamingSession.dataTask(with: request)
