@@ -64,7 +64,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var overlay: FloatingPanel!
     private var webView: WKWebView!
     private var captions: FloatingPanel!
-    private var captionText: NSTextField!
+    private var replyCard: ReplyCard!
+    private var captionDismissed = false
     private var statusItem: NSStatusItem!
     private var statusLabel: NSTextField!
     private var activityMark: ActivityMark!
@@ -622,17 +623,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
     private func buildCaptions() {
         captions = panel(.zero, level: .floating)
-        captions.ignoresMouseEvents = true
-        let v = NSView()
-        v.wantsLayer = true
-        v.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.87).cgColor
-        v.layer?.cornerRadius = 14
-        captionText = label("", size: 16)
-        captionText.alignment = .center
-        captionText.maximumNumberOfLines = 3
-        captionText.lineBreakMode = .byWordWrapping
-        v.addSubview(captionText)
-        captions.contentView = v
+        captions.title = "Clip reply"
+        captions.ignoresMouseEvents = false
+        captions.hasShadow = true
+        replyCard = ReplyCard(frame: .zero)
+        replyCard.onDismiss = { [weak self] in
+            self?.captionDismissed = true; self?.captions.orderOut(nil)
+            self?.speech.stopSpeaking(at: .immediate)
+        }
+        captions.contentView = replyCard
     }
     private func buildMenu() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -1198,15 +1197,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         setExpanded(true)
         showCaption(text)
     }
-    private func showCaption(_ text: String) {
+    private func showCaption(_ text: String, live: Bool = false) {
+        if live && captionDismissed { return }
+        if !live { captionDismissed = false }
+        guard !text.isEmpty else { captions.orderOut(nil); return }
         let screen = island.screen ?? NSScreen.main ?? NSScreen.screens[0]
-        let width = min(860, screen.visibleFrame.width - 80)
-        let trimmed = String(text.prefix(500))
-        let estimated = (trimmed as NSString).boundingRect(with: NSSize(width: width - 36, height: 100), options: [.usesLineFragmentOrigin], attributes: [.font: NSFont.systemFont(ofSize: 16)]).height
-        let height = min(100, max(42, ceil(estimated) + 24))
-        captions.setFrame(NSRect(x: screen.frame.midX - width / 2, y: screen.visibleFrame.minY + 24, width: width, height: height), display: true)
-        captionText.frame = NSRect(x: 18, y: 12, width: width - 36, height: height - 24)
-        captionText.stringValue = trimmed
+        let size = ReplyCardLayout.size(text: text, available: screen.visibleFrame.size)
+        captions.setFrame(NSRect(x: screen.visibleFrame.midX - size.width / 2, y: screen.visibleFrame.minY + 24, width: size.width, height: size.height), display: true)
+        replyCard.show(text, live: live)
         captions.orderFrontRegardless()
     }
     @objc private func toggleVoice() {
@@ -1665,7 +1663,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             }
         }
         overlay.orderFrontRegardless()
-        if !preview, let reply = result["reply"] as? String { showCaption(reply) }
+        if !preview, !voiceRequested, let reply = result["reply"] as? String { showCaption(reply) }
     }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { /* The module sends ready after clippyRender exists. */ }
     func webView(_ webView: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin, initiatedByFrame frame: WKFrameInfo, type: WKMediaCaptureType, decisionHandler: @escaping (WKPermissionDecision) -> Void) {
@@ -1698,12 +1696,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         case "voiceState":
             guard data["generation"] as? Int == voiceGeneration else { return }
             guard let state = data["state"] as? String else { return }
-            let text = String((data["message"] as? String ?? "").prefix(1500))
+            let text = data["message"] as? String ?? ""
+            guard text.utf16.count <= 64000 else { return }
             if state == "ended" || state == "error" {
                 voiceRequested = false; updateTalkButton()
                 if state == "error" { showError(text) } else { setStatus(text.isEmpty ? "Ready" : text) }
             } else if voiceRequested {
-                if state == "transcript" { showCaption(text) } else { setStatus(text) }
+                if state == "transcript" { showCaption(text, live: true) }
+                else if state == "transcript-start" { captionDismissed = false; captions.orderOut(nil) }
+                else if state == "transcript-cleared" { captions.orderOut(nil) }
+                else { setStatus(String(text.prefix(1500))) }
             }
         case "voiceCaptureScreen":
             guard voiceRequested, data["generation"] as? Int == voiceGeneration,
@@ -1761,9 +1763,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
     private func speak(_ text: String) {
         speech.stopSpeaking(at: .immediate)
+        showCaption(text)
         let voices = AVSpeechSynthesisVoice.speechVoices()
         guard let voice = voices.first(where: { $0.language == Locale.current.identifier.replacingOccurrences(of: "_", with: "-") }) ?? voices.first(where: { $0.language.hasPrefix("en") }) ?? voices.first else { return }
-        let utterance = AVSpeechUtterance(string: text)
+        let utterance = AVSpeechUtterance(string: replyCard.text)
         utterance.voice = voice
         speech.speak(utterance)
     }

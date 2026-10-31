@@ -91,7 +91,6 @@ Clip uses the Codex CLI bundled with its SDK (0.166.0) for current model support
 
 After the initial bootstrap, changes go through feature branches and pull requests. CI runs the JavaScript checks and tests without credentials; native builds and permission-dependent behavior need macOS verification. See [AGENTS.md](AGENTS.md).
 
-
 ### Automatic screen context
 
 After a native Send or Draw prompt, Decisions checks whether it needs the currently visible app, error, page or chart. “What is wrong with this error on my screen?” can capture one screenshot; “How do molecules work?” does not. The decision receives only the submitted prompt. An existing screenshot is reused, and explicit requests not to capture are respected. Missing API access, timeouts or uncertain decisions skip capture.
@@ -100,9 +99,14 @@ The native semicircle shows **Screenshot captured** below the prompt (or **Scree
 
 Talk exposes a bounded `capture_screen` tool: one capture per spoken turn, at most eight per session. If the voice requests capture and Draw together, capture finishes first so Draw gets the image. End aborts pending sharing; Stop cancels typed preflight/capture delivery. The text/drawing models remain tool-disabled: their screen context comes from Decisions preflight, while Realtime explicitly calls the native capture tool.
 
-
 ### Codex, Claude, or Both
 
 The native provider circle opens a three-option dropdown. **Both** sends the same prompt and optional screenshot concurrently to Codex and Claude and displays separate text answers with Copy buttons. One provider can finish even if the other fails; Stop cancels both. Chat models and reasoning effort can be configured separately in the caption menu. Both bypasses automatic visual routing and never creates drawings or voice output. Draw and Talk retain their independent single-provider settings.
 
 With Both selected, selected-text proofreading/rewriting also returns two copyable suggestions, leaving the original text untouched. Automatic editing chooses the same action once before comparing the existing editing models. Comparison calls do not share provider outputs or include prior conversation history. `/api/compare` requires the local session, validates text/image and model input, rejects Draw/voice requests, and reserves two inference slots for cancellation and concurrency control.
+
+### Matching speech and text
+
+Typed replies use one complete string for the native reply bubble, Copy, and speech synthesis. The former 500-character/three-line caption clipping is removed; longer answers scroll inside a minimal floating frosted bubble. Small Copy and Dismiss icons sit beside the text, with no header. Both comparisons use two compact, labeled bubbles with independent copy controls and content-sized height.
+
+Talk displays the actual Realtime audio transcript, including final transcript corrections, rather than Draw’s separately generated explanation. New turns and interruptions clear the old transcript; stale events cannot overwrite a newer reply. Captions are not word-timed: the Realtime transcript can arrive before the corresponding audio plays. Interrupted audio has no exact word-aligned transcript, so Clip clears that bubble instead of presenting the unplayed ending. Draw explanations remain available as visual content without replacing the spoken transcript.

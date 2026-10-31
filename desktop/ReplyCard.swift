@@ -1,0 +1,67 @@
+import AppKit
+
+enum ReplyCardLayout {
+    static func size(text: String, available: NSSize) -> NSSize {
+        let font = NSFont.systemFont(ofSize: 15)
+        let naturalWidth = (text as NSString).size(withAttributes: [.font: font]).width + 92
+        let width = min(640, max(240, min(naturalWidth, available.width - 48)))
+        let paragraph = NSMutableParagraphStyle(); paragraph.lineSpacing = 4
+        let rect = (text as NSString).boundingRect(with: NSSize(width: width - 92, height: 100000), options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: [.font: font, .paragraphStyle: paragraph])
+        return NSSize(width: width, height: min(max(100, available.height * 0.38), max(64, ceil(rect.height) + 40)))
+    }
+}
+
+final class ReplyCard: NSVisualEffectView {
+    var onDismiss: (() -> Void)?
+    private(set) var text = ""
+    private let copyButton = NSButton()
+    private let closeButton = NSButton()
+    private let scroll = NSScrollView()
+    private let body = NSTextView()
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        material = .hudWindow; blendingMode = .behindWindow; state = .active
+        appearance = NSAppearance(named: .darkAqua)
+        wantsLayer = true; layer?.cornerRadius = 22; layer?.masksToBounds = true
+        layer?.borderWidth = 0.75; layer?.borderColor = NSColor.white.withAlphaComponent(0.08).cgColor
+        for (button, symbol, label, action) in [(copyButton, "doc.on.doc", "Copy reply", #selector(copyReply)), (closeButton, "xmark", "Dismiss reply", #selector(dismissReply))] {
+            button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
+            button.imagePosition = .imageOnly; button.isBordered = false
+            button.contentTintColor = NSColor.white.withAlphaComponent(0.45)
+            button.target = self; button.action = action; button.toolTip = label; button.setAccessibilityLabel(label)
+            addSubview(button)
+        }
+        scroll.drawsBackground = false; scroll.hasVerticalScroller = true; scroll.autohidesScrollers = true
+        body.isEditable = false; body.isSelectable = true; body.isRichText = false; body.drawsBackground = false
+        body.font = .systemFont(ofSize: 15); body.textColor = .labelColor
+        let paragraph = NSMutableParagraphStyle(); paragraph.lineSpacing = 4
+        body.defaultParagraphStyle = paragraph
+        body.textContainerInset = NSSize(width: 2, height: 3)
+        body.isVerticallyResizable = true; body.isHorizontallyResizable = false
+        body.autoresizingMask = [.width]; body.textContainer?.widthTracksTextView = true
+        body.setAccessibilityLabel("Reply text")
+        scroll.documentView = body; addSubview(scroll)
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    override func layout() {
+        super.layout()
+        copyButton.frame = NSRect(x: bounds.width - 66, y: bounds.height - 40, width: 24, height: 24)
+        closeButton.frame = NSRect(x: bounds.width - 38, y: bounds.height - 40, width: 24, height: 24)
+        scroll.frame = NSRect(x: 20, y: 17, width: bounds.width - 86, height: max(30, bounds.height - 34))
+        body.setFrameSize(NSSize(width: scroll.contentSize.width, height: max(scroll.contentSize.height, body.frame.height)))
+    }
+    func show(_ value: String, live: Bool) {
+        let continuing = live && !text.isEmpty && value.hasPrefix(text)
+        let atBottom = scroll.contentView.bounds.maxY >= body.bounds.maxY - 28
+        text = value; copyButton.toolTip = "Copy reply"
+        body.string = value; copyButton.isEnabled = !value.isEmpty
+        needsLayout = true; layoutSubtreeIfNeeded()
+        if continuing && atBottom { body.scrollToEndOfDocument(nil) }
+        else if !continuing { body.scrollToBeginningOfDocument(nil) }
+    }
+    @objc private func copyReply() {
+        NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string)
+        copyButton.toolTip = "Copied"
+    }
+    @objc private func dismissReply() { onDismiss?() }
+}

@@ -398,3 +398,11 @@ for frame in ComposerGeometry.optionFrames + [ComposerGeometry.input, ComposerGe
     expect(!frame.intersects(ComposerGeometry.screenshotIndicator), "Screenshot notice does not overlap input, selection, or controls")
 }
 print("Screenshot notice geometry passed.")
+
+let shortReplySize = ReplyCardLayout.size(text: "A short reply.", available: NSSize(width: 1440, height: 900))
+let longReplySize = ReplyCardLayout.size(text: String(repeating: "A full paragraph remains readable. ", count: 200), available: NSSize(width: 1440, height: 900))
+assert(shortReplySize.width >= 240 && shortReplySize.width <= 640 && shortReplySize.height >= 64)
+assert(longReplySize.height > shortReplySize.height && longReplySize.height <= 342)
+let narrowReplySize = ReplyCardLayout.size(text: "Readable", available: NSSize(width: 360, height: 600))
+assert(narrowReplySize.width <= 312)
+print("Reply cards fit short, long and narrow-screen answers without limiting text.")

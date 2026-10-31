@@ -2,7 +2,7 @@ import { createScene, renderDiagram, sample } from './scene.js';
 import { VoiceConversation } from './voice.js';
 
 const $ = id => document.getElementById(id);
-let current = null, part = null, streaming = false;
+let current = null, part = null, streaming = false, liveVoice = false;
 const viewer = createScene($('scene-host'), selectPart);
 function post(action, extra = {}) { window.webkit?.messageHandlers?.clippy?.postMessage({ action, ...extra }); }
 function hidePart() { part = null; $('part').hidden = true; viewer.clearSelection(); }
@@ -20,10 +20,11 @@ function render(result, preview = false) {
   const preserveCamera = streaming; streaming = preview;
   current = result; $('overlay').hidden = false; $('demo-label').hidden = true;
   $('visual-title').textContent = (result.title || 'Clip') + (preview ? ' · Drawing…' : '');
-  $('caption-text').textContent = result.reply || '';
-  const showCaption = Boolean(result.reply) && !window.clippyCaptionManaged;
-  $('caption').hidden = !showCaption;
-  $('overlay').classList.toggle('no-caption', !showCaption);
+  if(!liveVoice) {
+    $('caption-text').textContent = result.reply || '';
+    $('caption').hidden = !result.reply || Boolean(window.clippyCaptionManaged);
+  }
+  $('overlay').classList.toggle('no-caption', $('caption').hidden);
   const objects = result.scene?.objects || [], diagram = result.diagram || { nodes: [], links: [] };
   const cards = (result.cards || []).slice(0, 3);
   $('cards').replaceChildren();
@@ -60,7 +61,17 @@ function captureScreen({signal}) {
 }
 const voice = new VoiceConversation({
   captureScreen,
-  notify: event => post('voiceState',{...event,generation:voiceGeneration}),
+  notify: event => {
+    if(event.state==='connecting')liveVoice=true;
+    if(['ended','error'].includes(event.state))liveVoice=false;
+    if(event.state==='transcript') {
+      $('caption-text').textContent=event.message;
+      $('caption').hidden=Boolean(window.clippyCaptionManaged)||!event.message;
+    }
+    if(['transcript-start','transcript-cleared'].includes(event.state))$('caption').hidden=true;
+    $('overlay').classList.toggle('no-caption', $('caption').hidden);
+    post('voiceState',{...event,generation:voiceGeneration});
+  },
   render: result => { render(result); post('voiceVisual',{result,generation:voiceGeneration}); },
   preview: result => { render(result,true); post('voicePreview',{generation:voiceGeneration}); },
   rollback: result => window.clippyRollback(result),
