@@ -22,12 +22,26 @@ final class ChatPreferences {
         get { defaults.object(forKey: "chatAuto") == nil || defaults.bool(forKey: "chatAuto") }
         set { defaults.set(newValue, forKey: "chatAuto") }
     }
+    var autoScope: String {
+        get { let value = defaults.string(forKey: "chatAutoScope") ?? "all"; return ["all", "gpt", "claude"].contains(value) ? value : "all" }
+        set { defaults.set(newValue, forKey: "chatAutoScope") }
+    }
+    var isGlobalAuto: Bool { isAuto && autoScope == "all" }
+    func selectGlobalAuto() { autoScope = "all"; isAuto = true }
+    func selectProvider(_ provider: String) {
+        autoScope = provider
+        isAuto = defaults.object(forKey: "chatAuto.\(provider)") == nil || defaults.bool(forKey: "chatAuto.\(provider)")
+    }
+    func setAuto(_ value: Bool, for provider: String) {
+        autoScope = provider; isAuto = value
+        defaults.set(value, forKey: "chatAuto.\(provider)")
+    }
     func request(for provider: String) -> [String: String] {
-        var result = isAuto ? ["provider": provider, "model": "auto", "reasoningEffort": "auto"] : manual.request(for: provider)
+        var result = isAuto ? ["provider": provider, "model": "auto", "reasoningEffort": "auto", "autoScope": autoScope] : manual.request(for: provider)
         result["mode"] = "chat"
         return result
     }
     func caption(for provider: String) -> String {
-        isAuto ? "Auto · Model & effort" : manual.caption(for: provider)
+        isAuto ? "Auto · \(isGlobalAuto ? "All models" : provider == "gpt" ? "Codex" : "Claude")" : manual.caption(for: provider)
     }
 }
