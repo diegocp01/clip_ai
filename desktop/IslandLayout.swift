@@ -54,7 +54,7 @@ struct IslandLayout {
             statusFrame = NSRect(x: 12, y: (notch.height - 18) / 2, width: max(leftWing - 20, 0), height: 18)
             activityFrame = NSRect(x: leftWing + notch.width + (rightWing - 24) / 2,
                                    y: (notch.height - 20) / 2, width: 24, height: 20)
-            lineFrame = awake ? NSRect(x: 18, y: 4, width: frame.width - 36, height: 2)
+            lineFrame = awake ? NSRect(x: leftWing + (notch.width - 130) / 2, y: 4, width: 130, height: 2)
                               : NSRect(x: leftWing + notch.width + (rightWing - 3) / 2,
                                        y: (notch.height - 14) / 2, width: 3, height: 14)
             // At rest only the line's side reacts. Once awake, the whole island keeps it awake.

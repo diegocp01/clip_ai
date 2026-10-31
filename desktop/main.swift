@@ -17,7 +17,6 @@ final class FloatingPanel: NSPanel {
 }
 final class IslandView: NSView {
     var onExpand: (() -> Void)?
-    var hoverArea = NSRect.zero
     override func mouseDown(with event: NSEvent) { onExpand?() }
     override func accessibilityPerformPress() -> Bool { onExpand?(); return true }
 }
@@ -64,8 +63,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private let statusLine = CALayer()
     private let sensingLine = CAGradientLayer()
     private let sensingGlow = CAGradientLayer()
-    private var signalPoint: CGFloat = -1
+    private var signalPoint: CGFloat = 0.5
     private var pointerOnIsland = false
+    private var gooPanel: FloatingPanel!
+    private let gooFill = CAShapeLayer()
+    private let gooInnerMask = CAShapeLayer()
+    private let gooRimMask = CAShapeLayer()
+    private let gooInnerGlow = CAGradientLayer()
+    private let gooRimGlow = CAGradientLayer()
+    private var wake = Spring(stiffness: 150, damping: 17)
+    private var tipX = Spring(stiffness: 210, damping: 20)
+    private var tipY = Spring(stiffness: 210, damping: 20)
+    private var tether = GooTether()
+    private var droplet: GooDroplet?
+    private var wakeEnds: (rest: IslandLayout, awake: IslandLayout)?
+    private var wakeRegion = NSRect.zero
+    private var frameTimer: Timer?
+    private var lastFrame: CFTimeInterval = 0
+    private var lastPointerCheck: CFTimeInterval = 0
     private var collapseButton: NSButton!
     private var outsideClickMonitor: Any?
     private var prompt: NSTextField!
@@ -217,11 +232,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         signalHost.layer?.masksToBounds = true
         signalHost.autoresizingMask = [.width, .height]
         sensingGlow.type = .radial
-        sensingGlow.colors = [signalGreen.withAlphaComponent(0.4).cgColor, signalGreen.withAlphaComponent(0).cgColor]
+        sensingGlow.colors = [signalGreen.withAlphaComponent(0.26).cgColor, signalGreen.withAlphaComponent(0).cgColor]
         sensingGlow.opacity = 0
         sensingLine.startPoint = CGPoint(x: 0, y: 0.5)
         sensingLine.endPoint = CGPoint(x: 1, y: 0.5)
-        sensingLine.colors = [signalGreen.withAlphaComponent(0), signalGreen.withAlphaComponent(0.55), NSColor(calibratedRed: 0.8, green: 1, blue: 0.86, alpha: 1), signalGreen.withAlphaComponent(0.55), signalGreen.withAlphaComponent(0)].map(\.cgColor)
+        sensingLine.colors = [signalGreen.withAlphaComponent(0), signalGreen.withAlphaComponent(0.6), NSColor(calibratedRed: 0.8, green: 1, blue: 0.86, alpha: 1), signalGreen.withAlphaComponent(0.6), signalGreen.withAlphaComponent(0)].map(\.cgColor)
         sensingLine.cornerRadius = 1
         sensingLine.shadowColor = signalGreen.cgColor
         sensingLine.shadowOffset = .zero
@@ -235,6 +250,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         statusLine.shadowOpacity = 0.8
         for layer in [sensingGlow, sensingLine, statusLine] { signalHost.layer?.addSublayer(layer) }
         islandView.addSubview(signalHost, positioned: .below, relativeTo: statusLabel)
+        buildGoo()
         prompt = NSTextField(frame: NSRect(x: 16, y: 54, width: 320, height: 42))
         prompt.placeholderString = "Ask me anything…"
         prompt.setAccessibilityLabel("Ask Clippy")
@@ -271,6 +287,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         _ = button("More options", frame: NSRect(x: 352, y: 14, width: 32, height: 26), action: #selector(showIslandOptions(_:)), symbol: "ellipsis", iconOnly: true)
         setExpanded(false)
     }
+    // Liquid can reach past the island, so it has its own click-through panel below it.
+    // Inside the island's window it would block clicks on the menu bar.
+    private func buildGoo() {
+        gooPanel = panel(.zero, level: island.level)
+        gooPanel.title = "Clippy liquid edge"
+        gooPanel.ignoresMouseEvents = true
+        gooPanel.setAccessibilityElement(false)
+        let host = NSView(frame: .zero)
+        host.layer = CALayer()
+        host.wantsLayer = true
+        host.autoresizingMask = [.width, .height]
+        gooPanel.contentView = host
+        gooFill.fillColor = NSColor.black.cgColor
+        gooInnerMask.fillColor = NSColor.white.cgColor
+        gooRimMask.fillColor = nil
+        gooRimMask.strokeColor = NSColor.white.cgColor
+        gooRimMask.lineWidth = 2
+        gooRimMask.shadowColor = NSColor.white.cgColor
+        gooRimMask.shadowOffset = .zero
+        gooRimMask.shadowRadius = 5
+        gooRimMask.shadowOpacity = 1
+        gooInnerGlow.type = .radial
+        gooInnerGlow.colors = [signalGreen.withAlphaComponent(0.45).cgColor, signalGreen.withAlphaComponent(0).cgColor]
+        gooInnerGlow.mask = gooInnerMask
+        gooRimGlow.type = .radial
+        gooRimGlow.colors = [signalGreen.cgColor, signalGreen.withAlphaComponent(0).cgColor]
+        gooRimGlow.mask = gooRimMask
+        for layer in [gooFill, gooInnerGlow, gooRimGlow] { host.layer?.addSublayer(layer) }
+    }
     @objc private func collapseIsland() { setExpanded(false) }
     @objc private func showIslandOptions(_ sender: NSButton) {
         let menu = NSMenu()
@@ -306,19 +351,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private func startOverlayHitTesting() {
         // The transparent WebView has a rectangular native surface. Test its
         // actual drawn objects so the empty area behaves like the desktop.
-        let timer = Timer(timeInterval: 0.05, repeats: true) { [weak self] _ in self?.updateOverlayHitTesting(); self?.updatePointer() }
+        let timer = Timer(timeInterval: 0.05, repeats: true) { [weak self] _ in self?.updateOverlayHitTesting(); if self?.frameTimer == nil { self?.updatePointer() } }
         hitTestTimer = timer
         RunLoop.main.add(timer, forMode: .common)
     }
     private func updatePointer() {
+        let now = CACurrentMediaTime()
+        let dt = CGFloat(min(now - lastPointerCheck, 0.1))
+        lastPointerCheck = now
+        let pointer = NSEvent.mouseLocation
         // The pointer can rest on the screen's top edge, which a rect excludes.
-        let area = islandView.hoverArea.offsetBy(dx: island.frame.minX, dy: island.frame.minY).insetBy(dx: 0, dy: -1)
-        let hovering = island.isVisible && area.contains(NSEvent.mouseLocation)
-        if hovering != pointerOnIsland {
-            pointerOnIsland = hovering
-            if hovering { steerSignal() }
-            layoutIsland()
-        } else if hovering { steerSignal() }
+        let region = (pointerOnIsland ? island.frame : wakeRegion).insetBy(dx: 0, dy: -1)
+        let inside = island.isVisible && region.contains(pointer)
+        if wakeEnds?.rest.isNotched == true, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            let outline = IslandOutline(rect: island.frame)
+            if tether.update(inside: inside, distance: outline.distance(to: pointer), pressed: NSEvent.pressedMouseButtons != 0, dt: dt) { separateGoo() }
+        } else { tether.attached = inside }
+        guard tether.attached != pointerOnIsland else { return }
+        pointerOnIsland = tether.attached
+        if pointerOnIsland {
+            let anchor = IslandOutline(rect: island.frame)
+            let start = anchor.point(at: anchor.nearest(to: pointer))
+            tipX.jump(to: start.x); tipY.jump(to: start.y)
+        }
+        layoutIsland()
     }
     private func updateOverlayHitTesting() {
         guard overlay.isVisible, overlayReady else {
@@ -444,6 +500,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
         for control in expandedControls { control.isHidden = !value }
         island.orderFrontRegardless()
+        if layout.isNotched && !value {
+            gooPanel.orderFrontRegardless()
+            gooPanel.order(.below, relativeTo: island.windowNumber)
+        } else { gooPanel.orderOut(nil) }
         if value && focus { island.makeKey(); island.makeFirstResponder(prompt) }
         if !value { island.resignKey() }
     }
@@ -453,9 +513,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let content: IslandContent = talking ? .audio : currentStatus == "Ready" ? .idle : .status(textWidth: ceil(statusLabel.cell?.cellSize.width ?? 52))
         let awake = pointerOnIsland && content == .idle && !expanded
         let screen = island?.screen ?? NSScreen.main ?? NSScreen.screens[0]
-        let layout = IslandLayout(screen: screen.frame, safeTop: screen.safeAreaInsets.top,
-                                  leftArea: screen.auxiliaryTopLeftArea, rightArea: screen.auxiliaryTopRightArea,
-                                  expanded: expanded, content: content, hovered: awake)
+        let makeLayout = { [expanded] (hovered: Bool) in
+            IslandLayout(screen: screen.frame, safeTop: screen.safeAreaInsets.top,
+                         leftArea: screen.auxiliaryTopLeftArea, rightArea: screen.auxiliaryTopRightArea,
+                         expanded: expanded, content: content, hovered: hovered)
+        }
+        let layout = makeLayout(awake)
         islandView.layer?.cornerRadius = layout.cornerRadius
         islandView.layer?.maskedCorners = layout.isNotched && !expanded
             ? [.layerMinXMinYCorner, .layerMaxXMinYCorner]
@@ -464,12 +527,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         islandView.layer?.borderWidth = layout.isNotched ? 0 : 0.5
         statusLabel.frame = layout.statusFrame
         activityMark.frame = layout.activityFrame
-        islandView.hoverArea = content == .idle && !expanded ? layout.wakeArea : .zero
-        updateSignal(awake: awake, content: content, layout: layout)
+        signalHost.layer?.maskedCorners = islandView.layer?.maskedCorners ?? []
         if case .status = content { statusLabel.isHidden = false } else { statusLabel.isHidden = !expanded }
         activityMark.isHidden = content != .audio
         islandView.toolTip = expanded ? nil : "\(currentStatus) · Click to open · ⌃⌥Space"
         islandView.setAccessibilityLabel("Clippy: \(currentStatus)")
+        wake.target = awake ? 1 : 0
+        if content == .idle && !expanded {
+            let rest = makeLayout(false)
+            wakeEnds = (rest, makeLayout(true))
+            wakeRegion = rest.wakeArea.offsetBy(dx: rest.frame.minX, dy: rest.frame.minY)
+            gooPanel.setFrame(rest.frame.insetBy(dx: -220, dy: 0).union(rest.frame.offsetBy(dx: 0, dy: -150)), display: false)
+            if awake || wake.value > 0 || droplet != nil || frameTimer != nil {
+                startFrames()
+                applyWake()
+                return layout
+            }
+        } else {
+            // Text or the composer takes over from any liquid still in motion.
+            stopFrames()
+            wakeRegion = .zero
+            wake.jump(to: 0); tether.attached = false; pointerOnIsland = false; droplet = nil
+        }
+        updateSignal(content: content, layout: layout)
         if island.frame.isEmpty || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             island.setFrame(layout.frame, display: true)
         } else if island.frame != layout.frame {
@@ -480,26 +560,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 island.animator().setFrame(layout.frame, display: true)
             }
         }
+        if layout.isNotched && !expanded {
+            gooPanel.setFrame(layout.frame.insetBy(dx: -220, dy: 0).union(layout.frame.offsetBy(dx: 0, dy: -150)), display: false)
+            drawGoo(outline: IslandOutline(rect: layout.frame), tip: nil)
+        }
         return layout
     }
-    // The upright line lies down along the bottom edge when woken, and breathes while idle.
-    private func updateSignal(awake: Bool, content: IslandContent, layout: IslandLayout) {
+    // The resting line, breathing while idle. The spring takes over from here while awake.
+    private func updateSignal(content: IslandContent, layout: IslandLayout) {
         let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         CATransaction.begin()
         CATransaction.setDisableActions(reduceMotion)
         CATransaction.setAnimationDuration(expanded ? 0.18 : 0.26)
         CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(controlPoints: 0.2, 0.8, 0.2, 1))
         signalHost.layer?.cornerRadius = layout.cornerRadius
-        signalHost.layer?.maskedCorners = islandView.layer?.maskedCorners ?? []
         statusLine.frame = layout.lineFrame
         statusLine.cornerRadius = min(layout.lineFrame.width, layout.lineFrame.height) / 2
-        statusLine.opacity = awake || content == .audio ? 0 : 1
-        sensingLine.frame = layout.lineFrame
-        sensingLine.opacity = awake ? 1 : 0
-        sensingGlow.frame = layout.bounds
-        sensingGlow.opacity = awake ? 1 : 0
+        statusLine.opacity = content == .audio ? 0 : 1
+        sensingLine.opacity = 0
+        sensingGlow.opacity = 0
         CATransaction.commit()
-        guard content == .idle, !awake, !expanded, !reduceMotion else { statusLine.removeAnimation(forKey: "pulse"); return }
+        guard content == .idle, !expanded, !reduceMotion else { statusLine.removeAnimation(forKey: "pulse"); return }
         guard statusLine.animation(forKey: "pulse") == nil else { return }
         let pulse = CABasicAnimation(keyPath: "opacity")
         pulse.fromValue = 1; pulse.toValue = 0.4
@@ -509,18 +590,114 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         pulse.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
         statusLine.add(pulse, forKey: "pulse")
     }
-    // The brightest point of the line and its glow lean toward the pointer.
-    private func steerSignal() {
-        let frame = island.frame
-        let point = min(max((NSEvent.mouseLocation.x - frame.minX) / max(frame.width, 1), 0.15), 0.85)
-        guard abs(point - signalPoint) > 0.004 else { return }
-        signalPoint = point
+    private func startFrames() {
+        guard frameTimer == nil else { return }
+        statusLine.removeAnimation(forKey: "pulse")
+        lastFrame = CACurrentMediaTime()
+        let timer = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] _ in self?.stepFrame() }
+        frameTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+    private func stopFrames() { frameTimer?.invalidate(); frameTimer = nil }
+    private func stepFrame() {
+        let now = CACurrentMediaTime()
+        let dt = CGFloat(min(now - lastFrame, 1.0 / 30))
+        lastFrame = now
+        updatePointer()
+        guard frameTimer != nil else { return }
+        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion { wake.jump(to: wake.target) } else { wake.step(dt) }
+        applyWake()
+        stepGoo(dt)
+        if wake.isSettled, wake.value == 0, droplet == nil, tipX.isSettled, tipY.isSettled {
+            stopFrames()
+            layoutIsland()
+        }
+    }
+    // One value drives the whole transition, so window, shape and line never drift apart.
+    // The upright line shrinks to a bead and glides under the camera, where it spreads out.
+    private func applyWake() {
+        guard let rest = wakeEnds?.rest, let awake = wakeEnds?.awake else { return }
+        let t = max(wake.value, 0)
+        let frame = mix(rest.frame, awake.frame, t)
+        if frame != island.frame { island.setFrame(frame, display: true) }
+        let bead = smoothstep(0, 0.5, t), spread = smoothstep(0.3, 1, t)
+        let restLine = rest.lineFrame.offsetBy(dx: rest.frame.minX - frame.minX, dy: rest.frame.minY - frame.minY)
+        let awakeLine = awake.lineFrame.offsetBy(dx: awake.frame.minX - frame.minX, dy: awake.frame.minY - frame.minY)
+        let width = mix(restLine.width, 6, bead), height = mix(restLine.height, awakeLine.height, bead)
+        let lean = max(min((NSEvent.mouseLocation.x - frame.midX) / max(frame.width, 1), 0.5), -0.5) * 0.25
+        signalPoint += (0.5 + lean - signalPoint) * 0.12
         CATransaction.begin()
-        CATransaction.setDisableActions(NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
-        CATransaction.setAnimationDuration(0.25)
-        sensingLine.locations = [0, point * 0.4, point, point + (1 - point) * 0.6, 1].map { NSNumber(value: Double($0)) }
-        sensingGlow.startPoint = CGPoint(x: point, y: 0.1)
-        sensingGlow.endPoint = CGPoint(x: point + 0.3, y: 1)
+        CATransaction.setDisableActions(true)
+        let radius = mix(rest.cornerRadius, awake.cornerRadius, min(t, 1))
+        islandView.layer?.cornerRadius = radius
+        signalHost.layer?.cornerRadius = radius
+        statusLine.frame = NSRect(x: mix(restLine.midX, awakeLine.midX, bead) - width / 2, y: mix(restLine.midY, awakeLine.midY, bead) - height / 2, width: width, height: height)
+        statusLine.cornerRadius = min(width, height) / 2
+        statusLine.opacity = Float(1 - smoothstep(0.45, 0.75, t))
+        let lineWidth = mix(8, awakeLine.width, spread)
+        sensingLine.frame = NSRect(x: awakeLine.midX - lineWidth / 2, y: awakeLine.minY, width: lineWidth, height: awakeLine.height)
+        sensingLine.opacity = Float(smoothstep(0.4, 0.75, t))
+        sensingLine.locations = [0, signalPoint * 0.4, signalPoint, signalPoint + (1 - signalPoint) * 0.6, 1].map { NSNumber(value: Double($0)) }
+        sensingGlow.frame = NSRect(origin: .zero, size: frame.size)
+        sensingGlow.opacity = Float(spread)
+        sensingGlow.startPoint = CGPoint(x: signalPoint, y: 0.1)
+        sensingGlow.endPoint = CGPoint(x: signalPoint + 0.22, y: 1)
+        CATransaction.commit()
+    }
+    private func stepGoo(_ dt: CGFloat) {
+        guard wakeEnds?.rest.isNotched == true else { return }
+        let outline = IslandOutline(rect: island.frame)
+        let pointer = NSEvent.mouseLocation
+        let target: CGPoint
+        if pointerOnIsland {
+            // The blob reaches most of the way, then the pointer pulls away from it.
+            let anchor = outline.point(at: outline.nearest(to: pointer))
+            let gap = outline.rect.contains(pointer) ? 0 : hypot(pointer.x - anchor.x, pointer.y - anchor.y)
+            let reach = min(gap * 0.8, 70) / max(gap, 1)
+            target = CGPoint(x: anchor.x + (pointer.x - anchor.x) * reach, y: anchor.y + (pointer.y - anchor.y) * reach)
+            tipX.stiffness = 210; tipY.stiffness = 210; tipX.damping = 20; tipY.damping = 20
+        } else {
+            target = outline.point(at: outline.nearest(to: CGPoint(x: tipX.value, y: tipY.value)))
+            tipX.stiffness = 340; tipY.stiffness = 340; tipX.damping = 26; tipY.damping = 26
+        }
+        tipX.target = target.x; tipY.target = target.y
+        tipX.step(dt); tipY.step(dt)
+        if var drop = droplet {
+            drop.center.x += drop.velocity.x * dt; drop.center.y += drop.velocity.y * dt
+            drop.radius -= 28 * dt
+            droplet = drop.radius > 0.5 ? drop : nil
+        }
+        drawGoo(outline: outline, tip: CGPoint(x: tipX.value, y: tipY.value))
+    }
+    private func separateGoo() {
+        guard let bulb = GooShape.bulb(outline: IslandOutline(rect: island.frame), tip: CGPoint(x: tipX.value, y: tipY.value)) else { return }
+        droplet = GooDroplet(center: bulb.center, radius: bulb.radius * 0.7, velocity: CGPoint(x: bulb.direction.x * 45, y: bulb.direction.y * 45))
+    }
+    private func drawGoo(outline: IslandOutline, tip: CGPoint?) {
+        let bounds = gooPanel.frame
+        let toPanel = CGAffineTransform(translationX: -bounds.minX, y: -bounds.minY)
+        let liquid = CGMutablePath()
+        if let tip, let blob = GooShape.blob(outline: outline, tip: tip) { liquid.addPath(blob, transform: toPanel) }
+        if let droplet {
+            liquid.addEllipse(in: CGRect(x: droplet.center.x - droplet.radius, y: droplet.center.y - droplet.radius, width: droplet.radius * 2, height: droplet.radius * 2), transform: toPanel)
+        }
+        let fill = CGMutablePath()
+        fill.addPath(liquid)
+        fill.addPath(GooShape.shoulders(rect: outline.rect), transform: toPanel)
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        let local = CGRect(origin: .zero, size: bounds.size)
+        for layer in [gooFill, gooInnerGlow, gooRimGlow] { layer.frame = local }
+        gooInnerMask.frame = local; gooRimMask.frame = local
+        gooFill.path = fill
+        gooInnerMask.path = liquid
+        gooRimMask.path = liquid
+        let focus = (tip ?? .zero).applying(toPanel)
+        let unit = CGPoint(x: focus.x / max(local.width, 1), y: focus.y / max(local.height, 1))
+        gooInnerGlow.startPoint = unit
+        gooInnerGlow.endPoint = CGPoint(x: unit.x + 26 / max(local.width, 1), y: unit.y + 26 / max(local.height, 1))
+        gooRimGlow.startPoint = unit
+        gooRimGlow.endPoint = CGPoint(x: unit.x + 48 / max(local.width, 1), y: unit.y + 48 / max(local.height, 1))
         CATransaction.commit()
     }
     @objc private func reposition() { setExpanded(expanded); positionOverlay() }
@@ -900,7 +1077,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         if attachedImage != nil { attachedImage = nil; captureButton.title = "Screen"; setStatus("Screen removed"); return }
         guard CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess() else { showError("Allow Screen Recording in System Settings, then reopen Clippy to attach a screenshot."); return }
         let overlayVisible = overlay.isVisible, captionsVisible = captions.isVisible
-        island.orderOut(nil); notchBridge.orderOut(nil); overlay.orderOut(nil); captions.orderOut(nil)
+        island.orderOut(nil); notchBridge.orderOut(nil); gooPanel.orderOut(nil); overlay.orderOut(nil); captions.orderOut(nil)
         let target = FileManager.default.temporaryDirectory.appendingPathComponent("clippy-\(UUID().uuidString).png")
         DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 0.2) { [weak self] in
             let process = Process()
@@ -1028,7 +1205,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         for key in editingHotKeys { UnregisterEventHotKey(key) }
         hitTestTimer?.invalidate()
         hitTestTimer = nil
-        healthTimer?.invalidate(); settleTimer?.invalidate()
+        healthTimer?.invalidate(); settleTimer?.invalidate(); frameTimer?.invalidate()
         cancelRequest(); stopDictation(sendTranscript: false); speech.stopSpeaking(at: .immediate)
         if let monitor = keyboardMonitor { NSEvent.removeMonitor(monitor) }
         if let monitor = outsideClickMonitor { NSEvent.removeMonitor(monitor) }
