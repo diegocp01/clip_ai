@@ -97,7 +97,7 @@ final class ActivityMark: NSView {
     deinit { timer?.invalidate() }
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler, URLSessionDataDelegate, AVSpeechSynthesizerDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler, URLSessionDataDelegate {
     private var island: FloatingPanel!
     private var notchBridge: FloatingPanel!
     private var islandView: IslandView!
@@ -228,7 +228,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var previewVisible = false
     private var pendingMessage = ""
     private var busy = false
-    private let speech = AVSpeechSynthesizer()
+    private let replySpeech = ReplySpeech()
     private let audioEngine = AVAudioEngine()
     private var recognizer: SFSpeechRecognizer?
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
@@ -242,7 +242,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
-        speech.delegate = self
+        replySpeech.onState = { [weak self] state in
+            guard let self, !self.busy, !self.voiceRequested else { return }
+            if state != "Ready" || self.currentStatus == "Speaking" || self.currentStatus == "Preparing voice…" { self.setStatus(state) }
+        }
         buildIsland()
         buildOverlay()
         startOverlayHitTesting()
@@ -486,7 +489,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         talkButton.toolTip = "Live AI voice · separately billed API usage · click End to stop the microphone"
         voiceButton = button("Voice on", frame: ComposerGeometry.voice, action: #selector(toggleVoice), symbol: "speaker.wave.2", iconOnly: true)
         voiceButton.contentTintColor = .systemBlue
-        voiceButton.toolTip = "Spoken replies on · click to mute"
+        voiceButton.toolTip = "AI voice · " + ReplyVoice.selected().capitalized + " · click to mute"
         sendButton = button("Send", frame: ComposerGeometry.send, action: #selector(sendOrCancel), symbol: "arrow.up", iconOnly: true)
         sendButton.layer?.backgroundColor = NSColor.clear.cgColor
         sendButton.layer?.borderWidth = 1
@@ -573,6 +576,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             item.target = self
         }
         menu.addItem(.separator())
+        addReplyVoiceMenu(to: menu)
         let soundItem = menu.addItem(withTitle: "Wake sound", action: #selector(toggleWakeSound), keyEquivalent: "")
         soundItem.target = self
         soundItem.state = wakeSound.enabled ? .on : .off
@@ -580,6 +584,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         menu.addItem(withTitle: "Proofread selection     ⌃⌥D", action: nil, keyEquivalent: "")
         menu.addItem(withTitle: "Rewrite selection          ⌃D", action: nil, keyEquivalent: "")
         menu.popUp(positioning: nil, at: NSPoint(x: sender.frame.minX, y: sender.frame.minY), in: islandView)
+    }
+    private func addReplyVoiceMenu(to menu: NSMenu) {
+        let root = NSMenuItem(title: "Reply voice · " + ReplyVoice.selected().capitalized, action: nil, keyEquivalent: "")
+        let voices = NSMenu(); voices.autoenablesItems = false
+        let label = voices.addItem(withTitle: "OpenAI · AI-generated voice", action: nil, keyEquivalent: "")
+        label.isEnabled = false
+        for voice in ReplyVoice.names {
+            let item = voices.addItem(withTitle: voice.capitalized, action: #selector(selectReplyVoice(_:)), keyEquivalent: "")
+            item.target = self; item.representedObject = voice
+            item.state = voice == ReplyVoice.selected() ? .on : .off
+        }
+        voices.addItem(.separator())
+        let preview = voices.addItem(withTitle: "Preview selected voice", action: #selector(previewReplyVoice), keyEquivalent: "")
+        preview.target = self; preview.isEnabled = voiceEnabled && !voiceRequested && !compareBoth && !busy
+        let note = voices.addItem(withTitle: "Talk uses Realtime · Marin", action: nil, keyEquivalent: "")
+        note.isEnabled = false
+        root.submenu = voices; menu.addItem(root)
+    }
+    @objc private func previewReplyVoice() {
+        guard !busy else { return }
+        speak("Hi Diego. I'm Clip. This is my " + ReplyVoice.selected().capitalized + " voice.")
+    }
+    @objc private func selectReplyVoice(_ item: NSMenuItem) {
+        guard let voice = item.representedObject as? String, ReplyVoice.names.contains(voice) else { return }
+        replySpeech.stop(); UserDefaults.standard.set(voice, forKey: "replyVoice")
+        voiceButton.toolTip = "AI voice · " + voice.capitalized + " · click to mute or enable"
     }
     @objc private func toggleWakeSound() { wakeSound.enabled.toggle() }
     private func buildOverlay() {
@@ -671,7 +701,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             // Only a fresh idle hover wakes the sound; status changes and
             // live speech/microphone activity remain quiet.
             if inside && !expanded && currentStatus == "Ready" && !busy && !talking
-                && !requestingPermission && !speech.isSpeaking && NSEvent.pressedMouseButtons == 0 {
+                && !requestingPermission && !replySpeech.isActive && NSEvent.pressedMouseButtons == 0 {
                 wakeSound.play()
             }
             if wake.value < 0.1 {
@@ -1250,7 +1280,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let text = text == "Ready" ? connectionProblem ?? text : text
         currentStatus = text
         statusLabel.stringValue = text
-        let working = ["Checking screen", "Capturing screen", "Choosing edit", "Choosing response", "Choosing model", "Thinking", "Drawing", "Replying", "Explaining", "Summarizing", "Translating", "Solving", "Exploring", "Speaking", "Listening", "Proofreading", "Rewriting"].contains { text.contains($0) }
+        let working = ["Checking screen", "Capturing screen", "Choosing edit", "Choosing response", "Choosing model", "Thinking", "Drawing", "Replying", "Explaining", "Summarizing", "Translating", "Solving", "Exploring", "Preparing voice", "Speaking", "Listening", "Proofreading", "Rewriting"].contains { text.contains($0) }
         let problem = text == connectionProblem || text.contains("failed") || text.contains("unavailable")
         refreshComposerSignal()
         activityMark.active = talking
@@ -1327,10 +1357,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         voiceButton.title = voiceEnabled ? "Voice on" : "Voice off"
         voiceButton.image = NSImage(systemSymbolName: voiceEnabled ? "speaker.wave.2" : "speaker.slash", accessibilityDescription: voiceButton.title)
         voiceButton.contentTintColor = voiceEnabled ? .systemBlue : NSColor(white: 0.6, alpha: 1)
-        voiceButton.toolTip = voiceEnabled ? "Spoken replies on · click to mute" : "Spoken replies off · click to enable"
+        voiceButton.toolTip = voiceEnabled ? "AI voice · " + ReplyVoice.selected().capitalized + " · click to mute" : "Spoken replies off · click to enable"
         voiceButton.setAccessibilityLabel(voiceButton.title)
         webView?.evaluateJavaScript("window.clippyVoice?.setMuted(\(!voiceEnabled)); void 0;")
-        if !voiceEnabled { speech.stopSpeaking(at: .immediate) }
+        if !voiceEnabled { replySpeech.stop() }
     }
     @objc private func hideVisuals() {
         drawingOnScreen = false
@@ -1339,7 +1369,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             // Keep WebKit's live media document visible while hiding its marks.
             webView.evaluateJavaScript("window.clippyDismissVisual?.(); void 0;")
         } else { overlay.orderOut(nil) }
-        captions.orderOut(nil); speech.stopSpeaking(at: .immediate)
+        captions.orderOut(nil); replySpeech.stop()
     }
     @objc private func showLastVisual() {
         if let previous {
@@ -1650,7 +1680,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         if compareBoth && mode != "draw" { selectionEditor.cancel() } else { selectionEditor.cancelAutomatic() }
         if voiceRequested { stopRealtimeVoice() }
         stopDictation(sendTranscript: false)
-        speech.stopSpeaking(at: .immediate)
+        replySpeech.stop()
         busy = true
         sendButton.title = ""
         sendButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Cancel request")
@@ -1861,7 +1891,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         case "dictate": startDictation()
         case "stopDictation": stopDictation(sendTranscript: true)
         case "speak": if let text = data["text"] as? String, text.count < 12000 { speak(text) }
-        case "stopSpeaking": speech.stopSpeaking(at: .immediate)
+        case "stopSpeaking": replySpeech.stop()
         case "voiceLevel":
             guard voiceRequested, data["generation"] as? Int == voiceGeneration,
                   let input = data["input"] as? Double, input.isFinite,
@@ -1907,7 +1937,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     @objc private func toggleRealtimeVoice() {
         if voiceRequested { stopRealtimeVoice(); return }
         guard overlayReady else { showError("Wait for the drawing view to finish loading, then try Talk."); return }
-        cancelRequest(); selectionEditor.cancel(); stopDictation(sendTranscript: false); speech.stopSpeaking(at: .immediate)
+        cancelRequest(); selectionEditor.cancel(); stopDictation(sendTranscript: false); replySpeech.stop()
         pointShare.resetSession(); voiceConnected = false
         voiceRequested = true; voiceGeneration += 1
         screenshotIndicator.stringValue = ""
@@ -2019,17 +2049,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         setStatus("Ready")
     }
     private func speak(_ text: String) {
-        speech.stopSpeaking(at: .immediate)
+        guard voiceEnabled, !voiceRequested, !compareBoth else { return }
         showCaption(text)
-        let voices = AVSpeechSynthesisVoice.speechVoices()
-        guard let voice = voices.first(where: { $0.language == Locale.current.identifier.replacingOccurrences(of: "_", with: "-") }) ?? voices.first(where: { $0.language.hasPrefix("en") }) ?? voices.first else { return }
-        let utterance = AVSpeechUtterance(string: replyCard.text)
-        utterance.voice = voice
-        speech.speak(utterance)
+        replySpeech.speak(replyCard.text, voice: ReplyVoice.selected(), baseURL: baseURL)
     }
-    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didStart utterance: AVSpeechUtterance) { if !busy { setStatus("Speaking") } }
-    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) { if !busy && currentStatus == "Speaking" { setStatus("Ready") } }
-    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) { if !busy && !recording && currentStatus == "Speaking" { setStatus("Ready") } }
 
     private func updateCaptureButton() {
         let attached = attachedImage != nil
@@ -2147,7 +2170,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
     private func beginRecording() {
         guard let recognizer, recognizer.supportsOnDeviceRecognition else { return }
-        speech.stopSpeaking(at: .immediate)
+        replySpeech.stop()
         recognitionGeneration += 1
         let generation = recognitionGeneration
         latestTranscript = ""
@@ -2206,7 +2229,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         hitTestTimer?.invalidate()
         hitTestTimer = nil
         healthTimer?.invalidate(); settleTimer?.invalidate(); frameTimer?.invalidate(); composerTimer?.invalidate()
-        cancelRequest(); stopDictation(sendTranscript: false); speech.stopSpeaking(at: .immediate)
+        cancelRequest(); stopDictation(sendTranscript: false); replySpeech.stop()
         if let monitor = keyboardMonitor { NSEvent.removeMonitor(monitor) }
         if let monitor = outsideClickMonitor { NSEvent.removeMonitor(monitor) }
         if let hotKey { UnregisterEventHotKey(hotKey) }
