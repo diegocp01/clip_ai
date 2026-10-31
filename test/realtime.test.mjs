@@ -7,7 +7,7 @@ const sdp='v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n';
 
 test('voice config limits capabilities to drawing and screenshots with live audio interruption',()=>{
  const config=voiceConfiguration();
- assert.equal(config.model,'gpt-realtime-2.1');assert.deepEqual(config.tools.map(t=>t.name),['draw_visual','capture_screen']);
+ assert.equal(config.model,'gpt-realtime-2.1');assert.deepEqual(config.tools.map(t=>t.name),['use_cursor','draw_visual','capture_screen']);
  assert.equal(config.audio.input.turn_detection.interrupt_response,true);assert.deepEqual(config.output_modalities,['audio']);
 });
 test('voice service keeps key on server, limits sessions and hangs up known calls only',async()=>{

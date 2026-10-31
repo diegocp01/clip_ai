@@ -1,5 +1,6 @@
 import { createScene, renderDiagram, sample } from './scene.js';
 import { VoiceConversation } from './voice.js';
+import { VoiceCursor,visualParts } from './cursor.js';
 
 const $ = id => document.getElementById(id);
 let current = null, part = null, streaming = false, liveVoice = false;
@@ -18,6 +19,8 @@ function view(kind) {
 }
 function render(result, preview = false) {
   const preserveCamera = streaming; streaming = preview;
+  // Marks made on the last visual don't belong on a new one.
+  if (!preview && !preserveCamera) cursor.clear();
   current = result; $('overlay').hidden = false; $('demo-label').hidden = true;
   $('visual-title').textContent = (result.title || 'Clip') + (preview ? ' · Drawing…' : '');
   if(!liveVoice) {
@@ -42,6 +45,48 @@ function render(result, preview = false) {
   view(hasScene ? 'scene' : 'diagram');
   if (!hasScene && !hasDiagram) { $('diagram-frame').hidden = true; $('fit').hidden = true; }
 }
+// The red cursor's coordinates are relative to the overlay, which is what it draws on.
+function toOverlay(place) {
+  const root = $('overlay').getBoundingClientRect();
+  return { x: place.x - root.left, y: place.y - root.top, r: place.r };
+}
+function locatePart(id) {
+  const showing = !$('scene-host').hidden;
+  if (showing) { const place = viewer.locate(id); if (place) return toOverlay(place); }
+  else {
+    const node = [...$('diagram-host').querySelectorAll('[data-part]')].find(item => item.dataset.part === id);
+    if (node) {
+      const rect = node.getBoundingClientRect();
+      return toOverlay({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, r: Math.max(rect.width, rect.height) / 2 });
+    }
+  }
+  return null;
+}
+const cursor = new VoiceCursor({
+  root: $('overlay'), locate: locatePart,
+  orbit: (yaw, pitch) => viewer.orbit(yaw, pitch), zoom: factor => viewer.zoom(factor),
+  center: () => { const root = $('overlay').getBoundingClientRect(); return { x: root.width / 2, y: root.height / 2 }; },
+});
+const hasScene = () => Boolean(current?.scene?.objects?.length);
+// A part the voice names may be in the other view, so show the one that has it.
+function showPartView(steps) {
+  if (!hasScene() || !current?.diagram?.nodes?.length) return;
+  const inScene = new Set(current.scene.objects.map(part => part.id));
+  const wanted = steps.find(step => step.target || step.action === 'rotate' || step.action === 'zoom');
+  if (!wanted) return;
+  const scene = wanted.action === 'rotate' || wanted.action === 'zoom' || inScene.has(wanted.target);
+  if (scene === $('scene-host').hidden) view(scene ? 'scene' : 'diagram');
+}
+const voiceCursor = {
+  parts: () => ($('overlay').hidden ? [] : visualParts(current)),
+  canOrbit: () => !$('overlay').hidden && hasScene(),
+  play: steps => { showPartView(steps); cursor.play(steps); },
+  cancel: () => cursor.cancel(),
+  reset: () => cursor.reset(),
+};
+window.clippyCursor = voiceCursor;
+// If the person takes hold of the drawing themselves, the cursor gets out of the way.
+$('scene-host').addEventListener('pointerdown', () => cursor.cancel());
 window.clippyRender = render;
 window.clippyRollback = result => { streaming = false; if(result)render(result);else{$('overlay').hidden=true;post('visualCleared');} };
 let voiceGeneration = 0;
@@ -61,6 +106,7 @@ function captureScreen({signal}) {
 }
 const voice = new VoiceConversation({
   captureScreen,
+  cursor: voiceCursor,
   notify: event => {
     if(event.state==='connecting')liveVoice=true;
     if(['ended','error'].includes(event.state))liveVoice=false;
@@ -112,4 +158,8 @@ document.addEventListener('keydown', event => {
   if (event.key === 'Escape') { if (!$('part').hidden) hidePart(); else { $('overlay').hidden = true; post('closeOverlay'); } }
 });
 if (new URLSearchParams(location.search).get('demo') === 'water') { render(sample); $('demo-label').hidden = false; }
+// A way to see the cursor without a live voice session: /overlay.html?demo=water&cursor=1
+if (new URLSearchParams(location.search).get('cursor') === '1' && current) {
+  setTimeout(() => voiceCursor.play([{ action: 'point', target: 'oxygen' }, { action: 'circle', target: 'oxygen' }, { action: 'write', text: 'Pulls electrons', target: 'oxygen' }, { action: 'rotate', yaw: 70, pitch: -15 }, { action: 'circle', target: 'hydrogen-1' }, { action: 'write', text: 'Slightly positive', target: 'hydrogen-1' }]), 800);
+}
 post('ready');
