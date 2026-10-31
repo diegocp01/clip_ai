@@ -6,6 +6,9 @@ import Carbon
 
 private let baseURL = URL(string: "http://127.0.0.1:4317")!
 private let coral = NSColor(calibratedRed: 1, green: 0.47, blue: 0.36, alpha: 1)
+private let serverUnavailable = "Local server unavailable"
+private let drawingUnavailable = "Drawing view unavailable"
+private let signInRequired = "Sign in with codex login"
 
 final class FloatingPanel: NSPanel {
     override var canBecomeKey: Bool { true }
@@ -14,6 +17,7 @@ final class FloatingPanel: NSPanel {
 final class IslandView: NSView {
     var onExpand: (() -> Void)?
     override func mouseDown(with event: NSEvent) { onExpand?() }
+    override func accessibilityPerformPress() -> Bool { onExpand?(); return true }
 }
 
 final class ActivityMark: NSView {
@@ -54,6 +58,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var statusItem: NSStatusItem!
     private var statusLabel: NSTextField!
     private var activityMark: ActivityMark!
+    private var statusDot: NSView!
     private var collapseButton: NSButton!
     private var outsideClickMonitor: Any?
     private var prompt: NSTextField!
@@ -74,7 +79,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var history = [[String: String]]()
     private var attachedImage: String?
     private var voiceEnabled = true
-    private var currentStatus = "Ready"
+    private var currentStatus = "Starting…"
+    // What keeps the island from being ready; "Ready" resolves to this while it is set.
+    private var connectionProblem: String? = "Starting…"
+    private var healthTimer: Timer?
+    private var settleTimer: Timer?
     private var keyboardMonitor: Any?
     private var hotKey: EventHotKeyRef?
     private var editingHotKeys = [EventHotKeyRef]()
@@ -186,12 +195,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         islandView.layer?.cornerCurve = .continuous
         islandView.onExpand = { [weak self] in if self?.expanded == false { self?.setExpanded(true, focus: true) } }
         island.contentView = islandView
-        statusLabel = label("Clippy", size: 12)
+        islandView.setAccessibilityElement(true)
+        islandView.setAccessibilityRole(.button)
+        statusLabel = label(currentStatus, size: 12)
         statusLabel.font = .systemFont(ofSize: 12, weight: .semibold)
         statusLabel.alignment = .left
         islandView.addSubview(statusLabel)
         activityMark = ActivityMark(frame: .zero)
         islandView.addSubview(activityMark)
+        statusDot = NSView(frame: .zero)
+        statusDot.wantsLayer = true
+        statusDot.layer?.cornerRadius = 4
+        statusDot.layer?.backgroundColor = coral.cgColor
+        islandView.addSubview(statusDot)
         prompt = NSTextField(frame: NSRect(x: 16, y: 54, width: 320, height: 42))
         prompt.placeholderString = "Ask me anything…"
         prompt.setAccessibilityLabel("Ask Clippy")
@@ -381,21 +397,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     @objc private func enableTextEditing() { selectionEditor.requestAccess() }
     private func setExpanded(_ value: Bool, focus: Bool = false) {
         expanded = value
-        let screen = island?.screen ?? NSScreen.main ?? NSScreen.screens[0]
-        let layout = IslandLayout(screen: screen.frame, safeTop: screen.safeAreaInsets.top,
-                                  leftArea: screen.auxiliaryTopLeftArea, rightArea: screen.auxiliaryTopRightArea,
-                                  expanded: value)
-        let size = layout.frame.size
-        island.setFrame(layout.frame, display: true)
-        islandView.frame = NSRect(origin: .zero, size: size)
-        islandView.layer?.cornerRadius = layout.cornerRadius
-        islandView.layer?.maskedCorners = layout.isNotched && !value
-            ? [.layerMinXMinYCorner, .layerMaxXMinYCorner]
-            : [.layerMinXMinYCorner, .layerMaxXMinYCorner, .layerMinXMaxYCorner, .layerMaxXMaxYCorner]
-        islandView.layer?.backgroundColor = (layout.isNotched ? .black : NSColor(white: 0.025, alpha: 1)).cgColor
-        islandView.layer?.borderWidth = layout.isNotched ? 0 : 0.5
-        statusLabel.frame = layout.statusFrame
-        activityMark.frame = layout.activityFrame
+        let layout = layoutIsland()
         if let bridge = layout.notchBridge {
             notchBridge.setFrame(bridge, display: true)
             notchBridge.orderFrontRegardless()
@@ -403,11 +405,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         } else {
             notchBridge.orderOut(nil)
         }
-        islandView.toolTip = value ? nil : "Click to open · ⌃⌥Space"
         for control in expandedControls { control.isHidden = !value }
         island.orderFrontRegardless()
         if value && focus { island.makeKey(); island.makeFirstResponder(prompt) }
         if !value { island.resignKey() }
+    }
+    private var talking: Bool { voiceRequested || recording || currentStatus == "Speaking" }
+    // Resting: a green dot. Audio live: the waveform. Anything else to say: text and dot.
+    @discardableResult private func layoutIsland() -> IslandLayout {
+        let content: IslandContent = talking ? .audio : currentStatus == "Ready" ? .dot : .status(textWidth: ceil(statusLabel.cell?.cellSize.width ?? 52))
+        let screen = island?.screen ?? NSScreen.main ?? NSScreen.screens[0]
+        let layout = IslandLayout(screen: screen.frame, safeTop: screen.safeAreaInsets.top,
+                                  leftArea: screen.auxiliaryTopLeftArea, rightArea: screen.auxiliaryTopRightArea,
+                                  expanded: expanded, content: content)
+        islandView.layer?.cornerRadius = layout.cornerRadius
+        islandView.layer?.maskedCorners = layout.isNotched && !expanded
+            ? [.layerMinXMinYCorner, .layerMaxXMinYCorner]
+            : [.layerMinXMinYCorner, .layerMaxXMinYCorner, .layerMinXMaxYCorner, .layerMaxXMaxYCorner]
+        islandView.layer?.backgroundColor = (layout.isNotched ? .black : NSColor(white: 0.025, alpha: 1)).cgColor
+        islandView.layer?.borderWidth = layout.isNotched ? 0 : 0.5
+        statusLabel.frame = layout.statusFrame
+        activityMark.frame = layout.activityFrame
+        statusDot.frame = layout.dotFrame
+        if case .status = content { statusLabel.isHidden = false } else { statusLabel.isHidden = !expanded }
+        activityMark.isHidden = content != .audio
+        statusDot.isHidden = content == .audio
+        islandView.toolTip = expanded ? nil : "\(currentStatus) · Click to open · ⌃⌥Space"
+        islandView.setAccessibilityLabel("Clippy: \(currentStatus)")
+        if island.frame.isEmpty || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            island.setFrame(layout.frame, display: true)
+        } else if island.frame != layout.frame {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.18
+                island.animator().setFrame(layout.frame, display: true)
+            }
+        }
+        return layout
     }
     @objc private func reposition() { setExpanded(expanded); positionOverlay() }
     private func positionOverlay() {
@@ -417,11 +450,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         overlay?.setFrame(NSRect(x: area.midX - w / 2, y: area.midY - h / 2, width: w, height: h), display: true)
     }
     private func setStatus(_ text: String) {
+        let text = text == "Ready" ? connectionProblem ?? text : text
         currentStatus = text
-        statusLabel?.stringValue = text == "Ready" ? "Clippy" : text
-        activityMark?.active = ["Thinking", "Drawing", "Speaking", "Listening", "Proofreading", "Rewriting"].contains { text.contains($0) }
-        statusLabel?.toolTip = text
-        statusLabel?.textColor = text.contains("failed") || text.contains("unavailable") ? coral : .white
+        statusLabel.stringValue = text
+        let working = ["Thinking", "Drawing", "Speaking", "Listening", "Proofreading", "Rewriting"].contains { text.contains($0) }
+        let problem = text == connectionProblem || text.contains("failed") || text.contains("unavailable")
+        activityMark.active = talking
+        statusLabel.toolTip = text
+        statusLabel.textColor = problem ? coral : .white
+        statusDot.layer?.backgroundColor = (connectionProblem == nil && !working && !problem ? NSColor.systemGreen : coral).cgColor
+        // One-off notices fade back to the dot; while the composer is open they wait for it to close.
+        settleTimer?.invalidate(); settleTimer = nil
+        if text != "Ready" && text != connectionProblem && !working && !busy && !talking {
+            settleTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: false) { [weak self] _ in
+                guard let self else { return }
+                self.setStatus(self.expanded ? self.currentStatus : "Ready")
+            }
+        }
+        layoutIsland()
+    }
+    private func setConnection(_ problem: String?) {
+        guard problem != connectionProblem else { return }
+        let resting = connectionProblem ?? "Ready"
+        connectionProblem = problem
+        if currentStatus == resting { setStatus("Ready") }
     }
     private func showError(_ text: String) {
         setStatus(text)
@@ -485,14 +537,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             DispatchQueue.main.async {
                 guard let self else { return }
                 if let data, let value = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any], value["model"] != nil {
-                    self.setStatus(value["authenticated"] as? Bool == true ? "Ready" : "Sign in with codex login")
+                    self.setConnection(value["authenticated"] as? Bool == true ? nil : signInRequired)
                     self.webView.load(URLRequest(url: baseURL.appendingPathComponent("overlay.html")))
+                    self.startHealthMonitor()
                 } else if startIfNeeded && error != nil {
                     self.launchServer()
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { self.checkServer(startIfNeeded: false, retries: retries) }
                 } else if error != nil && retries > 0 {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { self.checkServer(startIfNeeded: false, retries: retries - 1) }
-                } else { self.showError("Local server unavailable. Run npm start in the Clippy project.") }
+                } else {
+                    self.setConnection(serverUnavailable)
+                    self.showError("Local server unavailable. Run npm start in the Clippy project.")
+                    self.startHealthMonitor()
+                }
+            }
+        }.resume()
+    }
+    // Keeps the green dot honest: it only stays green while the server still answers.
+    private func startHealthMonitor() {
+        guard healthTimer == nil else { return }
+        healthTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in self?.pollServer() }
+    }
+    private func pollServer() {
+        var request = URLRequest(url: baseURL.appendingPathComponent("api/status"))
+        request.timeoutInterval = 12
+        URLSession.shared.dataTask(with: request) { [weak self] data, _, _ in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                guard let data, let value = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any], value["model"] != nil else {
+                    self.setConnection(serverUnavailable); return
+                }
+                if value["authenticated"] as? Bool != true { self.setConnection(signInRequired) }
+                else { self.setConnection(self.overlayReady ? nil : drawingUnavailable) }
+                if !self.overlayReady { self.webView.load(URLRequest(url: baseURL.appendingPathComponent("overlay.html"))) }
             }
         }.resume()
     }
@@ -650,7 +727,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         decisionHandler(allowed ? .grant : .deny)
     }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-        if (error as NSError).code != NSURLErrorCancelled { overlayReady = false; setStatus("Drawing view unavailable") }
+        if (error as NSError).code != NSURLErrorCancelled { overlayReady = false; setConnection(drawingUnavailable) }
     }
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         let url = navigationAction.request.url
@@ -660,7 +737,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let origin = message.frameInfo.securityOrigin
         guard message.frameInfo.isMainFrame, origin.protocol == "http", origin.host == "127.0.0.1", origin.port == 4317, let data = message.body as? [String: Any], let action = data["action"] as? String else { return }
         switch action {
-        case "ready": overlayReady = true; if let previous { render(previous) }
+        case "ready":
+            overlayReady = true
+            if connectionProblem == drawingUnavailable { setConnection(nil) }
+            if let previous { render(previous) }
         case "followup": if let text = data["text"] as? String, !text.isEmpty, text.count <= 6000 { generate(text) }
         case "closeOverlay": hideVisuals()
         case "dragOverlay": if let event = NSApp.currentEvent { overlay.performDrag(with: event) }
@@ -865,6 +945,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         for key in editingHotKeys { UnregisterEventHotKey(key) }
         hitTestTimer?.invalidate()
         hitTestTimer = nil
+        healthTimer?.invalidate(); settleTimer?.invalidate()
         cancelRequest(); stopDictation(sendTranscript: false); speech.stopSpeaking(at: .immediate)
         if let monitor = keyboardMonitor { NSEvent.removeMonitor(monitor) }
         if let monitor = outsideClickMonitor { NSEvent.removeMonitor(monitor) }
