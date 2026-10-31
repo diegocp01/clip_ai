@@ -91,7 +91,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var provider = AIProvider(rawValue: UserDefaults.standard.string(forKey: "aiProvider") ?? "") ?? .gpt
     private var shoulderPanel: FloatingPanel!
     private let shoulderFill = CAShapeLayer()
-    private var wake = Spring(stiffness: 150, damping: 17)
+    private var wake = Spring(stiffness: 110, damping: 21)
     private var dwell = DwellTimer()
     private var dwellPanel: FloatingPanel!
     private let dwellRing = CAShapeLayer()
@@ -1087,11 +1087,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     // The upright line shrinks to a bead and glides under the camera, where it spreads out.
     private func applyWake() {
         guard let rest = wakeEnds?.rest, let awake = wakeEnds?.awake else { return }
-        let t = max(wake.value, 0)
+        let t = min(max(wake.value, 0), 1)
         let frame = mix(rest.frame, awake.frame, t)
         if frame != island.frame { island.setFrame(frame, display: true) }
         signalHost.frame = NSRect(origin: .zero, size: frame.size)
-        let bead = smoothstep(0, 0.5, t), spread = smoothstep(0.3, 1, t)
+        let bead = smoothstep(0, 0.7, t), spread = smoothstep(0.25, 1, t)
+        let crossfade = smoothstep(0.3, 0.9, t)
         let restLine = rest.lineFrame.offsetBy(dx: rest.frame.minX - frame.minX, dy: rest.frame.minY - frame.minY)
         let awakeLine = awake.lineFrame.offsetBy(dx: awake.frame.minX - frame.minX, dy: awake.frame.minY - frame.minY)
         let width = mix(restLine.width, 6, bead), height = mix(restLine.height, awakeLine.height, bead)
@@ -1100,16 +1101,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let radius = mix(rest.cornerRadius, awake.cornerRadius, min(t, 1))
         islandView.layer?.cornerRadius = radius
         signalHost.layer?.cornerRadius = radius
-        statusLine.frame = NSRect(x: mix(restLine.midX, awakeLine.midX, bead) - width / 2, y: mix(restLine.midY, awakeLine.midY, bead) - height / 2, width: width, height: height)
+        let carriedLine = NSRect(x: mix(restLine.midX, awakeLine.midX, bead) - width / 2,
+                                 y: mix(restLine.midY, awakeLine.midY, bead) - height / 2,
+                                 width: width, height: height)
+        statusLine.frame = carriedLine
         statusLine.cornerRadius = min(width, height) / 2
-        statusLine.opacity = Float(1 - smoothstep(0.45, 0.75, t))
-        // The bars spread out of the bead, from the middle of the line.
+        statusLine.opacity = Float(1 - crossfade)
+        // Carry the gradient with the moving bead before spreading it, avoiding a second light popping in at the destination.
         let bars = signalBar.bars(line: awakeLine, room: (awake.frame.width - awake.lineFrame.width) / 2)
         for (layer, bar) in [(sensingLine, bars.left), (sensingEye, bars.right)] {
-            let barWidth = mix(8, bar.width, spread)
-            layer.frame = NSRect(x: mix(awakeLine.midX, bar.midX, spread) - barWidth / 2, y: bar.minY, width: barWidth, height: bar.height)
-            layer.cornerRadius = bar.height / 2
-            layer.opacity = Float(smoothstep(0.4, 0.75, t))
+            layer.frame = mix(carriedLine, bar, spread)
+            layer.cornerRadius = layer.frame.height / 2
+            layer.opacity = Float(crossfade)
         }
         // A faint light under the pointer. The island's own corners and the camera hide the rest.
         cursorLight.position = CGPoint(x: cursorGlow.position.x - frame.minX, y: cursorGlow.position.y - frame.minY)
