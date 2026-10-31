@@ -6,8 +6,6 @@ final class ComposerSurface: NSView {
     private let content: NSView
     private let shell = PetroleumCradle(frame: .zero)
     private let wedges = ComposerWedges(frame: NSRect(origin: .zero, size: ComposerGeometry.size))
-    private let hoverTitle = NSTextField(labelWithString: "")
-    private let hoverDetail = NSTextField(labelWithString: "")
     private var hoveredOption: Int?
     private var expanded = false
     private(set) var currentRadius = ComposerGeometry.cornerRadius
@@ -25,18 +23,6 @@ final class ComposerSurface: NSView {
         oil.mask = clearing
         content.autoresizingMask = [.width, .height]
         shell.autoresizingMask = [.width, .height]
-        hoverTitle.frame = ComposerGeometry.hoverTitle
-        hoverTitle.font = .systemFont(ofSize: 11, weight: .semibold)
-        hoverTitle.textColor = NSColor(calibratedRed: 0.62, green: 1, blue: 0.76, alpha: 1)
-        hoverDetail.frame = ComposerGeometry.hoverDetail
-        hoverDetail.font = .systemFont(ofSize: 10.5)
-        hoverDetail.textColor = NSColor.white.withAlphaComponent(0.85)
-        for label in [hoverTitle, hoverDetail] {
-            label.alignment = .center
-            label.lineBreakMode = .byTruncatingTail
-            label.alphaValue = 0
-            content.addSubview(label)
-        }
         addSubview(content)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -44,7 +30,7 @@ final class ComposerSurface: NSView {
     /// Start from the notch's pure black, then clear it from bottom to top.
     /// The translucent shell underneath stays mounted in both directions.
     func beginMorph() {
-        updateHover(at: nil, details: [])
+        updateHover(at: nil)
         showComposer(true)
         layer?.addSublayer(oil)
     }
@@ -89,25 +75,17 @@ final class ComposerSurface: NSView {
             addSubview(shell, positioned: .below, relativeTo: content)
             addSubview(wedges, positioned: .above, relativeTo: shell)
         } else {
-            updateHover(at: nil, details: [])
+            updateHover(at: nil)
             wedges.removeFromSuperview()
             shell.removeFromSuperview()
         }
         content.frame = bounds
     }
-    func updateHover(at point: NSPoint?, details: [String]) {
+    func updateHover(at point: NSPoint?) {
         let index = expanded ? point.flatMap { ComposerGeometry.option(at: $0) } : nil
-        let detail = index.flatMap { details.indices.contains($0) ? details[$0] : nil } ?? ""
-        guard index != hoveredOption || detail != hoverDetail.stringValue else { return }
+        guard index != hoveredOption else { return }
         hoveredOption = index
-        hoverTitle.stringValue = index.map { ComposerGeometry.optionNames[$0] } ?? ""
-        hoverDetail.stringValue = detail
         wedges.select(index)
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.16
-            hoverTitle.animator().alphaValue = index == nil ? 0 : 1
-            hoverDetail.animator().alphaValue = index == nil ? 0 : 1
-        }
     }
 
 }

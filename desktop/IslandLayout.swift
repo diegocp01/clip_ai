@@ -18,8 +18,6 @@ enum ComposerGeometry {
 
     static let optionFrames = [screen, talk, voice, provider, draw, more, collapse]
     static let optionNames = ["Screen", "Talk", "Voice", "Model", "Draw", "More", "Collapse"]
-    static let hoverTitle = NSRect(x: 90, y: 113, width: 300, height: 16)
-    static let hoverDetail = NSRect(x: 70, y: 94, width: 340, height: 16)
     static let optionCenter = NSPoint(x: size.width / 2, y: size.height)
     static let innerRing = NSRect(x: 45, y: 80, width: 390, height: 240)
 

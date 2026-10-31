@@ -471,15 +471,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                     modelMenuLatched = false
                 }
             }
-            composerSurface.updateHover(at: point, details: [
-                attachedImage == nil ? "Attach a screenshot to your next question." : "Remove the attached screenshot.",
-                voiceRequested ? "End the live voice conversation." : "Start a live voice conversation.",
-                voiceEnabled ? "Mute spoken replies." : "Turn spoken replies on.",
-                provider == .gpt ? "Using GPT · click to switch to Claude." : "Using Claude · click to switch to GPT.",
-                "Draw your prompt with the selected model.",
-                "Open settings and additional actions.",
-                "Close the composer and keep your draft."
-            ])
+            composerSurface.updateHover(at: point)
             return
         }
         // The pointer can rest on the screen's top edge, which a rect excludes.
@@ -1114,7 +1106,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     @objc private func showModelSettings() {
         guard expanded, !busy, !composerTransitioning, menuTrackingDepth == 0 else { return }
         modelMenuLatched = true
-        composerSurface.updateHover(at: nil, details: [])
+        composerSurface.updateHover(at: nil)
         let menu = NSMenu()
         menu.autoenablesItems = false
         let current = drawingSettings.model(for: provider.rawValue)
