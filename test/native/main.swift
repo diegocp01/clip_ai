@@ -54,7 +54,7 @@ for expanded in [false, true] {
     let layout = IslandLayout(screen: external, safeTop: 0, leftArea: nil, rightArea: nil, expanded: expanded)
     expect(layout.notchBridge == nil, "External/non-notched screens must retain a floating pill")
     expect(layout.frame.maxY == external.maxY - 4, "Floating pill keeps its top inset")
-    expect(layout.frame.width == (expanded ? 400 : 30), "Floating pill rests at line size")
+    expect(layout.frame.width == (expanded ? ComposerGeometry.size.width : 30), "Floating pill rests at line size")
     expect(layout.bounds.contains(layout.lineFrame), "Line must remain inside the pill")
     expect(layout.frame.midX == external.midX, "External display origin must be respected")
 }
@@ -121,3 +121,20 @@ expect(!GooShape.touches(outline: island, tip: CGPoint(x: 200, y: 220), point: C
 expect(GooShape.blob(outline: island, tip: CGPoint(x: 200, y: 220)) == nil, "A tip inside the island must draw nothing")
 expect(GooShape.blob(outline: island, tip: CGPoint(x: 200, y: 199.5)) == nil, "A tip on the edge must draw nothing")
 print("Native island layout checks passed (notched, shifted, external, and missing bounds).")
+
+// Opening/closing shares the final top edge, and every composer control stays visible.
+let composerBounds = NSRect(origin: .zero, size: ComposerGeometry.size)
+let controls = [ComposerGeometry.prompt, ComposerGeometry.send, ComposerGeometry.collapse,
+                ComposerGeometry.screen, ComposerGeometry.talk, ComposerGeometry.voice,
+                ComposerGeometry.tier, ComposerGeometry.more]
+for (i, control) in controls.enumerated() {
+    expect(composerBounds.contains(control), "Composer control must fit inside the surface")
+    for other in controls.dropFirst(i + 1) { expect(!control.intersects(other), "Composer controls must not overlap") }
+}
+for width: CGFloat in [0, 30, 185, 273, 1000] {
+    let target = NSRect(x: -500, y: 200, width: 440, height: 176)
+    let start = ComposerGeometry.originFrame(for: target, compactWidth: width)
+    expect(start.maxY == target.maxY && start.midX == target.midX, "Composer must grow down from its top-center anchor")
+    expect(start.height == 1 && start.width <= target.width, "Opening must begin as a narrow menu-bar edge")
+}
+print("Composer bounds, separation, and top-anchored motion checks passed.")
