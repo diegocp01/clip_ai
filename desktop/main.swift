@@ -92,6 +92,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var lastPointerCheck: CFTimeInterval = 0
     private var collapseButton: NSButton!
     private var outsideClickMonitor: Any?
+    private var menuTrackingDepth = 0
     private var prompt: NSTextField!
     private var expandedControls = [NSView]()
     private var sendButton: NSButton!
@@ -152,8 +153,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         buildCaptions()
         buildMenu()
         registerShortcut()
+        NotificationCenter.default.addObserver(self, selector: #selector(menuBeganTracking), name: NSMenu.didBeginTrackingNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(menuEndedTracking), name: NSMenu.didEndTrackingNotification, object: nil)
         keyboardMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .leftMouseDown, .rightMouseDown]) { [weak self] event in
-            guard let self else { return event }
+            guard let self, self.menuTrackingDepth == 0 else { return event }
             if event.type != .keyDown {
                 if self.expanded && event.window !== self.island { self.setExpanded(false) }
                 return event
@@ -168,13 +171,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             return event
         }
         outsideClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
-            guard let self, self.expanded, !self.island.frame.contains(NSEvent.mouseLocation) else { return }
+            guard let self, self.menuTrackingDepth == 0, self.expanded, !self.island.frame.contains(NSEvent.mouseLocation) else { return }
             self.setExpanded(false)
         }
         NotificationCenter.default.addObserver(self, selector: #selector(reposition), name: NSApplication.didChangeScreenParametersNotification, object: nil)
         island.orderFrontRegardless()
         checkServer(startIfNeeded: true)
     }
+
+    // Native popup menus use their own windows. Selecting a circular menu or
+    // pressing Escape inside it must not trigger the composer's outside click.
+    @objc private func menuBeganTracking(_ notification: Notification) { menuTrackingDepth += 1 }
+    @objc private func menuEndedTracking(_ notification: Notification) { menuTrackingDepth = max(0, menuTrackingDepth - 1) }
 
     private func panel(_ rect: NSRect, level: NSWindow.Level) -> FloatingPanel {
         let p = FloatingPanel(contentRect: rect, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
