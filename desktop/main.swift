@@ -66,7 +66,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var signalHost: NSView!
     private let statusLine = CALayer()
     private let sensingLine = CAGradientLayer()
-    private var signalPoint: CGFloat = 0.5
+    private let sensingEye = CAGradientLayer()
+    private var signalBar = SignalBar()
     private var pointerOnIsland = false
     private let wakeSound = WakeSound()
     private var gooPanel: FloatingPanel!
@@ -241,15 +242,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         signalHost.wantsLayer = true
         signalHost.layer?.masksToBounds = true
         signalHost.autoresizingMask = [.width, .height]
-        sensingLine.startPoint = CGPoint(x: 0, y: 0.5)
-        sensingLine.endPoint = CGPoint(x: 1, y: 0.5)
-        sensingLine.colors = [signalGreen.withAlphaComponent(0), signalGreen.withAlphaComponent(0.6), NSColor(calibratedRed: 0.8, green: 1, blue: 0.86, alpha: 1), signalGreen.withAlphaComponent(0.6), signalGreen.withAlphaComponent(0)].map(\.cgColor)
-        sensingLine.cornerRadius = 1
-        sensingLine.shadowColor = signalGreen.cgColor
-        sensingLine.shadowOffset = .zero
-        sensingLine.shadowRadius = 5
-        sensingLine.shadowOpacity = 1
-        sensingLine.opacity = 0
+        // Two bars lying on top of each other read as one line until they split apart.
+        for bar in [sensingLine, sensingEye] {
+            bar.startPoint = CGPoint(x: 0, y: 0.5)
+            bar.endPoint = CGPoint(x: 1, y: 0.5)
+            bar.colors = [signalGreen.withAlphaComponent(0), signalGreen.withAlphaComponent(0.6), NSColor(calibratedRed: 0.8, green: 1, blue: 0.86, alpha: 1), signalGreen.withAlphaComponent(0.6), signalGreen.withAlphaComponent(0)].map(\.cgColor)
+            bar.locations = [0, 0.3, 0.5, 0.7, 1]
+            bar.cornerRadius = 1
+            bar.shadowColor = signalGreen.cgColor
+            bar.shadowOffset = .zero
+            bar.shadowRadius = 5
+            bar.shadowOpacity = 1
+            bar.opacity = 0
+        }
         statusLine.backgroundColor = coral.cgColor
         statusLine.shadowColor = coral.cgColor
         statusLine.shadowOffset = .zero
@@ -257,7 +262,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         statusLine.shadowOpacity = 0.8
         islandOil.contentsGravity = .resize
         islandOil.opacity = 0
-        for layer in [islandOil, sensingLine, statusLine] { signalHost.layer?.addSublayer(layer) }
+        for layer in [islandOil, sensingLine, sensingEye, statusLine] { signalHost.layer?.addSublayer(layer) }
         islandView.addSubview(signalHost, positioned: .below, relativeTo: statusLabel)
         buildGoo()
         let promptSurface = NSView(frame: ComposerGeometry.prompt)
@@ -396,6 +401,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             let anchor = IslandOutline(rect: island.frame)
             let start = anchor.point(at: anchor.nearest(to: pointer))
             liquid.attach(at: start)
+            if wake.value < 0.1 { signalBar = SignalBar() }
         }
         layoutIsland()
     }
@@ -665,6 +671,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         statusLine.cornerRadius = min(layout.lineFrame.width, layout.lineFrame.height) / 2
         statusLine.opacity = content == .audio ? 0 : 1
         sensingLine.opacity = 0
+        sensingEye.opacity = 0
         islandOil.opacity = 0
         islandOil.contents = nil
         CATransaction.commit()
@@ -693,7 +700,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         lastFrame = now
         updatePointer()
         guard frameTimer != nil else { return }
-        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion { wake.jump(to: wake.target) } else { wake.step(dt) }
+        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion { wake.jump(to: wake.target) } else {
+            wake.step(dt)
+            signalBar.step(dt, pointer: (NSEvent.mouseLocation.x - island.frame.midX) / max(island.frame.width / 2, 1))
+        }
         applyWake()
         stepGoo(dt)
         if wake.isSettled, wake.value == 0, liquid.isSettled {
@@ -713,8 +723,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let restLine = rest.lineFrame.offsetBy(dx: rest.frame.minX - frame.minX, dy: rest.frame.minY - frame.minY)
         let awakeLine = awake.lineFrame.offsetBy(dx: awake.frame.minX - frame.minX, dy: awake.frame.minY - frame.minY)
         let width = mix(restLine.width, 6, bead), height = mix(restLine.height, awakeLine.height, bead)
-        let lean = max(min((NSEvent.mouseLocation.x - frame.midX) / max(frame.width, 1), 0.5), -0.5) * 0.25
-        signalPoint += (0.5 + lean - signalPoint) * 0.12
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         let radius = mix(rest.cornerRadius, awake.cornerRadius, min(t, 1))
@@ -723,10 +731,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         statusLine.frame = NSRect(x: mix(restLine.midX, awakeLine.midX, bead) - width / 2, y: mix(restLine.midY, awakeLine.midY, bead) - height / 2, width: width, height: height)
         statusLine.cornerRadius = min(width, height) / 2
         statusLine.opacity = Float(1 - smoothstep(0.45, 0.75, t))
-        let lineWidth = mix(8, awakeLine.width, spread)
-        sensingLine.frame = NSRect(x: awakeLine.midX - lineWidth / 2, y: awakeLine.minY, width: lineWidth, height: awakeLine.height)
-        sensingLine.opacity = Float(smoothstep(0.4, 0.75, t))
-        sensingLine.locations = [0, signalPoint * 0.4, signalPoint, signalPoint + (1 - signalPoint) * 0.6, 1].map { NSNumber(value: Double($0)) }
+        // The bars spread out of the bead, from the middle of the line.
+        let bars = signalBar.bars(line: awakeLine, room: (awake.frame.width - awake.lineFrame.width) / 2)
+        for (layer, bar) in [(sensingLine, bars.left), (sensingEye, bars.right)] {
+            let barWidth = mix(8, bar.width, spread)
+            layer.frame = NSRect(x: mix(awakeLine.midX, bar.midX, spread) - barWidth / 2, y: bar.minY, width: barWidth, height: bar.height)
+            layer.cornerRadius = bar.height / 2
+            layer.opacity = Float(smoothstep(0.4, 0.75, t))
+        }
         CATransaction.commit()
     }
     private func stepGoo(_ dt: CGFloat) {

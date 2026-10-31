@@ -67,8 +67,8 @@ enum Petroleum {
         let bendA = noise(x * 0.045 + time * 0.09, y * 0.08 - time * 0.05)
         let bendB = noise(x * 0.06 - time * 0.07 + 7, y * 0.1 + time * 0.08 + 3)
         let film = noise(x * 0.03 + bendA * 2.6, y * 0.055 + bendB * 2.6 + time * 0.04) * 2.3
-        let ridge = max(0.5 + 0.5 * cos(2 * .pi * film) - 0.62, 0) / 0.38
-        return ridge * ridge * 0.2
+        let ridge = max(0.5 + 0.5 * cos(2 * .pi * film) - 0.5, 0) / 0.5
+        return ridge * ridge * 0.14
     }
     /// The same surface for a whole area, which lines up with the liquid because both use screen positions.
     static func image(area: CGRect, hole: CGRect?, time: CGFloat) -> CGImage? {

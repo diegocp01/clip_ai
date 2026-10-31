@@ -99,6 +99,38 @@ for point in [CGPoint(x: 200, y: 150), CGPoint(x: 400, y: 220), CGPoint(x: 50, y
 }
 expect(island.point(at: island.nearest(to: CGPoint(x: 200, y: 150))) == CGPoint(x: 200, y: 200), "Point below must anchor on the bottom edge")
 
+// The awake line wanders side to side, then splits into two eyes that look at the pointer and blink.
+let barLine = CGRect(x: 51.5, y: 4, width: 130, height: 2)
+let barBounds = CGRect(x: 0, y: 0, width: 233, height: 44)
+var bar = SignalBar()
+var leftmost = CGFloat.infinity, rightmost = -CGFloat.infinity
+for _ in 0..<Int(SignalBar.sweepTime * 60) {
+    bar.step(1.0 / 60, pointer: 0)
+    let parts = bar.bars(line: barLine, room: 51.5)
+    leftmost = min(leftmost, parts.left.midX); rightmost = max(rightmost, parts.left.midX)
+    expect(barBounds.contains(parts.left) && barBounds.contains(parts.right), "The line must stay inside the island")
+}
+expect(!bar.isEyes && leftmost < barLine.midX - 15 && rightmost > barLine.midX + 15, "The line must move left and right")
+expect(abs(bar.bars(line: barLine, room: 51.5).left.midX - bar.bars(line: barLine, room: 51.5).right.midX) < 8, "While sweeping it must read as one line")
+for _ in 0..<60 { bar.step(1.0 / 60, pointer: 1) }
+expect(bar.isEyes, "It must split into eyes after sweeping")
+let lookingRight = bar.bars(line: barLine, room: 51.5)
+expect(lookingRight.right.minX > lookingRight.left.maxX, "The eyes must be fully apart")
+expect(lookingRight.left.width < barLine.width / 2, "Each eye must be much shorter than the line")
+expect((lookingRight.left.midX + lookingRight.right.midX) / 2 > barLine.midX + 10, "The eyes must look toward the pointer")
+expect(barBounds.contains(lookingRight.left) && barBounds.contains(lookingRight.right), "The eyes must stay inside the island")
+for _ in 0..<60 { bar.step(1.0 / 60, pointer: -1) }
+let lookingLeft = bar.bars(line: barLine, room: 51.5)
+expect((lookingLeft.left.midX + lookingLeft.right.midX) / 2 < barLine.midX - 10, "The eyes must follow the pointer across")
+var blinked = false, shortest = CGFloat.infinity
+for _ in 0..<Int(SignalBar.eyesTime * 60) {
+    if bar.isEyes { shortest = min(shortest, bar.bars(line: barLine, room: 51.5).left.height); if bar.blink > 0.9 { blinked = true } }
+    bar.step(1.0 / 60, pointer: 0)
+}
+expect(blinked && shortest < barLine.height, "The eyes must blink")
+for _ in 0..<60 { bar.step(1.0 / 60, pointer: 0) }
+expect(!bar.isEyes, "The eyes must flow back into one line")
+
 // The liquid behaves like something heavy and viscous rather than following the pointer exactly.
 func run(_ sim: inout LiquidSim, _ seconds: CGFloat, pointer: CGPoint?, each: (LiquidSim) -> Void = { _ in }) {
     for _ in 0..<Int(seconds * 60) {
