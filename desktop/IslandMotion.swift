@@ -42,6 +42,38 @@ struct Spring {
     mutating func jump(to position: CGFloat) { value = position; velocity = 0 }
 }
 
+/// A slower, nearly critically damped arrival. The upright mark becomes a bead
+/// before the horizontal glow spreads, with the same path on pointer exit.
+struct HoverWake {
+    private var spring = Spring(stiffness: 45, damping: 14)
+    var value: CGFloat { spring.value }
+    var target: CGFloat {
+        get { spring.target }
+        set { spring.target = newValue }
+    }
+    var isSettled: Bool { spring.isSettled }
+    var bead: CGFloat { smoothstep(0.04, 0.62, value) }
+    var drop: CGFloat { smoothstep(0, 0.38, value) }
+    var glide: CGFloat { smoothstep(0.4, 0.88, value) }
+    var spread: CGFloat { smoothstep(0.62, 1, value) }
+    var crossfade: CGFloat { smoothstep(0.66, 0.98, value) }
+    var attention: CGFloat { smoothstep(0.82, 1, value) }
+    func frame(from rest: NSRect, to awake: NSRect) -> NSRect {
+        var frame = mix(rest, awake, min(max(value, 0), 1))
+        // Make room below the camera before the light travels there.
+        frame.origin.y = mix(rest.minY, awake.minY, drop)
+        frame.size.height = mix(rest.height, awake.height, drop)
+        return frame
+    }
+    func line(from rest: NSRect, to awake: NSRect) -> NSRect {
+        let width = mix(rest.width, 6, bead), height = mix(rest.height, awake.height, bead)
+        return NSRect(x: mix(rest.midX, awake.midX, glide) - width / 2,
+                      y: mix(rest.midY, awake.midY, drop) - height / 2, width: width, height: height)
+    }
+    mutating func step(_ dt: CGFloat) { spring.step(dt) }
+    mutating func jump(to position: CGFloat) { spring.jump(to: position) }
+}
+
 /// The awake line's behavior: it moves side to side, then splits into two eyes that look
 /// toward the pointer and blink, then flows back together. The first round is quick, so it
 /// all shows within the hold that opens the composer.

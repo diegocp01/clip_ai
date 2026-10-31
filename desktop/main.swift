@@ -147,7 +147,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var provider = AIProvider(rawValue: UserDefaults.standard.string(forKey: "aiProvider") ?? "") ?? .gpt
     private var shoulderPanel: FloatingPanel!
     private let shoulderFill = CAShapeLayer()
-    private var wake = Spring(stiffness: 110, damping: 21)
+    private var wake = HoverWake()
     private var dwell = DwellTimer()
     private var dwellPanel: FloatingPanel!
     private let dwellRing = CAShapeLayer()
@@ -1216,7 +1216,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         guard frameTimer != nil else { return }
         if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion { wake.jump(to: wake.target) } else {
             wake.step(dt)
-            signalBar.step(dt, pointer: (NSEvent.mouseLocation.x - island.frame.midX) / max(island.frame.width / 2, 1))
+            signalBar.step(dt * wake.attention, pointer: (NSEvent.mouseLocation.x - island.frame.midX) / max(island.frame.width / 2, 1))
             if pointerOnIsland { cursorGlow.follow(NSEvent.mouseLocation, dt: dt) }
         }
         applyWake()
@@ -1231,24 +1231,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private func applyWake() {
         guard let rest = wakeEnds?.rest, let awake = wakeEnds?.awake else { return }
         let t = min(max(wake.value, 0), 1)
-        let frame = mix(rest.frame, awake.frame, t)
+        let frame = wake.frame(from: rest.frame, to: awake.frame)
         if frame != island.frame { island.setFrame(frame, display: true) }
         signalHost.frame = NSRect(origin: .zero, size: frame.size)
-        let bead = smoothstep(0, 0.7, t), spread = smoothstep(0.25, 1, t)
-        let crossfade = smoothstep(0.3, 0.9, t)
+        let spread = wake.spread
+        let crossfade = wake.crossfade
         let restLine = rest.lineFrame.offsetBy(dx: rest.frame.minX - frame.minX, dy: rest.frame.minY - frame.minY)
         let awakeLine = awake.lineFrame.offsetBy(dx: awake.frame.minX - frame.minX, dy: awake.frame.minY - frame.minY)
-        let width = mix(restLine.width, 6, bead), height = mix(restLine.height, awakeLine.height, bead)
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         let radius = mix(rest.cornerRadius, awake.cornerRadius, min(t, 1))
         islandView.layer?.cornerRadius = radius
         signalHost.layer?.cornerRadius = radius
-        let carriedLine = NSRect(x: mix(restLine.midX, awakeLine.midX, bead) - width / 2,
-                                 y: mix(restLine.midY, awakeLine.midY, bead) - height / 2,
-                                 width: width, height: height)
+        let carriedLine = wake.line(from: restLine, to: awakeLine)
         statusLine.frame = carriedLine
-        statusLine.cornerRadius = min(width, height) / 2
+        statusLine.cornerRadius = min(carriedLine.width, carriedLine.height) / 2
         statusLine.opacity = Float(1 - crossfade)
         // Carry the gradient with the moving bead before spreading it, avoiding a second light popping in at the destination.
         let bars = signalBar.bars(line: awakeLine, room: (awake.frame.width - awake.lineFrame.width) / 2)

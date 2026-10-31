@@ -97,6 +97,46 @@ for _ in 0..<240 { spring.step(1.0 / 60); peak = max(peak, spring.value) }
 expect(spring.value == 1 && spring.isSettled && peak > 1 && peak < 1.2, "Wake spring must settle on target after a small overshoot")
 
 // Resting on the island for a second opens it, once, until the pointer leaves and returns.
+// A brief brush must still look upright; spreading and autonomous motion follow
+// the carried bead, and reversing must keep the visible position continuous.
+var hoverWake = HoverWake()
+hoverWake.target = 1
+for _ in 0..<6 { hoverWake.step(1.0 / 60) }
+let earlyWidth = mix(3, 6, hoverWake.bead), earlyHeight = mix(14, 2, hoverWake.bead)
+expect(earlyHeight > earlyWidth && hoverWake.spread == 0 && hoverWake.crossfade == 0, "A 100ms brush must not instantly become a horizontal line")
+for _ in 0..<21 { hoverWake.step(1.0 / 60) }
+expect(hoverWake.spread > 0 && hoverWake.spread < 0.9, "The horizontal line must unfold gradually around 450ms")
+let beforeReversal = hoverWake.value
+hoverWake.target = 0
+expect(hoverWake.value == beforeReversal, "Leaving midway must not snap the mark to an endpoint")
+hoverWake.step(1.0 / 60)
+expect(abs(hoverWake.value - beforeReversal) < 0.08, "The first exit frame must remain continuous")
+for _ in 0..<180 { hoverWake.step(1.0 / 60) }
+expect(hoverWake.value == 0 && hoverWake.isSettled, "The slower hover must still return fully to rest and stop its timer")
+hoverWake.target = 1
+for _ in 0..<48 { hoverWake.step(1.0 / 60) }
+expect(hoverWake.spread > 0.95 && hoverWake.crossfade > 0.95, "The horizontal line must be ready within the existing one-second hold")
+hoverWake.jump(to: 0)
+expect(hoverWake.value == 0 && hoverWake.bead == 0, "Reduce Motion can still jump directly to its endpoint")
+
+for origin in [NSPoint.zero, NSPoint(x: -1710, y: 250)] {
+    let screen = NSRect(origin: origin, size: NSSize(width: 1710, height: 1107))
+    let left = NSRect(x: screen.minX, y: screen.maxY - 33.5, width: 762.5, height: 33.5)
+    let right = NSRect(x: screen.minX + 947.5, y: left.minY, width: 762.5, height: 33.5)
+    let rest = IslandLayout(screen: screen, safeTop: 33.5, leftArea: left, rightArea: right, expanded: false)
+    let awake = IslandLayout(screen: screen, safeTop: 33.5, leftArea: left, rightArea: right, expanded: false, hovered: true)
+    var motion = HoverWake(); motion.target = 1
+    for _ in 0..<100 {
+        motion.step(1.0 / 60)
+        let frame = motion.frame(from: rest.frame, to: awake.frame)
+        let source = rest.lineFrame.offsetBy(dx: rest.frame.minX, dy: rest.frame.minY)
+        let target = awake.lineFrame.offsetBy(dx: awake.frame.minX, dy: awake.frame.minY)
+        let line = motion.line(from: source, to: target)
+        expect(!rest.notchFrame!.intersects(line), "The carried line must travel beside then below the physical camera")
+        expect(frame.insetBy(dx: -0.01, dy: -0.01).contains(line), "The light must stay inside drawable panel space throughout the slower path")
+    }
+}
+
 var hold = DwellTimer()
 expect(!hold.update(inside: true, dt: 0.5) && abs(hold.progress - 0.5) < 0.001, "The hold must fill up over time")
 expect(!hold.update(inside: false, dt: 0.1) && hold.progress == 0, "Leaving must restart the hold")

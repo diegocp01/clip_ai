@@ -138,3 +138,7 @@ Reply text is sent to OpenAI for synthesis using the existing server-side API ke
 ### Native backend startup
 
 The app launches Node with `/` as its working directory and an absolute server entry point. Backend files and credentials continue to resolve relative to their modules in the configured checkout. This avoids a macOS startup stall observed in Node's `process.cwd()` resolution when the working directory was the checkout. Verify from a stopped backend: launch Clip, confirm its child process owns port 4317, and confirm `/api/realtime/status` reports the existing voice configuration. The private `.env.local` belongs in that configured checkout and must stay ignored by Git.
+
+### Softer first hover
+
+The compact green mark now eases from upright to a carried bead, then unfolds into the horizontal glow over roughly 0.8 seconds. A quick 100ms brush remains upright; the autonomous sway/eyes ease in only after the mark has mostly arrived. Leaving midway follows the same continuous path back, and the frame timer still stops at rest. The one-second composer-opening hold and Reduce Motion behavior are unchanged. Check a quick brush, a full hover, and a reversal halfway through.
