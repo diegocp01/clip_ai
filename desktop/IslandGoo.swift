@@ -45,10 +45,10 @@ struct SignalBar {
         return min(exp(-first * first) + exp(-second * second), 1)
     }
     /// `pointer` runs from -1 at the island's left edge to 1 at its right.
-    mutating func step(_ dt: CGFloat, pointer: CGFloat) {
+    mutating func step(_ dt: CGFloat, pointer: CGFloat, swayScale: CGFloat = 1) {
         time += dt
         split.target = isEyes ? 1 : 0
-        sway.target = isEyes ? 0 : sin(time * 2 * .pi / 2.4)
+        sway.target = isEyes ? 0 : sin(time * 2 * .pi / 2.4) * swayScale
         look.target = min(max(pointer, -1), 1)
         split.step(dt); sway.step(dt); look.step(dt)
     }
