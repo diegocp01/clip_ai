@@ -764,7 +764,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
     private func refreshSelectionIndicator(automatic: Bool) {
         guard let source = NSWorkspace.shared.frontmostApplication,
-              source.processIdentifier != ProcessInfo.processInfo.processIdentifier else { return }
+              source.processIdentifier != ProcessInfo.processInfo.processIdentifier else {
+            prompt.toolTip = "Selection check · Clip has focus"
+            return
+        }
         let pid = source.processIdentifier
         let generation = selectionReadGeneration
         selectionReadPending = automatic
@@ -775,6 +778,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             DispatchQueue.main.async {
                 guard let self, self.expanded, self.selectionReadGeneration == generation else { return }
                 self.selectionReadPending = false
+                self.prompt.toolTip = snapshot == nil ? "Selection check · \(source.localizedName ?? "Source app") · \(diagnostic)" : "Type a prompt"
                 if snapshot == nil && diagnostic == "Accessibility access unavailable" {
                     let help = "Enable selected-text access · More → Enable text editing"
                     self.selectionIndicator.stringValue = "Enable selected-text access"
