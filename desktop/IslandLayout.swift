@@ -15,6 +15,45 @@ enum ComposerGeometry {
     static let provider = NSRect(x: 262, y: 16, width: 36, height: 36)
     static let more = NSRect(x: 392, y: 88, width: 36, height: 36)
 
+    static let optionFrames = [screen, talk, voice, provider, tier, more]
+    static let optionNames = ["Screen", "Talk", "Voice", "Model", "Reasoning", "More"]
+    static let hoverTitle = NSRect(x: 90, y: 113, width: 300, height: 16)
+    static let hoverDetail = NSRect(x: 70, y: 94, width: 340, height: 16)
+    static let optionCenter = NSPoint(x: size.width / 2, y: size.height)
+    static let innerRing = NSRect(x: 45, y: 78, width: 390, height: 320)
+
+    /// Split the lower ring midway between neighboring option centers.
+    /// The central typing area never participates in hover selection.
+    static var optionAngles: [CGFloat] {
+        let centers = optionFrames.map { atan2($0.midX - optionCenter.x, optionCenter.y - $0.midY) }
+        return [-CGFloat.pi / 2] + zip(centers, centers.dropFirst()).map { ($0 + $1) / 2 } + [CGFloat.pi / 2]
+    }
+    static func optionSector(_ index: Int) -> NSBezierPath {
+        let angles = optionAngles
+        let path = NSBezierPath()
+        path.move(to: optionCenter)
+        for angle in [angles[index], angles[index + 1]] {
+            path.line(to: NSPoint(x: optionCenter.x + sin(angle) * 1000,
+                                 y: optionCenter.y - cos(angle) * 1000))
+        }
+        path.close()
+        return path
+    }
+    static func optionRing() -> NSBezierPath {
+        let path = shellPath(in: NSRect(origin: .zero, size: size).insetBy(dx: 0.5, dy: 0.5))
+        path.appendOval(in: innerRing)
+        path.windingRule = .evenOdd
+        return path
+    }
+    static func option(at point: NSPoint) -> Int? {
+        guard !prompt.contains(point), !collapse.contains(point),
+              shellPath(in: NSRect(origin: .zero, size: size)).contains(point),
+              !NSBezierPath(ovalIn: innerRing).contains(point) else { return nil }
+        let angle = atan2(point.x - optionCenter.x, optionCenter.y - point.y)
+        let angles = optionAngles
+        return (0..<optionFrames.count).first { angle >= angles[$0] && angle <= angles[$0 + 1] }
+    }
+
     /// A shallow bowl with flat shoulders at the camera edge. Coordinates scale
     /// with the window during the existing compact-to-expanded morph.
     static func shellPath(in rect: NSRect) -> NSBezierPath {

@@ -1,12 +1,14 @@
 import AppKit
 
-/// The controls keep one stable parent while the native glass backdrop comes and
-/// goes. Reparenting them through NSGlassEffectView can leave its compositor mask
-/// attached after collapse, blanking the compact island.
+/// Keep the controls fully legible above the translucent shell and preserve
+/// their stable parent throughout the compact-to-expanded transition.
 final class ComposerSurface: NSView {
     private let content: NSView
-    private let material: NSView
     private let shell = PetroleumCradle(frame: .zero)
+    private let wedges = ComposerWedges(frame: NSRect(origin: .zero, size: ComposerGeometry.size))
+    private let hoverTitle = NSTextField(labelWithString: "")
+    private let hoverDetail = NSTextField(labelWithString: "")
+    private var hoveredOption: Int?
     private var expanded = false
     private(set) var currentRadius = ComposerGeometry.cornerRadius
     private let oil = CALayer()
@@ -14,23 +16,6 @@ final class ComposerSurface: NSView {
 
     init(content: NSView) {
         self.content = content
-        if #available(macOS 26.0, *) {
-            let glass = NSGlassEffectView()
-            glass.style = .regular
-            glass.tintColor = nil
-            glass.cornerRadius = ComposerGeometry.cornerRadius
-            if #available(macOS 27.0, *) { glass.effectIsInteractive = true }
-            material = glass
-        } else {
-            let blur = NSVisualEffectView()
-            blur.material = .hudWindow
-            blur.blendingMode = .behindWindow
-            blur.state = .active
-            blur.wantsLayer = true
-            blur.layer?.cornerRadius = ComposerGeometry.cornerRadius
-            blur.layer?.masksToBounds = true
-            material = blur
-        }
         super.init(frame: .zero)
         wantsLayer = true
         oil.backgroundColor = NSColor.black.cgColor
@@ -40,13 +25,26 @@ final class ComposerSurface: NSView {
         oil.mask = clearing
         content.autoresizingMask = [.width, .height]
         shell.autoresizingMask = [.width, .height]
+        hoverTitle.frame = ComposerGeometry.hoverTitle
+        hoverTitle.font = .systemFont(ofSize: 11, weight: .semibold)
+        hoverTitle.textColor = NSColor(calibratedRed: 0.62, green: 1, blue: 0.76, alpha: 1)
+        hoverDetail.frame = ComposerGeometry.hoverDetail
+        hoverDetail.font = .systemFont(ofSize: 10.5)
+        hoverDetail.textColor = NSColor.white.withAlphaComponent(0.85)
+        for label in [hoverTitle, hoverDetail] {
+            label.alignment = .center
+            label.lineBreakMode = .byTruncatingTail
+            label.alphaValue = 0
+            content.addSubview(label)
+        }
         addSubview(content)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     /// Start from the notch's pure black, then clear it from bottom to top.
-    /// The native refractive material underneath stays mounted in both directions.
+    /// The translucent shell underneath stays mounted in both directions.
     func beginMorph() {
+        updateHover(at: nil, details: [])
         showComposer(true)
         layer?.addSublayer(oil)
     }
@@ -64,11 +62,8 @@ final class ComposerSurface: NSView {
             : [.layerMinXMinYCorner, .layerMaxXMinYCorner, .layerMinXMaxYCorner, .layerMaxXMaxYCorner]
         clearing.colors = [NSColor.white.withAlphaComponent(1 - smoothstep(0.12, 0.72, p)).cgColor,
                            NSColor.white.withAlphaComponent(1 - smoothstep(0.32, 1, p)).cgColor]
-        if #available(macOS 26.0, *), let glass = material as? NSGlassEffectView {
-            glass.cornerRadius = radius
-        } else { material.layer?.cornerRadius = radius }
-        shell.alphaValue = smoothstep(0.2, 0.8, p)
-        material.alphaValue = smoothstep(0.35, 0.9, p)
+        shell.alphaValue = 0.7 * smoothstep(0.2, 0.8, p)
+        wedges.alphaValue = smoothstep(0.82, 1, p)
         content.alphaValue = smoothstep(0.82, 1, p)
         CATransaction.commit()
     }
@@ -76,19 +71,14 @@ final class ComposerSurface: NSView {
     func endMorph() {
         oil.removeFromSuperlayer()
         oil.contents = nil
-        shell.alphaValue = 1
-        material.alphaValue = 1
+        shell.alphaValue = 0.7
+        wedges.alphaValue = 1
         content.alphaValue = 1
-        if #available(macOS 26.0, *), let glass = material as? NSGlassEffectView {
-            glass.cornerRadius = ComposerGeometry.cornerRadius
-        } else { material.layer?.cornerRadius = ComposerGeometry.cornerRadius }
     }
 
     override func layout() {
         super.layout()
-        // The glass is the central water pocket, not the entire black shell.
-        material.frame = ComposerGeometry.prompt
-        shell.needsDisplay = true
+        shell.needsLayout = true
     }
 
     func showComposer(_ value: Bool) {
@@ -97,52 +87,127 @@ final class ComposerSurface: NSView {
         if value {
             shell.frame = bounds
             addSubview(shell, positioned: .below, relativeTo: content)
-            material.frame = ComposerGeometry.prompt
-            addSubview(material, positioned: .above, relativeTo: shell)
+            addSubview(wedges, positioned: .above, relativeTo: shell)
         } else {
-            material.removeFromSuperview()
+            updateHover(at: nil, details: [])
+            wedges.removeFromSuperview()
             shell.removeFromSuperview()
         }
         content.frame = bounds
     }
+    func updateHover(at point: NSPoint?, details: [String]) {
+        let index = expanded ? point.flatMap { ComposerGeometry.option(at: $0) } : nil
+        let detail = index.flatMap { details.indices.contains($0) ? details[$0] : nil } ?? ""
+        guard index != hoveredOption || detail != hoverDetail.stringValue else { return }
+        hoveredOption = index
+        hoverTitle.stringValue = index.map { ComposerGeometry.optionNames[$0] } ?? ""
+        hoverDetail.stringValue = detail
+        wedges.select(index)
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.16
+            hoverTitle.animator().alphaValue = index == nil ? 0 : 1
+            hoverDetail.animator().alphaValue = index == nil ? 0 : 1
+        }
+    }
+
 }
 
-/// The notch remains the parent material: an opaque black rim cups the water
-/// pocket and its radial controls. Fine concentric seams echo the reference
-/// without introducing decorative labels or extra actions.
-private final class PetroleumCradle: NSView {
-    override var isOpaque: Bool { false }
+/// A sandblasted material across the whole shell; the input itself has no box.
+/// The backdrop composites at 70% opacity while controls remain fully opaque.
+private final class PetroleumCradle: NSVisualEffectView {
+    private let silhouette = CAShapeLayer()
+    private let finish = FrostedFinish(frame: .zero)
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        material = .hudWindow
+        blendingMode = .behindWindow
+        state = .active
+        appearance = NSAppearance(named: .darkAqua)
+        wantsLayer = true
+        layer?.mask = silhouette
+        finish.autoresizingMask = [.width, .height]
+        finish.frame = bounds
+        addSubview(finish)
+        alphaValue = 0.7
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
-    override func draw(_ dirtyRect: NSRect) {
-        NSGraphicsContext.saveGraphicsState()
-        let outline = ComposerGeometry.shellPath(in: bounds.insetBy(dx: 0.5, dy: 0.5))
-        outline.addClip()
-        NSGradient(colors: [NSColor(white: 0.055, alpha: 1), .black])?.draw(in: bounds, angle: 90)
-        // Broad, very low contrast sheen; the outer rim stays petroleum black.
-        let inner = NSBezierPath(ovalIn: NSRect(x: bounds.width * 0.16, y: bounds.height * 0.28,
-                                               width: bounds.width * 0.68, height: bounds.height * 1.02))
-        NSGradient(colors: [NSColor(white: 0.10, alpha: 1), NSColor(white: 0.025, alpha: 1)])?.draw(in: inner, angle: 90)
-        NSColor.white.withAlphaComponent(0.09).setStroke()
-        inner.lineWidth = 0.5
-        inner.stroke()
-        NSColor.white.withAlphaComponent(0.14).setStroke()
-        outline.lineWidth = 0.7
-        outline.stroke()
-        NSGraphicsContext.restoreGraphicsState()
+    override func layout() {
+        super.layout()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        silhouette.frame = bounds
+        silhouette.path = ComposerGeometry.shellPath(in: bounds.insetBy(dx: 0.5, dy: 0.5)).cgPath
+        CATransaction.commit()
     }
 }
 
-/// Keep the prompt's native field editor and clipboard behavior, without the
-/// heavy bezel/focus halo that previously filled the center of the composer.
-final class ComposerPrompt: NSTextField {
-    weak var focusSurface: NSView?
-    override func becomeFirstResponder() -> Bool {
-        let accepted = super.becomeFirstResponder()
-        if accepted { focusSurface?.layer?.borderColor = NSColor.systemBlue.withAlphaComponent(0.45).cgColor }
-        return accepted
+/// A fixed, fine grain avoids animated noise and hard glass highlights.
+private final class FrostedFinish: NSView {
+    private static let grain = NSImage(size: NSSize(width: 96, height: 96), flipped: false) { _ in
+        var seed: UInt64 = 73
+        for _ in 0..<1800 {
+            seed = seed &* 6364136223846793005 &+ 1
+            let x = CGFloat((seed >> 16) % 192) / 2
+            seed = seed &* 6364136223846793005 &+ 1
+            let y = CGFloat((seed >> 16) % 192) / 2
+            NSColor(white: (seed >> 8) & 1 == 0 ? 1 : 0, alpha: 0.045).setFill()
+            NSRect(x: x, y: y, width: 0.5, height: 0.5).fill()
+        }
+        return true
     }
-    override func textDidEndEditing(_ notification: Notification) {
-        super.textDidEndEditing(notification)
-        focusSurface?.layer?.borderColor = NSColor.white.withAlphaComponent(0.12).cgColor
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.black.withAlphaComponent(0.12).setFill()
+        bounds.fill()
+        NSColor(patternImage: Self.grain).setFill()
+        bounds.fill()
+    }
+}
+
+/// Decorative layers do not intercept button clicks or text selection.
+private final class ComposerWedges: NSView {
+    private var highlights: [CAShapeLayer] = []
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        let clip = CAShapeLayer()
+        clip.frame = bounds
+        clip.path = ComposerGeometry.optionRing().cgPath
+        clip.fillRule = .evenOdd
+        layer?.mask = clip
+        let green = NSColor(calibratedRed: 0.29, green: 0.93, blue: 0.47, alpha: 1)
+        for index in ComposerGeometry.optionFrames.indices {
+            let path = ComposerGeometry.optionSector(index).cgPath
+            let separator = CAShapeLayer()
+            separator.frame = bounds
+            separator.path = path
+            separator.fillColor = NSColor.clear.cgColor
+            separator.strokeColor = NSColor.white.withAlphaComponent(0.10).cgColor
+            separator.lineWidth = 0.5
+            layer?.addSublayer(separator)
+            let glow = CAShapeLayer()
+            glow.frame = bounds
+            glow.path = path
+            glow.fillColor = green.withAlphaComponent(0.12).cgColor
+            glow.strokeColor = green.withAlphaComponent(0.5).cgColor
+            glow.lineWidth = 1
+            glow.shadowColor = green.cgColor
+            glow.shadowOpacity = 0.45
+            glow.shadowRadius = 10
+            glow.shadowOffset = .zero
+            glow.opacity = 0
+            layer?.addSublayer(glow)
+            highlights.append(glow)
+        }
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    func select(_ selected: Int?) {
+        CATransaction.begin()
+        CATransaction.setAnimationDuration(NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.18)
+        CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(name: .easeInEaseOut))
+        for (index, glow) in highlights.enumerated() { glow.opacity = index == selected ? 1 : 0 }
+        CATransaction.commit()
     }
 }

@@ -291,18 +291,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         for layer in [sensingLine, sensingEye, statusLine, loadingLine] { signalHost.layer?.addSublayer(layer) }
         islandView.addSubview(signalHost, positioned: .below, relativeTo: statusLabel)
         buildGoo()
-        let promptSurface = NSView(frame: ComposerGeometry.prompt)
-        promptSurface.wantsLayer = true
-        promptSurface.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.045).cgColor
-        promptSurface.layer?.cornerRadius = ComposerGeometry.cornerRadius
-        promptSurface.layer?.borderWidth = 0.5
-        promptSurface.layer?.borderColor = NSColor.white.withAlphaComponent(0.12).cgColor
-        islandView.addSubview(promptSurface)
-        expandedControls.append(promptSurface)
-        let promptField = ComposerPrompt(frame: ComposerGeometry.input)
-        promptField.focusSurface = promptSurface
-        prompt = promptField
-        prompt.placeholderString = "Ask me anything…"
+        prompt = NSTextField(frame: ComposerGeometry.input)
+        prompt.placeholderString = ""
         prompt.setAccessibilityLabel("Ask Clippy")
         prompt.font = .systemFont(ofSize: 14)
         prompt.textColor = .white
@@ -326,7 +316,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         voiceButton.contentTintColor = .systemBlue
         voiceButton.toolTip = "Spoken replies on · click to mute"
         sendButton = button("Send", frame: ComposerGeometry.send, action: #selector(sendOrCancel), symbol: "arrow.up", iconOnly: true)
-        sendButton.layer?.backgroundColor = NSColor.systemBlue.cgColor
+        sendButton.layer?.backgroundColor = NSColor.clear.cgColor
+        sendButton.layer?.borderWidth = 0
+        sendButton.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 18, weight: .thin)
         sendButton.contentTintColor = .white
         sendButton.toolTip = "Send · Return"
         tierPicker = NSPopUpButton(frame: ComposerGeometry.tier)
@@ -486,6 +478,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let dt = CGFloat(min(now - lastPointerCheck, 0.1))
         lastPointerCheck = now
         let pointer = NSEvent.mouseLocation
+        if expanded {
+            updateDwell(pointer: pointer, inside: false, dt: dt)
+            let point = island.isVisible && menuTrackingDepth == 0
+                ? NSPoint(x: pointer.x - island.frame.minX, y: pointer.y - island.frame.minY) : nil
+            composerSurface.updateHover(at: point, details: [
+                attachedImage == nil ? "Attach a screenshot to your next question." : "Remove the attached screenshot.",
+                voiceRequested ? "End the live voice conversation." : "Start a live voice conversation.",
+                voiceEnabled ? "Mute spoken replies." : "Turn spoken replies on.",
+                "Choose GPT or Claude.",
+                tierPicker.isEnabled ? "Choose Standard or Fast reasoning." : "Reasoning modes are available with GPT.",
+                "Open settings and additional actions."
+            ])
+            return
+        }
         // The pointer can rest on the screen's top edge, which a rect excludes.
         let region = (pointerOnIsland ? island.frame : wakeRegion).insetBy(dx: 0, dy: -1)
         let inside = island.isVisible && region.contains(pointer)
@@ -610,7 +616,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }, 1, &spec, Unmanaged.passUnretained(self).toOpaque(), &eventHandler)
         let id = EventHotKeyID(signature: OSType(0x434C5059), id: 1)
         if RegisterEventHotKey(49, UInt32(controlKey | optionKey), id, GetApplicationEventTarget(), 0, &hotKey) != noErr {
-            setStatus("Shortcut unavailable. Click the island to open it.")
+            setStatus("Shortcut unavailable. Hold the pointer on the island to open it.")
         }
         for (number, modifiers) in [(UInt32(2), UInt32(controlKey | optionKey)), (UInt32(3), UInt32(controlKey))] {
             var key: EventHotKeyRef?
@@ -735,7 +741,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         statusLabel.frame = layout.statusFrame
         activityMark.frame = layout.activityFrame
         signalHost.layer?.maskedCorners = islandView.layer?.maskedCorners ?? []
-        if case .status = content { statusLabel.isHidden = false } else { statusLabel.isHidden = !expanded }
+        // Idle readiness is already represented by the compact menu-bar line.
+        if case .status = content { statusLabel.isHidden = false } else { statusLabel.isHidden = true }
         activityMark.isHidden = content != .audio
         islandView.toolTip = expanded ? nil : "\(currentStatus) · Hold here to open · ⌃⌥Space"
         islandView.setAccessibilityLabel("Clippy: \(currentStatus)")
@@ -879,7 +886,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         signalHost.layer?.cornerRadius = layout.cornerRadius
         statusLine.frame = layout.lineFrame
         statusLine.cornerRadius = min(layout.lineFrame.width, layout.lineFrame.height) / 2
-        statusLine.opacity = content == .audio || content == .loading ? 0 : 1
+        statusLine.opacity = content == .audio || content == .loading || (expanded && content == .idle) ? 0 : 1
         sensingLine.opacity = 0
         sensingEye.opacity = 0
         CATransaction.commit()
