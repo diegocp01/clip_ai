@@ -69,6 +69,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private let sensingGlow = CAGradientLayer()
     private var signalPoint: CGFloat = 0.5
     private var pointerOnIsland = false
+    private let wakeSound = WakeSound()
     private var gooPanel: FloatingPanel!
     private let gooFill = CAShapeLayer()
     private let gooRimMask = CAShapeLayer()
@@ -346,10 +347,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             item.target = self
         }
         menu.addItem(.separator())
+        let soundItem = menu.addItem(withTitle: "Wake sound", action: #selector(toggleWakeSound), keyEquivalent: "")
+        soundItem.target = self
+        soundItem.state = wakeSound.enabled ? .on : .off
+        menu.addItem(.separator())
         menu.addItem(withTitle: "Proofread selection     ⌃⌥D", action: nil, keyEquivalent: "")
         menu.addItem(withTitle: "Rewrite selection          ⌃D", action: nil, keyEquivalent: "")
         menu.popUp(positioning: nil, at: NSPoint(x: sender.frame.minX, y: sender.frame.minY), in: islandView)
     }
+    @objc private func toggleWakeSound() { wakeSound.enabled.toggle() }
     private func buildOverlay() {
         overlay = panel(NSRect(x: 0, y: 0, width: 900, height: 650), level: .floating)
         overlay.title = "Clippy drawing"
@@ -394,6 +400,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         guard tether.attached != pointerOnIsland else { return }
         pointerOnIsland = tether.attached
         if pointerOnIsland {
+            // Only a fresh idle hover wakes the sound; clicks, status changes and
+            // live speech/microphone activity remain quiet. Tether motion does not retrigger it.
+            if inside && !expanded && currentStatus == "Ready" && !busy && !talking
+                && !requestingPermission && !speech.isSpeaking && NSEvent.pressedMouseButtons == 0 {
+                wakeSound.play()
+            }
             let anchor = IslandOutline(rect: island.frame)
             let start = anchor.point(at: anchor.nearest(to: pointer))
             tipX.jump(to: start.x); tipY.jump(to: start.y)
