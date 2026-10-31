@@ -2,7 +2,7 @@ import AppKit
 import ApplicationServices
 import Carbon
 
-// Only the selection is sent to Codex. No screenshot or document context is read.
+// Only the selection is sent to the selected model. No screenshot or document context is read.
 final class SelectionEditor: NSObject {
     private struct Selection {
         let pid: pid_t
@@ -11,12 +11,13 @@ final class SelectionEditor: NSObject {
         let text: String
     }
     private let onStatus: (String) -> Void
+    private let provider: () -> String
     private var generation = 0
     private var task: Task<Void, Never>?
     private var resultPanel: NSPanel?
     private var resultText = ""
     private var clipboardBusy = false
-    init(onStatus: @escaping (String) -> Void) { self.onStatus = onStatus }
+    init(provider: @escaping () -> String, onStatus: @escaping (String) -> Void) { self.provider = provider; self.onStatus = onStatus }
 
     func requestAccess() {
         if AXIsProcessTrusted() { onStatus("Text editing ready · ⌃⌥D / ⌃D"); return }
@@ -42,7 +43,8 @@ final class SelectionEditor: NSObject {
             onStatus("Select text in another app first"); return
         }
         let pid = app.processIdentifier
-        onStatus(action == "proofread" ? "Proofreading · Sol high…" : "Rewriting · Sol high…")
+        let provider = self.provider()
+        onStatus("\(action == "proofread" ? "Proofreading" : "Rewriting") · \(provider == "claude" ? "Claude" : "Sol high")…")
         // Let the physical shortcut's modifiers go before any Copy fallback.
         afterModifiersReleased { [weak self] in
             guard let self, self.generation == current else { return }
@@ -68,7 +70,7 @@ final class SelectionEditor: NSObject {
                         request.httpMethod = "POST"
                         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
                         request.setValue(token, forHTTPHeaderField: "X-Clippy-Session")
-                        request.httpBody = try JSONSerialization.data(withJSONObject: ["text": selection.text, "action": action])
+                        request.httpBody = try JSONSerialization.data(withJSONObject: ["text": selection.text, "action": action, "provider": provider])
                         let (data, response) = try await URLSession.shared.data(for: request)
                         try Task.checkCancellation()
                         guard self.generation == current else { return }

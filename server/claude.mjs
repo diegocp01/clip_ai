@@ -29,25 +29,28 @@ export function claudeArguments({model=CLAUDE_MODEL,effort=CLAUDE_EFFORT,schema=
     '--json-schema',JSON.stringify(schema),'--model',model,'--effort',effort,'--system-prompt',instructions,
     '--tools','','--no-session-persistence','--strict-mcp-config','--setting-sources','','--disable-slash-commands'];
 }
+// The Claude CLI's replacement for the Codex SDK: one structured answer, with nothing else it can do.
 export function claudeMessage(request) {
   const content=[{type:'text',text:'CONTEXT AND USER REQUEST (JSON):\n'+JSON.stringify({history:request.history,previous:request.previous,message:request.message})}];
   const image=decodeImage(request.image);
   if(image)content.push({type:'image',source:{type:'base64',media_type:image.extension==='png'?'image/png':'image/jpeg',data:image.data.toString('base64')}});
   return {type:'user',message:{role:'user',content}};
 }
-export async function generateWithClaude(request,{signal,onStatus=()=>{},onPreview,env=claudeEnvironment(),spawnImpl=spawn,model=CLAUDE_MODEL,effort=CLAUDE_EFFORT}={}) {
+export function generateWithClaude(request,options={}) {
+  return runClaudeStructured(claudeMessage(request),{...options,instructions:VISUAL_INSTRUCTIONS,schema:resultSchema,validate:assertResult,status:'Drawing with Claude Sonnet 5.5…',tier:request.tier??'fast'});
+}
+export async function runClaudeStructured(message,{signal,onStatus=()=>{},onPreview,env=claudeEnvironment(),spawnImpl=spawn,model=CLAUDE_MODEL,effort=CLAUDE_EFFORT,instructions,schema,validate=x=>x,status,tier=null}={}) {
   const started=Date.now();
   signal?.throwIfAborted();
-  const message=claudeMessage(request);
   // Outside the project, so the CLI finds no project instructions to load.
   const work=await mkdtemp(path.join(tmpdir(),'clippy-claude-'));
   let child,lines,exitTimer;
   try {
-    onStatus('Drawing with Claude Sonnet 5.5…');
-    child=spawnImpl(claudeBinary(env),claudeArguments({model,effort}),{cwd:work,env,stdio:['pipe','pipe','pipe']});
+    onStatus(status);
+    child=spawnImpl(claudeBinary(env),claudeArguments({model,effort,schema,instructions}),{cwd:work,env,stdio:['pipe','pipe','pipe']});
     // Do not log stderr: upstream diagnostic output may contain private context.
     child.stderr.resume();
-    const onText=previewEmitter(onPreview);
+    const onText=onPreview?previewEmitter(onPreview):()=>{};
     let raw='',abort;
     const output=await new Promise((resolve,reject)=>{
       abort=()=>reject(signal.reason||new Error('Drawing cancelled.'));
@@ -76,8 +79,8 @@ export async function generateWithClaude(request,{signal,onStatus=()=>{},onPrevi
       throw new Error(/not logged in/i.test(text)?'Sign in to Claude first: run claude auth login in Terminal.':(text.slice(0,500)||'Claude could not complete the drawing.'));
     }
     let result=output.structured_output;
-    if(!result){try{result=JSON.parse(output.result);}catch{throw new Error('Claude returned an unreadable visual. Please try again.');}}
-    return {result:assertResult(result),usage:output.usage??null,elapsedMs:Date.now()-started,model,reasoningEffort:effort,requestedTier:request.tier??'fast',provider:'claude'};
+    if(!result){try{result=JSON.parse(output.result);}catch{throw new Error('Claude returned an unreadable answer. Please try again.');}}
+    return {result:validate(result),usage:output.usage??null,elapsedMs:Date.now()-started,model,reasoningEffort:effort,requestedTier:tier,provider:'claude'};
   } finally {
     lines?.close();
     if(child){

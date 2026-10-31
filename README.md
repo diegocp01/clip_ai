@@ -25,7 +25,7 @@ open build/Clippy.app
 
 The primary interface is the black island at the top of your display. Click to open it; click the top-right chevron or press Escape to collapse it. The earlier browser interface at `http://127.0.0.1:4317/` remains only a development harness.
 
-Use the island to ask a question, dictate on-device, or attach one screenshot. Select text in another app and press Control-Option-D to proofread or Control-D to rewrite; both use GPT-6.1 Sol with high reasoning and replace the selection automatically. Generated 3D objects and diagrams appear in a transparent floating overlay above your other apps. Select a labeled part to ask a follow-up. See [desktop/README.md](desktop/README.md) for shortcuts and controls.
+Use the island to ask a question, dictate on-device, or attach one screenshot. Select text in another app and press Control-Option-D to proofread or Control-D to rewrite; both use the selected model (GPT-6.1 Sol or Claude Sonnet 5.5, each at high effort) and replace the selection automatically. Generated 3D objects and diagrams appear in a transparent floating overlay above your other apps. Select a labeled part to ask a follow-up. See [desktop/README.md](desktop/README.md) for shortcuts and controls.
 
 Sign in with ChatGPT using the bundled Codex CLI. Your account needs access to `gpt-6.1-terra` for visuals and `gpt-6.1-sol` for text editing. Codex visuals and text editing use your ChatGPT login. Optional realtime voice uses a separate OpenAI API key and API billing.
 
@@ -39,7 +39,7 @@ Each model turn uses a read-only, tool-disabled, ephemeral Codex session. Person
 
 Save `OPENAI_API_KEY` in a local `.env.local` file (ignored by Git). Never commit this file or put the key in browser code. The server reads the credential; WebKit receives only the WebRTC connection answer.
 
-Click **Talk**, grant macOS microphone access, then speak naturally. Click **End** to stop. Say “Draw a water molecule” to delegate a visual to Codex using Terra low/Fast. Click **Screen** during Talk to explicitly share one screenshot as voice context. Voice does not continuously watch your screen. The speaker button mutes spoken replies without ending microphone capture; use End to stop listening. Sessions end after 10 minutes and can be restarted. The … menu keeps optional on-device dictation separate.
+Click **Talk**, grant macOS microphone access, then speak naturally. Click **End** to stop. Say “Draw a water molecule” to delegate a visual to the selected model: Codex using Terra low/Fast, or the Claude CLI. The voice itself always uses OpenAI's Realtime API. Click **Screen** during Talk to explicitly share one screenshot as voice context. Voice does not continuously watch your screen. The speaker button mutes spoken replies without ending microphone capture; use End to stop listening. Sessions end after 10 minutes and can be restarted. The … menu keeps optional on-device dictation separate.
 
 API credential, session configuration and native connection to the Listening state have been verified. Spoken playback, interruption and voice-to-drawing behavior still need a user conversation test. Microphone access is under System Settings → Privacy & Security → Microphone → Clippy. Screenshot access is under Screen & System Audio Recording in the same settings section.
 

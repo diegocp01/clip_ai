@@ -66,7 +66,7 @@ export function createServer({run=generate,runClaude=generateWithClaude,runEdit=
         for await(const chunk of req){size+=chunk.length;if(size>MAX_BODY){json(413,{error:'Image/request too large (8 MB limit).'});return;}chunks.push(chunk);}
         request=(editing?normalizeEditRequest:normalizeRequest)(JSON.parse(Buffer.concat(chunks).toString('utf8')));
       }catch(e){if(!res.writableEnded)json(400,{error:e.message});return;}
-      const claude=!editing&&request.provider==='claude';
+      const claude=request.provider==='claude';
       if(claude?!await checkClaude():!await checkAuth())return json(401,{error:claude?'Sign in to Claude first: run claude auth login in Terminal.':'Sign in to Codex with ChatGPT first: run codex login in Terminal.'});
       if(active>=2)return json(429,{error:'Two requests are already running.'});
       active++;
@@ -76,7 +76,7 @@ export function createServer({run=generate,runClaude=generateWithClaude,runEdit=
       res.on('close',disconnect);
       res.writeHead(200,{'Content-Type':'application/x-ndjson; charset=utf-8','X-Accel-Buffering':'no'});
       const send=event=>{if(!res.destroyed&&!res.writableEnded)res.write(JSON.stringify(event)+'\n');};
-      try{const output=await (editing?runEdit:claude?runClaude:run)(request,{signal:controller.signal,onStatus:message=>send({type:'status',message}),onPreview:result=>send({type:'preview',result})});send({type:'result',...(editing?{}:{provider:request.provider}),...output});}
+      try{const output=await (editing?runEdit:claude?runClaude:run)(request,{signal:controller.signal,onStatus:message=>send({type:'status',message}),onPreview:result=>send({type:'preview',result})});send({type:'result',provider:request.provider,...output});}
       catch(e){send({type:'error',message:controller.signal.aborted?(controller.signal.reason?.message||'Request cancelled.') : String(e.message||e).slice(0,1600)});}
       finally{clearTimeout(timer);res.off('close',disconnect);active--;res.end();}
       return;

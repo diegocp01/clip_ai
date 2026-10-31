@@ -119,7 +119,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var keyboardMonitor: Any?
     private var hotKey: EventHotKeyRef?
     private var editingHotKeys = [EventHotKeyRef]()
-    private lazy var selectionEditor = SelectionEditor { [weak self] text in self?.setStatus(text) }
+    private lazy var selectionEditor = SelectionEditor(provider: { [weak self] in self?.provider.rawValue ?? "gpt" }) { [weak self] text in self?.setStatus(text) }
     private var eventHandler: EventHandlerRef?
     private var ownedServer: Process?
     private var requestTask: URLSessionDataTask?
@@ -323,10 +323,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         providerControl = NSSegmentedControl(labels: ["GPT", "Claude"], trackingMode: .selectOne, target: self, action: #selector(providerChanged))
         providerControl.frame = ComposerGeometry.provider
         providerControl.segmentStyle = .capsule
-        providerControl.controlSize = .small
-        providerControl.font = .systemFont(ofSize: 11, weight: .medium)
         providerControl.setAccessibilityLabel("Model")
-        providerControl.toolTip = "GPT answers through the Codex SDK · Claude through the Claude CLI"
+        providerControl.setToolTip("GPT · Codex SDK", forSegment: 0)
+        providerControl.setToolTip("Claude · Claude CLI", forSegment: 1)
+        for segment in 0...1 {
+            providerControl.setWidth(34, forSegment: segment)
+            providerControl.setImageScaling(.scaleProportionallyDown, forSegment: segment)
+        }
         islandView.addSubview(providerControl)
         expandedControls.append(providerControl)
         updateProviderControl()
@@ -884,8 +887,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     @objc private func providerChanged() { setProvider(providerControl.selectedSegment == 1 ? .claude : .gpt) }
+    // The mascot not in use dims. Without its image, a segment keeps its text label.
+    private func mascot(_ name: String, description: String, selected: Bool) -> NSImage? {
+        guard let url = Bundle.main.url(forResource: name, withExtension: "png"), let source = NSImage(contentsOf: url) else { return nil }
+        let height: CGFloat = 19, size = NSSize(width: height * source.size.width / max(source.size.height, 1), height: height)
+        let image = NSImage(size: size, flipped: false) { rect in
+            source.draw(in: rect, from: .zero, operation: .sourceOver, fraction: selected ? 1 : 0.42)
+            return true
+        }
+        image.accessibilityDescription = description
+        return image
+    }
     private func updateProviderControl() {
         providerControl.selectedSegment = provider == .claude ? 1 : 0
+        for (segment, name, description, value) in [(0, "mascot-gpt", "GPT", AIProvider.gpt), (1, "mascot-claude", "Claude", AIProvider.claude)] {
+            guard let image = mascot(name, description: description, selected: provider == value) else { continue }
+            providerControl.setImage(image, forSegment: segment)
+            providerControl.setLabel("", forSegment: segment)
+        }
         // Standard and Fast are Codex service tiers.
         tierPicker.isEnabled = provider == .gpt
         tierPicker.toolTip = provider == .gpt ? "GPT-6.1 Terra · Low reasoning. Fast uses more Codex allowance." : "Standard and Fast only apply to GPT."
@@ -896,6 +915,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         provider = value
         updateProviderControl()
         UserDefaults.standard.set(value.rawValue, forKey: "aiProvider")
+        // Talk itself stays on OpenAI's voice API, but its drawings follow the selected model.
+        webView?.evaluateJavaScript("window.clippyVoice?.setProvider('\(value.rawValue)'); void 0;")
         // Each backend has its own sign-in, which decides whether the line can be green.
         pollServer()
     }
@@ -1153,7 +1174,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                     self.voiceRequested = false; self.updateTalkButton()
                     self.showError("Allow Clippy microphone access in Privacy & Security to use Talk."); return
                 }
-                self.webView.evaluateJavaScript("window.clippyVoice.setMuted(\(!self.voiceEnabled)); window.clippyVoice.start(\(generation)); void 0;") { [weak self] _, error in
+                self.webView.evaluateJavaScript("window.clippyVoice.setMuted(\(!self.voiceEnabled)); window.clippyVoice.setProvider('\(self.provider.rawValue)'); window.clippyVoice.start(\(generation)); void 0;") { [weak self] _, error in
                     guard let self, self.voiceGeneration == generation else { return }
                     if error != nil { self.stopRealtimeVoice(); self.showError("Live voice could not start. Reopen Clippy and try again.") }
                 }

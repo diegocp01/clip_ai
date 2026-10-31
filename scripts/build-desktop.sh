@@ -10,7 +10,7 @@ xcrun swiftc -swift-version 5 -O \
   -module-cache-path "$module_cache" \
   -framework AppKit -framework AVFoundation -framework Speech -framework WebKit -framework Carbon \
   "$project_dir/desktop/WakeSound.swift" "$project_dir/desktop/ComposerSurface.swift" "$project_dir/desktop/IslandLayout.swift" "$project_dir/desktop/IslandGoo.swift" "$project_dir/desktop/IslandLiquid.swift" "$project_dir/desktop/SelectionEditor.swift" "$project_dir/desktop/main.swift" -o "$app_dir/Contents/MacOS/Clippy"
-cp "$project_dir/desktop/Resources/wake-chime.wav" "$app_dir/Contents/Resources/wake-chime.wav"
+cp "$project_dir/desktop/Resources/wake-chime.wav" "$project_dir/desktop/Resources/mascot-gpt.png" "$project_dir/desktop/Resources/mascot-claude.png" "$app_dir/Contents/Resources/"
 cp "$project_dir/desktop/Info.plist" "$app_dir/Contents/Info.plist"
 python3 - "$project_dir" "$(command -v node)" "$project_dir/node_modules/.bin/codex" "$app_dir/Contents/Resources/runtime.json" "$(command -v claude || true)" <<'PYCONFIG'
 import json,sys
