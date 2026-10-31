@@ -105,6 +105,11 @@ for tip in [CGPoint(x: 200, y: 150), CGPoint(x: 400, y: 220), CGPoint(x: 390, y:
     expect(box.insetBy(dx: -1, dy: -1).contains(tip), "Blob must reach its tip")
     expect(box.intersects(island.rect), "Blob must stay joined to the island")
 }
+// Close to the island the blob still has real body, so it reads as dragged-out black.
+let shortBlob = GooShape.blob(outline: island, tip: CGPoint(x: 200, y: 180))!.boundingBoxOfPath
+expect(shortBlob.minX <= 200 - 40 && shortBlob.maxX >= 200 + 40, "A short blob must flare out wide from the island")
+let longBulb = GooShape.bulb(outline: island, tip: CGPoint(x: 200, y: 130))!
+expect(longBulb.radius >= 14, "A stretched blob must keep a visible body")
 // Clicks count on the blob and just around it, never on the island itself or further away.
 let tip = CGPoint(x: 200, y: 150)
 expect(GooShape.touches(outline: island, tip: tip, point: CGPoint(x: 200, y: 160)), "A point inside the blob must count")

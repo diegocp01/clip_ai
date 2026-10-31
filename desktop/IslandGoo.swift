@@ -87,7 +87,7 @@ enum GooShape {
         let length = hypot(tip.x - anchor.x, tip.y - anchor.y)
         guard length > 1 else { return nil }
         let direction = CGPoint(x: (tip.x - anchor.x) / length, y: (tip.y - anchor.y) / length)
-        let radius = min(mix(15, 8, smoothstep(10, 70, length)), length / 2)
+        let radius = min(mix(22, 14, smoothstep(10, 70, length)), length * 0.6)
         return (CGPoint(x: tip.x - direction.x * radius, y: tip.y - direction.y * radius), radius, direction, length)
     }
     /// A liquid neck from the island's edge out to the tip. Its base closes through
@@ -95,7 +95,7 @@ enum GooShape {
     static func blob(outline: IslandOutline, tip: CGPoint) -> CGPath? {
         guard let bulb = bulb(outline: outline, tip: tip) else { return nil }
         let position = outline.nearest(to: tip)
-        let baseHalf = mix(30, 20, smoothstep(10, 70, bulb.length))
+        let baseHalf = mix(46, 30, smoothstep(10, 70, bulb.length))
         let a = outline.point(at: position - baseHalf), b = outline.point(at: position + baseHalf)
         let ta = outline.tangent(at: position - baseHalf), tb = outline.tangent(at: position + baseHalf)
         let d = bulb.direction, side = CGPoint(x: -d.y, y: d.x), r = bulb.radius, fillet = baseHalf * 0.75
