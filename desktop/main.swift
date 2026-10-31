@@ -25,6 +25,27 @@ final class IslandView: NSView {
     override func accessibilityPerformPress() -> Bool { onExpand?(); return true }
 }
 
+final class DismissButton: NSButton {
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        title = ""
+        image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Dismiss")?.withSymbolConfiguration(.init(pointSize: 11, weight: .semibold))
+        imagePosition = .imageOnly
+        isBordered = false
+        contentTintColor = NSColor.white.withAlphaComponent(0.85)
+        wantsLayer = true
+        layer?.cornerRadius = frame.width / 2
+        layer?.backgroundColor = NSColor.black.withAlphaComponent(0.82).cgColor
+        layer?.borderWidth = 0.75
+        layer?.borderColor = NSColor.white.withAlphaComponent(0.18).cgColor
+        toolTip = "Dismiss"
+        setAccessibilityLabel("Dismiss what's on screen")
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    // The app is rarely active, and a click here should work on the first try.
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+}
+
 final class ActivityMark: NSView {
     private var timer: Timer?
     private var phase: CGFloat = 0
@@ -89,6 +110,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var webView: WKWebView!
     private var captions: FloatingPanel!
     private var replyCard: ReplyCard!
+    private var dismissPanel: FloatingPanel!
+    private var drawingOnScreen = false
     private var captionDismissed = false
     private var statusItem: NSStatusItem!
     private var statusLabel: NSTextField!
@@ -112,6 +135,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private let sensingLine = CAGradientLayer()
     private let sensingEye = CAGradientLayer()
     private var signalBar = SignalBar()
+    private let cursorLight = CAGradientLayer()
+    private var cursorGlow = CursorGlow()
     private let composerSignal = ComposerSignal(frame: ComposerSignal.stripFrame)
     private var signalTask: URLSessionDataTask?
     private var signalGeneration = 0
@@ -119,12 +144,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var pointerOnIsland = false
     private let wakeSound = WakeSound()
     private var provider = AIProvider(rawValue: UserDefaults.standard.string(forKey: "aiProvider") ?? "") ?? .gpt
-    private var gooPanel: FloatingPanel!
-    private let gooFill = CAShapeLayer()
-    private let gooLiquid = CALayer()
-    private var liquid = LiquidSim()
-    private var wake = Spring(stiffness: 150, damping: 17)
-    private var tether = GooTether()
+    private var shoulderPanel: FloatingPanel!
+    private let shoulderFill = CAShapeLayer()
+    private var wake = Spring(stiffness: 110, damping: 21)
     private var dwell = DwellTimer()
     private var dwellPanel: FloatingPanel!
     private let dwellRing = CAShapeLayer()
@@ -149,6 +171,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var sendHovered = false
     private var micButton: NSButton!
     private var talkButton: NSButton!
+    private var pointButton: NSButton!
+    private let pointShare = VoicePointerShare()
+    private var pointShareRequested = false
+    private var pointShareEpoch = 0
+    private var voiceConnected = false
     private var voiceRequested = false
     private var voiceGeneration = 0
     private var captureButton: NSButton!
@@ -239,7 +266,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         keyboardMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .leftMouseDown, .rightMouseDown]) { [weak self] event in
             guard let self, self.menuTrackingDepth == 0 else { return event }
             if event.type != .keyDown {
-                if self.expanded, let window = event.window, window !== self.island,
+                if self.expanded, let window = event.window, window !== self.island, window !== self.dismissPanel,
                    window.level.rawValue < NSWindow.Level.popUpMenu.rawValue,
                    !self.island.frame.contains(window.convertPoint(toScreen: event.locationInWindow)) {
                     self.setExpanded(false)
@@ -365,11 +392,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         loadingGlow.shadowOffset = .zero
         loadingFinish.shadowOpacity = 0
         loadingGlow.addSublayer(loadingFinish)
-        for layer in [sensingLine, sensingEye, statusLine, loadingGlow] { signalHost.layer?.addSublayer(layer) }
+        cursorLight.type = .radial
+        cursorLight.colors = [NSColor(calibratedRed: 0.78, green: 1, blue: 0.86, alpha: 0.13).cgColor, NSColor(calibratedRed: 0.78, green: 1, blue: 0.86, alpha: 0).cgColor]
+        cursorLight.startPoint = CGPoint(x: 0.5, y: 0.5)
+        cursorLight.endPoint = CGPoint(x: 1, y: 1)
+        cursorLight.bounds = CGRect(x: 0, y: 0, width: 116, height: 116)
+        cursorLight.opacity = 0
+        for layer in [cursorLight, sensingLine, sensingEye, statusLine, loadingGlow] { signalHost.layer?.addSublayer(layer) }
         islandView.addSubview(signalHost, positioned: .below, relativeTo: statusLabel)
         islandView.addSubview(composerSignal)
         expandedControls.append(composerSignal)
-        buildGoo()
+        buildShoulders()
         prompt = NSTextField(frame: ComposerGeometry.input)
         prompt.placeholderString = ""
         prompt.setAccessibilityLabel("Ask Clip")
@@ -424,6 +457,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         expandedControls.append(modelCaption)
         captureButton = button("Screen", frame: ComposerGeometry.screen, action: #selector(captureScreen), symbol: "rectangle.dashed", iconOnly: true)
         updateCaptureButton()
+        pointButton = button("Point & Share", frame: ComposerGeometry.provider, action: #selector(togglePointSharing), iconOnly: true)
+        pointButton.image = VoicePointerShare.icon(); pointButton.imagePosition = .imageOnly
+        pointButton.toolTip = "Point & Share · send focused screenshots and your red pointer trail to live voice"
+        pointButton.isHidden = true
+        pointShare.excludedRects = { [weak self] in
+            guard let self else { return [] }
+            return self.island.isVisible ? [self.island.frame] : []
+        }
+        pointShare.onFrame = { [weak self] image, context, completion in
+            guard let self, self.voiceRequested, self.voiceConnected, self.pointShareRequested else { completion(false); return }
+            let epoch = self.pointShareEpoch, voice = self.voiceGeneration
+            self.webView.callAsyncJavaScript("await window.clippyVoice.sharePoint(image, context)", arguments: ["image": image, "context": context], in: nil, in: .page) { [weak self] result in
+                guard let self, self.voiceGeneration == voice, self.pointShareEpoch == epoch, self.pointShareRequested else { completion(false); return }
+                if case .success = result {
+                    self.screenshotIndicator.stringValue = "● Point sharing · screenshot sent"
+                    self.screenshotIndicator.setAccessibilityLabel(self.screenshotIndicator.stringValue)
+                    completion(true)
+                } else { completion(false) }
+            }
+        }
+        pointShare.onStop = { [weak self] reason in
+            guard let self, self.pointShareRequested else { return }
+            self.stopPointSharing(reason)
+        }
         micButton = NSButton(title: "Dictate", target: self, action: #selector(toggleDictation))
         talkButton = button("Talk", frame: ComposerGeometry.talk, action: #selector(toggleRealtimeVoice), symbol: "waveform", iconOnly: true)
         talkButton.toolTip = "Live AI voice · separately billed API usage · click End to stop the microphone"
@@ -445,21 +502,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         _ = button("More options", frame: ComposerGeometry.more, action: #selector(showIslandOptions(_:)), symbol: "ellipsis", iconOnly: true)
         setExpanded(false)
     }
-    // Liquid can reach past the island, so it has its own click-through panel below it.
-    // In the island's window it would block the menu bar.
-    private func buildGoo() {
-        gooPanel = panel(.zero, level: island.level)
-        gooPanel.title = "Clip liquid edge"
-        gooPanel.ignoresMouseEvents = true
-        gooPanel.setAccessibilityElement(false)
+    // The shoulders sit outside the island, so they have their own click-through panel below it.
+    // In the island's window they would block the menu bar.
+    private func buildShoulders() {
+        shoulderPanel = panel(.zero, level: island.level)
+        shoulderPanel.title = "Clip shoulders"
+        shoulderPanel.ignoresMouseEvents = true
+        shoulderPanel.setAccessibilityElement(false)
         let host = NSView(frame: .zero)
         host.layer = CALayer()
         host.wantsLayer = true
         host.autoresizingMask = [.width, .height]
-        gooPanel.contentView = host
-        gooFill.fillColor = NSColor.black.cgColor
-        gooLiquid.contentsGravity = .resize
-        for layer in [gooFill, gooLiquid] { host.layer?.addSublayer(layer) }
+        shoulderPanel.contentView = host
+        shoulderFill.fillColor = NSColor.black.cgColor
+        host.layer?.addSublayer(shoulderFill)
         buildDwellRing()
     }
     // A tiny click-through ring beside the pointer shows the hold filling up.
@@ -549,7 +605,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private func startOverlayHitTesting() {
         // The transparent WebView has a rectangular native surface. Test its
         // actual drawn objects so the empty area behaves like the desktop.
-        let timer = Timer(timeInterval: 0.05, repeats: true) { [weak self] _ in self?.updateOverlayHitTesting(); if self?.frameTimer == nil { self?.updatePointer() } }
+        let timer = Timer(timeInterval: 0.05, repeats: true) { [weak self] _ in self?.updateOverlayHitTesting(); self?.updateDismissButton(); if self?.frameTimer == nil { self?.updatePointer() } }
         hitTestTimer = timer
         RunLoop.main.add(timer, forMode: .common)
     }
@@ -608,25 +664,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         // The pointer can rest on the screen's top edge, which a rect excludes.
         let region = (pointerOnIsland ? island.frame : wakeRegion).insetBy(dx: 0, dy: -1)
         let inside = island.isVisible && region.contains(pointer)
-        if wakeEnds?.rest.isNotched == true, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
-            let outline = IslandOutline(rect: island.frame)
-            let clickedAway = NSEvent.pressedMouseButtons != 0
-            _ = tether.update(inside: inside, distance: outline.distance(to: pointer), pressed: clickedAway, dt: dt)
-        } else { tether.attached = inside }
         updateDwell(pointer: pointer, inside: inside, dt: dt)
-        guard !expanded, tether.attached != pointerOnIsland else { return }
-        pointerOnIsland = tether.attached
+        guard !expanded, inside != pointerOnIsland else { return }
+        pointerOnIsland = inside
         if pointerOnIsland {
             // Only a fresh idle hover wakes the sound; status changes and
-            // live speech/microphone activity remain quiet. Tether motion does not retrigger it.
+            // live speech/microphone activity remain quiet.
             if inside && !expanded && currentStatus == "Ready" && !busy && !talking
                 && !requestingPermission && !speech.isSpeaking && NSEvent.pressedMouseButtons == 0 {
                 wakeSound.play()
             }
-            let anchor = IslandOutline(rect: island.frame)
-            let start = anchor.point(at: anchor.nearest(to: pointer))
-            liquid.attach(at: start)
-            if wake.value < 0.1 { signalBar = SignalBar() }
+            if wake.value < 0.1 {
+                signalBar = SignalBar()
+                cursorGlow.jump(to: pointer)
+            }
         }
         layoutIsland()
     }
@@ -665,11 +716,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         captions.ignoresMouseEvents = false
         captions.hasShadow = true
         replyCard = ReplyCard(frame: .zero)
-        replyCard.onDismiss = { [weak self] in
-            self?.captionDismissed = true; self?.captions.orderOut(nil)
-            self?.speech.stopSpeaking(at: .immediate)
-        }
         captions.contentView = replyCard
+        buildDismissButton()
+    }
+    // One X under the notch closes whatever is on screen, instead of one on each output.
+    private func buildDismissButton() {
+        let size = DismissGeometry.size
+        dismissPanel = panel(NSRect(x: 0, y: 0, width: size, height: size), level: island.level)
+        dismissPanel.title = "Clip dismiss"
+        dismissPanel.becomesKeyOnlyIfNeeded = true
+        let button = DismissButton(frame: NSRect(x: 0, y: 0, width: size, height: size))
+        button.target = self
+        button.action = #selector(dismissOutputs)
+        dismissPanel.contentView = button
+    }
+    @objc private func dismissOutputs() {
+        if captions.isVisible { captionDismissed = true }
+        hideVisuals()
+        comparisonPanel.dismiss()
+        updateDismissButton()
+    }
+    private func updateDismissButton() {
+        let showing = captions.isVisible || comparisonPanel.isVisible || (overlay.isVisible && drawingOnScreen)
+        guard showing, island.isVisible, !captureInProgress, !composerTransitioning else {
+            if dismissPanel.isVisible { dismissPanel.orderOut(nil) }
+            return
+        }
+        dismissPanel.setFrame(DismissGeometry.frame(under: island.frame, centeredOn: wakeEnds?.rest.notchFrame?.midX), display: false)
+        if !dismissPanel.isVisible { dismissPanel.orderFrontRegardless() }
     }
     private func buildMenu() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -772,7 +846,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         composerTimer?.invalidate(); composerTimer = nil
         composerTransitioning = false
         stopFrames()
-        gooPanel.orderOut(nil)
+        shoulderPanel.orderOut(nil)
         let screen = island.screen ?? NSScreen.main ?? NSScreen.screens[0]
         let content: IslandContent = talking ? .audio : currentStatus == "Ready" ? .idle
             : .status(textWidth: ceil(statusLabel.cell?.cellSize.width ?? 52))
@@ -896,9 +970,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         island.hasShadow = expanded
         island.orderFrontRegardless()
         if layout.isNotched && !expanded {
-            gooPanel.orderFrontRegardless()
-            gooPanel.order(.below, relativeTo: island.windowNumber)
-        } else { gooPanel.orderOut(nil) }
+            shoulderPanel.orderFrontRegardless()
+            shoulderPanel.order(.below, relativeTo: island.windowNumber)
+        } else { shoulderPanel.orderOut(nil) }
         if expanded && focus && !selectionReadPending && !selectionOwnsOpening { island.makeKey(); island.makeFirstResponder(prompt) }
         if !expanded { island.resignKey() }
 
@@ -929,6 +1003,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         // Idle readiness is already represented by the compact menu-bar line.
         if case .status = content { statusLabel.isHidden = false } else { statusLabel.isHidden = true }
         modelCaption.isHidden = !expanded || content != .idle
+        pointButton.isHidden = !expanded || !voiceRequested
+        providerControl.isHidden = !expanded || voiceRequested
         activityMark.isHidden = content != .audio
         islandView.toolTip = expanded ? nil : "\(currentStatus) · Hold here to open · ⌃⌥Space"
         islandView.setAccessibilityLabel("Clip: \(currentStatus)")
@@ -937,17 +1013,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             let rest = makeLayout(false)
             wakeEnds = (rest, makeLayout(true))
             wakeRegion = rest.wakeArea.offsetBy(dx: rest.frame.minX, dy: rest.frame.minY)
-            gooPanel.setFrame(rest.frame.insetBy(dx: -220, dy: 0).union(rest.frame.offsetBy(dx: 0, dy: -210)), display: false)
-            if awake || wake.value > 0 || !liquid.isSettled || frameTimer != nil {
+            shoulderPanel.setFrame(rest.frame.union(makeLayout(true).frame).insetBy(dx: -20, dy: 0), display: false)
+            if awake || wake.value > 0 || frameTimer != nil {
                 startFrames()
                 applyWake()
                 return layout
             }
         } else {
-            // Text or the composer takes over from any liquid still in motion.
+            // Text or the composer takes over from any wake still in motion.
             stopFrames()
             wakeRegion = .zero
-            wake.jump(to: 0); tether.attached = false; pointerOnIsland = false; liquid.reset()
+            wake.jump(to: 0); pointerOnIsland = false
         }
         updateSignal(content: content, layout: layout)
         if updateFrame {
@@ -963,8 +1039,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             }
         }
         if layout.isNotched && !expanded {
-            gooPanel.setFrame(layout.frame.insetBy(dx: -220, dy: 0).union(layout.frame.offsetBy(dx: 0, dy: -210)), display: false)
-            drawGoo(outline: IslandOutline(rect: layout.frame))
+            shoulderPanel.setFrame(layout.frame.insetBy(dx: -20, dy: 0), display: false)
+            drawShoulders(rect: layout.frame)
         }
         return layout
     }
@@ -1077,6 +1153,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         statusLine.opacity = content == .audio || content == .loading || (expanded && content == .idle) ? 0 : 1
         sensingLine.opacity = 0
         sensingEye.opacity = 0
+        cursorLight.opacity = 0
         CATransaction.commit()
         guard content == .idle, !expanded, !reduceMotion else { statusLine.removeAnimation(forKey: "pulse"); return }
         guard statusLine.animation(forKey: "pulse") == nil else { return }
@@ -1106,10 +1183,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion { wake.jump(to: wake.target) } else {
             wake.step(dt)
             signalBar.step(dt, pointer: (NSEvent.mouseLocation.x - island.frame.midX) / max(island.frame.width / 2, 1))
+            if pointerOnIsland { cursorGlow.follow(NSEvent.mouseLocation, dt: dt) }
         }
         applyWake()
-        stepGoo(dt)
-        if wake.isSettled, wake.value == 0, liquid.isSettled {
+        if wakeEnds?.rest.isNotched == true { drawShoulders(rect: island.frame) }
+        if wake.isSettled, wake.value == 0 {
             stopFrames()
             layoutIsland()
         }
@@ -1118,11 +1196,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     // The upright line shrinks to a bead and glides under the camera, where it spreads out.
     private func applyWake() {
         guard let rest = wakeEnds?.rest, let awake = wakeEnds?.awake else { return }
-        let t = max(wake.value, 0)
+        let t = min(max(wake.value, 0), 1)
         let frame = mix(rest.frame, awake.frame, t)
         if frame != island.frame { island.setFrame(frame, display: true) }
         signalHost.frame = NSRect(origin: .zero, size: frame.size)
-        let bead = smoothstep(0, 0.5, t), spread = smoothstep(0.3, 1, t)
+        let bead = smoothstep(0, 0.7, t), spread = smoothstep(0.25, 1, t)
+        let crossfade = smoothstep(0.3, 0.9, t)
         let restLine = rest.lineFrame.offsetBy(dx: rest.frame.minX - frame.minX, dy: rest.frame.minY - frame.minY)
         let awakeLine = awake.lineFrame.offsetBy(dx: awake.frame.minX - frame.minX, dy: awake.frame.minY - frame.minY)
         let width = mix(restLine.width, 6, bead), height = mix(restLine.height, awakeLine.height, bead)
@@ -1131,38 +1210,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let radius = mix(rest.cornerRadius, awake.cornerRadius, min(t, 1))
         islandView.layer?.cornerRadius = radius
         signalHost.layer?.cornerRadius = radius
-        statusLine.frame = NSRect(x: mix(restLine.midX, awakeLine.midX, bead) - width / 2, y: mix(restLine.midY, awakeLine.midY, bead) - height / 2, width: width, height: height)
+        let carriedLine = NSRect(x: mix(restLine.midX, awakeLine.midX, bead) - width / 2,
+                                 y: mix(restLine.midY, awakeLine.midY, bead) - height / 2,
+                                 width: width, height: height)
+        statusLine.frame = carriedLine
         statusLine.cornerRadius = min(width, height) / 2
-        statusLine.opacity = Float(1 - smoothstep(0.45, 0.75, t))
-        // The bars spread out of the bead, from the middle of the line.
+        statusLine.opacity = Float(1 - crossfade)
+        // Carry the gradient with the moving bead before spreading it, avoiding a second light popping in at the destination.
         let bars = signalBar.bars(line: awakeLine, room: (awake.frame.width - awake.lineFrame.width) / 2)
         for (layer, bar) in [(sensingLine, bars.left), (sensingEye, bars.right)] {
-            let barWidth = mix(8, bar.width, spread)
-            layer.frame = NSRect(x: mix(awakeLine.midX, bar.midX, spread) - barWidth / 2, y: bar.minY, width: barWidth, height: bar.height)
-            layer.cornerRadius = bar.height / 2
-            layer.opacity = Float(smoothstep(0.4, 0.75, t))
+            layer.frame = mix(carriedLine, bar, spread)
+            layer.cornerRadius = layer.frame.height / 2
+            layer.opacity = Float(crossfade)
         }
+        // A faint light under the pointer. The island's own corners and the camera hide the rest.
+        cursorLight.position = CGPoint(x: cursorGlow.position.x - frame.minX, y: cursorGlow.position.y - frame.minY)
+        cursorLight.opacity = Float(smoothstep(0.4, 1, t))
         CATransaction.commit()
     }
-    private func stepGoo(_ dt: CGFloat) {
-        guard wakeEnds?.rest.isNotched == true else { return }
-        let outline = IslandOutline(rect: island.frame)
-        let pointer = NSEvent.mouseLocation
-        liquid.step(dt, outline: outline, pointer: pointerOnIsland ? pointer : nil)
-        drawGoo(outline: outline)
-    }
-    private func drawGoo(outline: IslandOutline) {
-        let bounds = gooPanel.frame
-        let toPanel = CGAffineTransform(translationX: -bounds.minX, y: -bounds.minY)
+    private func drawShoulders(rect: NSRect) {
+        let bounds = shoulderPanel.frame
         let shoulders = CGMutablePath()
-        shoulders.addPath(GooShape.shoulders(rect: outline.rect, radius: mix(8, 16, min(max(wake.value, 0), 1))), transform: toPanel)
-        let drawn = liquid.render(island: outline.rect, cornerRadius: islandView.layer?.cornerRadius ?? 10, scale: gooPanel.backingScaleFactor, clip: bounds)
+        shoulders.addPath(IslandShape.shoulders(rect: rect, radius: mix(8, 16, min(max(wake.value, 0), 1))),
+                          transform: CGAffineTransform(translationX: -bounds.minX, y: -bounds.minY))
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        gooFill.frame = CGRect(origin: .zero, size: bounds.size)
-        gooFill.path = shoulders
-        gooLiquid.contents = drawn?.image
-        if let frame = drawn?.frame { gooLiquid.frame = frame.applying(toPanel) }
+        shoulderFill.frame = CGRect(origin: .zero, size: bounds.size)
+        shoulderFill.path = shoulders
         CATransaction.commit()
     }
     @objc private func reposition() { setExpanded(expanded, animated: false); positionOverlay() }
@@ -1259,10 +1333,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         if !voiceEnabled { speech.stopSpeaking(at: .immediate) }
     }
     @objc private func hideVisuals() {
+        drawingOnScreen = false
         overlay.ignoresMouseEvents = true
         if voiceRequested {
             // Keep WebKit's live media document visible while hiding its marks.
-            webView.evaluateJavaScript("document.getElementById('overlay').hidden = true; void 0;")
+            webView.evaluateJavaScript("window.clippyDismissVisual?.(); void 0;")
         } else { overlay.orderOut(nil) }
         captions.orderOut(nil); speech.stopSpeaking(at: .immediate)
     }
@@ -1733,6 +1808,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         if let previous { render(previous) } else if !voiceRequested { overlay.orderOut(nil) }
     }
     private func render(_ result: [String: Any], preview: Bool = false) {
+        drawingOnScreen = true
         if overlayReady, let data = try? JSONSerialization.data(withJSONObject: result), let json = String(data: data, encoding: .utf8) {
             webView.evaluateJavaScript("window.clippyRender(\(json), \(preview)); \(preview ? "" : "window.clippyVoice?.setVisual(\(json));") void 0;") { [weak self] _, error in
                 if error != nil { self?.showError("Drawing renderer unavailable. Reopen Clip after starting the server.") }
@@ -1751,6 +1827,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         let url = navigationAction.request.url
+        // Only the sandboxed generated-content subframe may load srcdoc.
+        // It has no scripts, network or native bridge access.
+        if navigationAction.targetFrame?.isMainFrame == false, url?.absoluteString == "about:srcdoc" {
+            decisionHandler(.allow); return
+        }
         decisionHandler(url?.scheme == "http" && url?.host == "127.0.0.1" && url?.port == 4317 ? .allow : .cancel)
     }
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -1764,6 +1845,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             if let previous { render(previous) }
         case "followup": if let text = data["text"] as? String, !text.isEmpty, text.count <= 6000 { generate(text, mode: lastRequestMode) }
         case "closeOverlay": hideVisuals()
+        case "visualCleared": drawingOnScreen = false
         case "dragOverlay": if let event = NSApp.currentEvent { overlay.performDrag(with: event) }
         case "dictate": startDictation()
         case "stopDictation": stopDictation(sendTranscript: true)
@@ -1783,9 +1865,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             let text = data["message"] as? String ?? ""
             guard text.utf16.count <= 64000 else { return }
             if state == "ended" || state == "error" {
-                voiceRequested = false; updateTalkButton()
+                voiceConnected = false; stopPointSharing(); voiceRequested = false; updateTalkButton()
                 if state == "error" { showError(text) } else { setStatus(text.isEmpty ? "Ready" : text) }
             } else if voiceRequested {
+                if state == "listening" { voiceConnected = true }
                 if state == "transcript" { showCaption(text, live: true) }
                 else if state == "transcript-start" { captionDismissed = false; captions.orderOut(nil) }
                 else if state == "transcript-cleared" { captions.orderOut(nil) }
@@ -1802,7 +1885,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 self.webView.callAsyncJavaScript("window.clippyVoice.finishScreenCapture(id, image, error)", arguments: ["id": id, "image": image as Any? ?? NSNull(), "error": image == nil ? "Screen capture unavailable. Check Screen Recording access." : NSNull()], in: nil, in: .page) { _ in }
             }
         case "voicePreview":
-            if voiceRequested, data["generation"] as? Int == voiceGeneration { overlay.orderFrontRegardless() }
+            if voiceRequested, data["generation"] as? Int == voiceGeneration { drawingOnScreen = true; overlay.orderFrontRegardless() }
         case "voiceVisual":
             if voiceRequested, data["generation"] as? Int == voiceGeneration, let result = data["result"] as? [String: Any], result["scene"] != nil, result["diagram"] != nil {
                 previous = result; lastRequestMode = "draw"; render(result)
@@ -1814,6 +1897,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         if voiceRequested { stopRealtimeVoice(); return }
         guard overlayReady else { showError("Wait for the drawing view to finish loading, then try Talk."); return }
         cancelRequest(); selectionEditor.cancel(); stopDictation(sendTranscript: false); speech.stopSpeaking(at: .immediate)
+        pointShare.resetSession(); voiceConnected = false
         voiceRequested = true; voiceGeneration += 1
         screenshotIndicator.stringValue = ""
         overlay.orderFrontRegardless()
@@ -1874,7 +1958,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         activityMark.frame = layout.activityFrame
         signalHost.frame = islandView.bounds
         CATransaction.commit()
-        gooPanel.orderOut(nil)
+        if layout.isNotched {
+            shoulderPanel.setFrame(layout.frame.insetBy(dx: -20, dy: 0), display: false)
+            drawShoulders(rect: layout.frame)
+        }
+    }
+    @objc private func togglePointSharing() {
+        if pointShareRequested { stopPointSharing("Point sharing off"); return }
+        guard voiceRequested, voiceConnected else { screenshotIndicator.stringValue = "Wait for Talk to connect"; return }
+        guard CGPreflightScreenCaptureAccess() else {
+            screenshotIndicator.stringValue = "Allow Screen Recording for Point & Share"
+            _ = CGRequestScreenCaptureAccess(); return
+        }
+        pointShareEpoch += 1
+        let epoch = pointShareEpoch
+        pointShareRequested = true
+        webView.callAsyncJavaScript("window.clippyVoice.setPointSharing(true)", arguments: [:], in: nil, in: .page) { [weak self] result in
+            guard let self, self.pointShareRequested, self.voiceRequested, self.pointShareEpoch == epoch else { return }
+            if case .success = result, self.pointShare.start() {
+                self.pointButton.contentTintColor = .systemRed
+                self.pointButton.setAccessibilityLabel("Stop Point & Share")
+                self.pointButton.toolTip = "Stop sharing pointer-focused screenshots"
+                self.screenshotIndicator.stringValue = "● Point sharing · move to show"
+                self.screenshotIndicator.setAccessibilityLabel(self.screenshotIndicator.stringValue)
+            } else { self.stopPointSharing("Point sharing unavailable") }
+        }
+    }
+    private func stopPointSharing(_ reason: String = "") {
+        pointShareRequested = false; pointShareEpoch += 1
+        pointShare.stop()
+        webView?.evaluateJavaScript("window.clippyVoice?.setPointSharing(false); void 0;")
+        pointButton?.contentTintColor = NSColor(white: 0.92, alpha: 1)
+        pointButton?.setAccessibilityLabel("Point & Share")
+        pointButton?.toolTip = "Point & Share · send focused screenshots and your red pointer trail to live voice"
+        screenshotIndicator?.stringValue = reason
+        screenshotIndicator?.setAccessibilityLabel(reason)
     }
     private func updateTalkButton() {
         updateVoiceMeter()
@@ -1884,6 +2002,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         talkButton.setAccessibilityLabel(voiceRequested ? "End live voice" : "Start live voice")
     }
     private func stopRealtimeVoice() {
+        voiceConnected = false; stopPointSharing(); pointShare.resetSession()
         voiceGeneration += 1; voiceRequested = false; updateTalkButton()
         webView?.evaluateJavaScript("window.clippyVoice?.stop(); void 0;")
         setStatus("Ready")
@@ -1943,7 +2062,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         captureInProgress = true
         let restoreComparison = comparisonPanel.hideForCapture()
         let overlayVisible = overlay.isVisible, captionsVisible = captions.isVisible
-        island.orderOut(nil); notchBridge.orderOut(nil); gooPanel.orderOut(nil); hideDwellRing(); overlay.orderOut(nil); captions.orderOut(nil)
+        island.orderOut(nil); notchBridge.orderOut(nil); shoulderPanel.orderOut(nil); hideDwellRing(); dismissPanel.orderOut(nil); overlay.orderOut(nil); captions.orderOut(nil)
         let target = FileManager.default.temporaryDirectory.appendingPathComponent("clippy-\(UUID().uuidString).png")
         let restore = { [weak self] in
             guard let self else { return }
@@ -2070,6 +2189,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         return .terminateLater
     }
     func applicationWillTerminate(_ notification: Notification) {
+        pointShare.stop()
         selectionEditor.cancel()
         for key in editingHotKeys { UnregisterEventHotKey(key) }
         hitTestTimer?.invalidate()

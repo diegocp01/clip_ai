@@ -162,9 +162,13 @@ private final class NotchBlend: NSView {
     override func draw(_ dirtyRect: NSRect) {
         guard let width = notchWidth, width > 0, bounds.width > 1,
               let context = NSGraphicsContext.current?.cgContext else { return }
-        let radius = max(bounds.width * 0.46, width / 2 + 12)
-        let depth = min(bounds.height * 0.45, 90)
-        let core = min((width / 2 + 1) / radius, 0.8)
+        let baseRadius = max(bounds.width * 0.46, width / 2 + 12)
+        // Expand the entire black falloff, including its fully opaque core,
+        // 25% away from the camera seam. The outer material keeps its blur.
+        let spread: CGFloat = 1.25
+        let radius = baseRadius * spread
+        let depth = min(bounds.height * 0.45, 90) * spread
+        let core = min((width / 2 + 1) / baseRadius, 0.8)
         let colors = [CGFloat(1), 1, 0.65, 0.2, 0].map { NSColor.black.withAlphaComponent($0).cgColor }
         let locations: [CGFloat] = [0, core, core + (1 - core) * 0.32, core + (1 - core) * 0.7, 1]
         guard let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors as CFArray, locations: locations) else { return }
