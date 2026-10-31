@@ -106,7 +106,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var voiceGeneration = 0
     private var captureButton: NSButton!
     private var voiceButton: NSButton!
-    private var providerControl: NSPopUpButton!
+    private var providerControl: NSButton!
     private var modelCaption: NSTextField!
     private var expanded = false
     private var overlayReady = false
@@ -329,25 +329,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         sendButton.toolTip = "Send · Return"
         let drawButton = button("Draw", frame: ComposerGeometry.draw, action: #selector(sendPrompt), symbol: "pencil.tip.crop.circle", iconOnly: true)
         drawButton.toolTip = "Draw your prompt · type an idea, then click Draw"
-        providerControl = NSPopUpButton(frame: ComposerGeometry.provider)
-        providerControl.addItems(withTitles: ["GPT", "Claude"])
-        providerControl.item(at: 0)?.image = mascot("mascot-gpt", description: "GPT") ?? NSImage(systemSymbolName: "cpu", accessibilityDescription: "GPT")
-        providerControl.item(at: 1)?.image = mascot("mascot-claude", description: "Claude") ?? NSImage(systemSymbolName: "sparkle", accessibilityDescription: "Claude")
-        providerControl.imagePosition = .imageOnly
-        (providerControl.cell as? NSPopUpButtonCell)?.arrowPosition = .noArrow
-        providerControl.target = self
-        providerControl.action = #selector(providerChanged)
-        providerControl.isBordered = false
-        providerControl.contentTintColor = .white
-        providerControl.wantsLayer = true
-        providerControl.layer?.cornerRadius = 18
-        providerControl.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.055).cgColor
-        providerControl.layer?.borderWidth = 0.5
-        providerControl.layer?.borderColor = NSColor.white.withAlphaComponent(0.15).cgColor
-        providerControl.setAccessibilityLabel("Model")
-        providerControl.toolTip = "GPT uses the Codex SDK · Claude uses the Claude CLI"
-        islandView.addSubview(providerControl)
-        expandedControls.append(providerControl)
+        providerControl = button("Model", frame: ComposerGeometry.provider, action: #selector(providerChanged), symbol: "cpu", iconOnly: true)
         updateProviderControl()
         _ = button("More options", frame: ComposerGeometry.more, action: #selector(showIslandOptions(_:)), symbol: "ellipsis", iconOnly: true)
         setExpanded(false)
@@ -474,7 +456,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 attachedImage == nil ? "Attach a screenshot to your next question." : "Remove the attached screenshot.",
                 voiceRequested ? "End the live voice conversation." : "Start a live voice conversation.",
                 voiceEnabled ? "Mute spoken replies." : "Turn spoken replies on.",
-                "Choose GPT or Claude.",
+                provider == .gpt ? "Using GPT · click to switch to Claude." : "Using Claude · click to switch to GPT.",
                 "Draw your prompt with the selected model.",
                 "Open settings and additional actions.",
                 "Close the composer and keep your draft."
@@ -1058,7 +1040,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         setStatus("Ready")
     }
 
-    @objc private func providerChanged() { setProvider(providerControl.indexOfSelectedItem == 1 ? .claude : .gpt) }
+    @objc private func providerChanged() { setProvider(provider == .gpt ? .claude : .gpt) }
     private func mascot(_ name: String, description: String) -> NSImage? {
         guard let url = Bundle.main.url(forResource: name, withExtension: "png"), let source = NSImage(contentsOf: url) else { return nil }
         let height: CGFloat = 24, size = NSSize(width: height * source.size.width / max(source.size.height, 1), height: height)
@@ -1070,7 +1052,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         return image
     }
     private func updateProviderControl() {
-        providerControl.selectItem(at: provider == .claude ? 1 : 0)
+        let name = provider == .claude ? "Claude" : "GPT"
+        let next = provider == .claude ? "GPT" : "Claude"
+        providerControl.image = mascot(provider == .claude ? "mascot-claude" : "mascot-gpt", description: name)
+            ?? NSImage(systemSymbolName: provider == .claude ? "sparkle" : "cpu", accessibilityDescription: name)
+        providerControl.setAccessibilityLabel("Model: \(name). Switch to \(next)")
+        providerControl.toolTip = "Using \(name) · click to switch to \(next)"
         modelCaption.stringValue = provider == .claude ? "Claude · …" : "GPT · …"
     }
     private func updateModelCaption(_ status: [String: Any]) {
