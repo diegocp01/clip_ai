@@ -783,6 +783,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     private func updateNotchBridge(_ layout: IslandLayout) {
+        composerSurface.setNotchWidth(layout.notchFrame?.width)
         if let bridge = layout.notchBridge {
             notchBridge.setFrame(bridge, display: true)
             notchBridge.orderFrontRegardless()
