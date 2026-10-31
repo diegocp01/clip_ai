@@ -349,7 +349,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         islandView.addSubview(prompt)
         expandedControls.append(prompt)
         // A quiet baseline, centered under the text field with softly fading ends.
-        let promptLine = NSView(frame: NSRect(x: ComposerGeometry.input.midX - 48, y: ComposerGeometry.input.minY - 4, width: 96, height: 0.5))
+        let promptLineWidth: CGFloat = 96 * 1.15
+        let promptLine = NSView(frame: NSRect(x: ComposerGeometry.input.midX - promptLineWidth / 2, y: ComposerGeometry.input.minY - 4, width: promptLineWidth, height: 0.5))
         let promptGradient = CAGradientLayer()
         promptGradient.colors = [NSColor.clear.cgColor, NSColor.white.withAlphaComponent(0.16).cgColor, NSColor.clear.cgColor]
         promptGradient.startPoint = CGPoint(x: 0, y: 0.5)
