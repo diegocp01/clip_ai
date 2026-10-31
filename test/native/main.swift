@@ -17,8 +17,8 @@ for origin in [NSPoint.zero, NSPoint(x: -1710, y: 250)] {
             let bridge = layout.notchBridge!
             expect(layout.frame.maxY == left.minY, "Expanded controls must stay below the camera")
             expect(bridge.minX == left.maxX && bridge.maxX == right.minX, "Expanded bridge must not cover adjacent menu items")
-            expect(bridge.maxY == screen.maxY && bridge.minY < layout.frame.maxY, "Bridge must overlap expanded body")
-            expect(bridge.minY >= layout.frame.minY, "Bridge must end inside the body")
+            expect(bridge.maxY == screen.maxY && bridge.minY == layout.frame.maxY, "Camera cover must stop at the glass edge")
+            expect(!bridge.intersects(layout.frame), "Black camera cover must never show through the glass body")
         } else {
             expect(layout.frame.maxY == screen.maxY && layout.frame.minY == left.minY, "Collapsed island must occupy the notch row, never hang below it")
             expect(layout.notchBridge == nil, "Collapsed island must not leave a connector below the notch")
@@ -236,10 +236,21 @@ for (i, control) in controls.enumerated() {
     expect(composerBounds.contains(control), "Composer control must fit inside the surface")
     for other in controls.dropFirst(i + 1) { expect(!control.intersects(other), "Composer controls must not overlap") }
 }
-for width: CGFloat in [0, 30, 185, 273, 1000] {
-    let target = NSRect(x: -500, y: 200, width: 440, height: 176)
-    let start = ComposerGeometry.originFrame(for: target, compactWidth: width)
-    expect(start.maxY == target.maxY && start.midX == target.midX, "Composer must grow down from its top-center anchor")
-    expect(start.height == 1 && start.width <= target.width, "Opening must begin as a narrow menu-bar edge")
+let morphSources = [NSRect(x: 762.5, y: 1073.5, width: 209, height: 33.5),
+                    NSRect(x: -800, y: 250, width: 233, height: 43.5),
+                    NSRect(x: 400, y: 900, width: 30, height: 22)]
+for source in morphSources {
+    let target = NSRect(x: source.midX - 220, y: source.maxY - 209.5, width: 440, height: 176)
+    expect(ComposerGeometry.morphFrame(from: source, to: target, progress: 0) == source, "Morph must begin at the actual visible island")
+    expect(ComposerGeometry.morphFrame(from: source, to: target, progress: 1) == target, "Morph must end at composer bounds")
+    for step in 0...60 {
+        let p = CGFloat(step) / 60
+        let frame = ComposerGeometry.morphFrame(from: source, to: target, progress: p)
+        expect(frame.width >= min(source.width, target.width) && frame.height >= min(source.height, target.height), "Surface must never collapse to a line or disappear")
+        let reverse = ComposerGeometry.morphFrame(from: frame, to: source, progress: 0)
+        expect(reverse == frame, "Interrupting a morph must keep its current frame")
+        let backwards = ComposerGeometry.morphFrame(from: target, to: source, progress: 1 - p)
+        expect(abs(frame.minX - backwards.minX) < 0.0001 && abs(frame.height - backwards.height) < 0.0001, "Opening and closing must follow the same shape path")
+    }
 }
-print("Composer bounds, separation, and top-anchored motion checks passed.")
+print("Composer bounds, clean camera boundary, continuous morph and reversal checks passed.")
