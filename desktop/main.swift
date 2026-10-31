@@ -158,7 +158,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         keyboardMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .leftMouseDown, .rightMouseDown]) { [weak self] event in
             guard let self, self.menuTrackingDepth == 0 else { return event }
             if event.type != .keyDown {
-                if self.expanded && event.window !== self.island { self.setExpanded(false) }
+                if self.expanded, let window = event.window, window !== self.island,
+                   window.level.rawValue < NSWindow.Level.popUpMenu.rawValue,
+                   !self.island.frame.contains(window.convertPoint(toScreen: event.locationInWindow)) {
+                    self.setExpanded(false)
+                }
                 return event
             }
             if event.keyCode == 53 {
