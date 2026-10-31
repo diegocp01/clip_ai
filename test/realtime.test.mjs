@@ -212,3 +212,52 @@ test('a late completed response cannot replace the current voice reply',async()=
  assert.equal(f.events.filter(e=>e.state==='transcript').at(-1).message,'Current reply.');
  f.voice.stop();
 });
+
+const pointImage='data:image/png;base64,aGVsbG8=';
+const pointContext={pointer:[0.5,0.5],trail:[[0.2,0.3],[0.5,0.5]],capturedAt:123456};
+test('pointer sharing is explicitly enabled in Talk, bounded, and does not generate unsolicited replies',async()=>{
+ const f=clientFixture();await assert.rejects(f.voice.sharePoint(pointImage,pointContext),/off/);
+ await f.voice.start();f.voice.prepareScreen=async value=>value;
+ await assert.rejects(f.voice.sharePoint(pointImage,pointContext),/off/);
+ f.voice.setPointSharing(true);
+ for(let i=0;i<5;i++){f.voice.session.pointLastAt=-Infinity;await f.voice.sharePoint(pointImage,pointContext);}
+ assert.equal(f.sent.filter(e=>e.type==='response.create').length,0);
+ assert.equal(f.sent.filter(e=>e.item?.content?.some(c=>c.type==='input_image')).length,5);
+ assert.deepEqual(f.voice.session.pointItems,['point_3','point_4','point_5']);
+ assert.deepEqual(f.sent.filter(e=>e.type==='conversation.item.delete').map(e=>e.item_id),['point_1','point_2']);
+ assert.equal(f.voice.session.screen,pointImage);
+ await assert.rejects(f.voice.sharePoint(pointImage,pointContext),/limit/);
+ f.voice.setPointSharing(false);assert.equal(f.voice.session.screen,null);
+ await assert.rejects(f.voice.sharePoint(pointImage,pointContext),/off/);f.voice.stop();
+});
+test('disabling pointer sharing while an image is resized prevents any late upload',async()=>{
+ const f=clientFixture();await f.voice.start();f.voice.setPointSharing(true);
+ let release;f.voice.prepareScreen=()=>new Promise(r=>release=r);
+ const pending=f.voice.sharePoint(pointImage,pointContext);
+ f.voice.setPointSharing(false);f.voice.setPointSharing(true);release(pointImage);
+ await assert.rejects(pending,/ended/);assert.equal(f.sent.length,0);f.voice.stop();
+});
+test('ending Talk cancels a pending pointer image and clears session context',async()=>{
+ const f=clientFixture();await f.voice.start();f.voice.setPointSharing(true);const s=f.voice.session;
+ let release;f.voice.prepareScreen=()=>new Promise(r=>release=r);
+ const pending=f.voice.sharePoint(pointImage,pointContext);f.voice.stop();release(pointImage);
+ await assert.rejects(pending,/ended/);assert.equal(s.screen,null);assert.equal(s.pointSharing,false);assert.equal(f.sent.length,0);
+});
+test('pointer metadata, frame limits and connection backpressure are enforced',async()=>{
+ const f=clientFixture();await f.voice.start();f.voice.setPointSharing(true);f.voice.prepareScreen=async value=>value;
+ await assert.rejects(f.voice.sharePoint(pointImage,{...pointContext,pointer:[Infinity,0]}),/Invalid/);
+ await assert.rejects(f.voice.sharePoint(pointImage,{...pointContext,trail:Array(91).fill([0,0])}),/Invalid/);
+ await assert.rejects(f.voice.sharePoint('https://example.com/private.png',pointContext),/Invalid/);
+ f.voice.session.channel.bufferedAmount=70000;await assert.rejects(f.voice.sharePoint(pointImage,pointContext),/busy/);
+ f.voice.session.pointLastAt=-Infinity;f.voice.session.pointCount=120;
+ await assert.rejects(f.voice.sharePoint(pointImage,pointContext),/limit/);assert.equal(f.sent.length,0);f.voice.stop();
+});
+test('the screenshot tool cannot broaden active pointer sharing to the full screen',async()=>{
+ const f=clientFixture();await f.voice.start();f.voice.setPointSharing(true);let captures=0;
+ f.voice.captureScreen=async()=>{captures++;return pointImage;};
+ await f.voice.capture(f.voice.session,{call_id:'before',arguments:JSON.stringify({reason:'Explain here'})});
+ let output=JSON.parse(f.sent.find(e=>e.item?.call_id==='before').item.output);assert.equal(output.captured,false);
+ f.voice.prepareScreen=async value=>value;await f.voice.sharePoint(pointImage,pointContext);
+ await f.voice.capture(f.voice.session,{call_id:'after',arguments:JSON.stringify({reason:'Explain here'})});
+ output=JSON.parse(f.sent.find(e=>e.item?.call_id==='after').item.output);assert.equal(output.captured,true);assert.match(output.scope,/already-shared pointer crop/);assert.equal(captures,0);f.voice.stop();
+});

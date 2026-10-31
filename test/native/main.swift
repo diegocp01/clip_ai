@@ -377,3 +377,23 @@ expect(abs(transitions.horizontal - beforeSwitch) < 0.1, "Changing attention mod
 transitions.mode = "follow"; transitions.step(1.0 / 30, pointer: nil)
 expect(!transitions.following, "Follow mode wanders when the mouse leaves")
 print("Composer mouse attention, autonomous motion, bounds and smooth switching passed.")
+for screen in [NSRect(x: 0, y: 0, width: 1710, height: 1107), NSRect(x: -1920, y: 200, width: 1920, height: 1080), NSRect(x: 0, y: 1107, width: 1280, height: 720)] {
+    for point in [screen.origin, NSPoint(x: screen.maxX - 1, y: screen.maxY - 1), NSPoint(x: screen.midX, y: screen.midY)] {
+        let region = PointerFocus.region(point: point, screen: screen)
+        expect(screen.contains(region), "Pointer crop must stay on the pointed display")
+        expect(region.width <= 760 && region.height <= 520 && region.contains(point), "Share only a bounded focus region")
+        let normalized = PointerFocus.normalized(point, in: region)
+        expect(normalized.allSatisfy { $0 >= 0 && $0 <= 1 }, "Pointer coordinates must fit the cropped image")
+        let capture = PointerFocus.captureRect(region, desktopTop: 1107)
+        expect(capture.maxY == 1107 - region.minY, "Cocoa capture coordinates must invert around primary display top")
+    }
+}
+let pointerRegion = NSRect(x: 0, y: 0, width: 120, height: 100)
+let pointerFixture = NSImage(size: pointerRegion.size, flipped: false) { rect in NSColor.white.setFill(); rect.fill(); return true }
+let marked = VoicePointerShare.annotated(pointerFixture, region: pointerRegion, samples: [PointerSample(point: NSPoint(x: 40, y: 40), time: 1), PointerSample(point: NSPoint(x: 60, y: 60), time: 2)], now: 2)!
+let markedBytes = Data(base64Encoded: String(marked.split(separator: ",")[1]))!
+let markedBitmap = NSBitmapImageRep(data: markedBytes)!
+expect(markedBitmap.pixelsWide == 120 && markedBitmap.pixelsHigh == 100, "Annotation must preserve crop size")
+let red = markedBitmap.colorAt(x: 60, y: 35)!.usingColorSpace(.deviceRGB)!
+expect(red.redComponent > red.greenComponent + 0.2, "Shared screenshot must include the red pointer annotation")
+print("Pointer crop coordinates, display edges and visible annotation passed.")

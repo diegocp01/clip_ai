@@ -79,6 +79,8 @@ const voice = new VoiceConversation({
 window.clippyVoice = {
   start: generation => {voiceGeneration=generation;return voice.start();}, stop: () => voice.stop(),
   shareScreen: image => voice.shareScreen(image),
+  setPointSharing: enabled => voice.setPointSharing(enabled),
+  sharePoint: (image,context) => voice.sharePoint(image,context),
   finishScreenCapture: (id,image,error) => pendingScreens.get(id)?.(image,error),
   setVisual: result => { voice.previous=result; },
   setMuted: value => voice.setMuted(value),
