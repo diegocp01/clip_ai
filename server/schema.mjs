@@ -23,6 +23,7 @@ export const resultSchema = object({
 const requestSchema = object({
   message: { ...string(6000), minLength:1 },
   tier: { type:'string',enum:['standard','fast'] },
+  provider: { type:'string',enum:['gpt','claude'] },
   history: array(object({ role: {type:'string',enum:['user','assistant']}, content:string(4000) }),12),
   previous: { anyOf:[{type:'null'},resultSchema] },
   image: { anyOf:[{type:'null'},{type:'string',maxLength:7_000_000,pattern:'^data:image/(png|jpeg);base64,[A-Za-z0-9+/=]+$'}] },
@@ -43,9 +44,9 @@ export function assertResult(value) {
 }
 export function normalizeRequest(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Expected a JSON object.');
-  const normalized = {tier:'fast',history:[],previous:null,image:null,...value};
+  const normalized = {tier:'fast',provider:'gpt',history:[],previous:null,image:null,...value};
   if (normalized.previous) assertResult(normalized.previous);
-  if (!validateRequest(normalized)) throw new Error('Invalid request. Check the message, image size and speed setting.');
+  if (!validateRequest(normalized)) throw new Error('Invalid request. Check the message, image size, speed and model settings.');
   if (!normalized.message.trim()) throw new Error('Enter a question first.');
   if (normalized.previous) assertResult(normalized.previous);
   return normalized;

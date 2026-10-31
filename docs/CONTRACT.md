@@ -3,8 +3,10 @@
 Independent implementation, no HeyClicky code or assets copied into the app.
 
 GET /api/status returns {model, authenticated, auth: "ChatGPT", tiers: ["standard","fast"], note}. Tiers are request choices, not proof of account eligibility.
+GET /api/status?provider=claude returns the same shape for the Claude CLI: {provider, model, reasoningEffort, authenticated, auth: "Claude", note}. Without the query it describes GPT.
 GET /api/session returns {token}; send X-Clippy-Session header on POST /api/chat.
 POST /api/chat JSON: {message: string, tier: "standard" | "fast", history: [{role: "user" | "assistant", content: string}], previous: visual-result | null, image: PNG/JPEG data URL | null}. Max 8 MB body. Model always gpt-6.1-terra. Defaults fast, with low reasoning. No API key.
+POST /api/chat also accepts provider: "gpt" | "claude", defaulting to "gpt". GPT uses the Codex SDK and ChatGPT login. Claude uses the signed-in Claude CLI with no tools, MCP servers, settings, hooks, skills or saved sessions, and with API keys kept out of its environment. There is no Claude API use. Results include provider. There is no fallback between providers, and tier does not apply to Claude. /api/edit and voice drawings take the same provider. The live voice itself always uses the OpenAI Realtime API, which the Codex SDK doesn't replace.
 Response application/x-ndjson stream: {type:"status",message}, {type:"preview",result}, {type:"result",result,usage,elapsedMs,model,reasoningEffort,requestedTier}, {type:"error",message}. Browser AbortController cancels server/model. Errors are shown, no silent tier/model fallback.
 
 visual-result is {title, reply, cards: [{title, body}], diagram: {nodes: [{id,label,x,y,color}], links: [{from,to,label}]}, scene: {objects:[{id,label,description,shape,color,position:[x,y,z],scale:[x,y,z],rotation:[x,y,z]}]}}.
@@ -16,6 +18,6 @@ Overlay contract: window.clippyRender(result, preview=false) receives a validate
 
 Optional dictation uses macOS on-device recognition with no cloud fallback; system speech can read typed answers. Live Talk uses the separate Realtime flow described below. Screen capture is one explicit user action, stored in memory until Send or removal, not continuous observation. No external URLs, CDN, fonts, images, telemetry, login item or HeyClicky services are required by the app.
 
-POST /api/edit: {action: "proofread" | "rewrite", text: string} with the same local-session token and NDJSON transport as /api/chat. Requires nonempty text, max 12,000 UTF-16 units. Always GPT-6.1 Sol, high reasoning, standard tier; clients cannot override these. Returns result: {text}, model, reasoningEffort, requestedTier, usage, elapsedMs. No screenshots, history or tools.
+POST /api/edit: {action: "proofread" | "rewrite", text: string} with the same local-session token and NDJSON transport as /api/chat. Requires nonempty text, max 12,000 UTF-16 units. Accepts provider: "gpt" | "claude", defaulting to "gpt". GPT is always GPT-6.1 Sol, high reasoning, standard tier; Claude is always Sonnet 5.5 at high effort; clients cannot override these. Returns result: {text}, model, reasoningEffort, requestedTier, usage, elapsedMs. No screenshots, history or tools.
 
 Realtime voice: GET /api/realtime/status returns only configured/model metadata. POST /api/realtime/call accepts {sdp}; POST /api/realtime/stop accepts {id}. Both require the local session token, valid local Host/Origin and JSON. A single 10-minute call is allowed. The server alone reads .env.local and exchanges the SDP with OpenAI. Realtime WebRTC media travels directly between WebKit and OpenAI. draw_visual delegates through the existing token-protected /api/chat route with Terra/Fast; voice has no desktop or connector action tools.

@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { authStatus,generate,MODEL,REASONING_EFFORT } from './codex.mjs';
+import { claudeAuthStatus,generateWithClaude,CLAUDE_EFFORT,CLAUDE_MODEL } from './claude.mjs';
 import { normalizeRequest } from './schema.mjs';
 import { editText,normalizeEditRequest } from './edit.mjs';
 import { RealtimeService,VOICE_MODEL } from './realtime.mjs';
@@ -11,7 +12,7 @@ import { RealtimeService,VOICE_MODEL } from './realtime.mjs';
 const root=fileURLToPath(new URL('../',import.meta.url));
 const MAX_BODY=8*1024*1024;
 const mime={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml','.png':'image/png'};
-export function createServer({run=generate,runEdit=editText,checkAuth=authStatus,voice=new RealtimeService()}={}){
+export function createServer({run=generate,runClaude=generateWithClaude,runEdit=editText,checkAuth=authStatus,checkClaude=claudeAuthStatus,voice=new RealtimeService()}={}){
   const token=randomBytes(32).toString('hex');
   let active=0;
   const server=http.createServer(async(req,res)=>{
@@ -24,7 +25,7 @@ export function createServer({run=generate,runEdit=editText,checkAuth=authStatus
     res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; media-src 'self' blob:; object-src 'none'; frame-ancestors 'none'; base-uri 'none'");
     const json=(status,data)=>{res.writeHead(status,{'Content-Type':'application/json'});res.end(JSON.stringify(data));};
     if(!hosts.has(req.headers.host)|| (origin&&!hosts.has(origin.replace(/^http:\/\//,''))))return json(403,{error:'Local access only.'});
-    let pathname;try{pathname=decodeURIComponent(new URL(req.url,`http://127.0.0.1:${port}`).pathname);}catch{return json(400,{error:'Invalid path.'});}
+    let pathname,query;try{const url=new URL(req.url,`http://127.0.0.1:${port}`);pathname=decodeURIComponent(url.pathname);query=url.searchParams;}catch{return json(400,{error:'Invalid path.'});}
     if(req.method==='GET'&&pathname==='/api/session')return json(200,{token});
     if(req.method==='GET'&&pathname==='/api/realtime/status')return json(200,{configured:await voice.ready().catch(()=>false),model:VOICE_MODEL});
     if(req.method==='POST'&&['/api/realtime/call','/api/realtime/stop'].includes(pathname)){
@@ -51,7 +52,8 @@ export function createServer({run=generate,runEdit=editText,checkAuth=authStatus
       finally{clearTimeout(timeout);res.off('close',disconnect);}
       return;
     }
-    if(req.method==='GET'&&pathname==='/api/status')return json(200,{model:MODEL,reasoningEffort:REASONING_EFFORT,defaultTier:'fast',authenticated:await checkAuth(),auth:'ChatGPT',tiers:['standard','fast'],note:'Uses your Codex allowance. Fast mode requires account access and consumes more usage.'});
+    if(req.method==='GET'&&pathname==='/api/status'&&query.get('provider')==='claude')return json(200,{provider:'claude',model:CLAUDE_MODEL,reasoningEffort:CLAUDE_EFFORT,authenticated:await checkClaude(),auth:'Claude',note:'Uses your Claude plan through the Claude CLI.'});
+    if(req.method==='GET'&&pathname==='/api/status')return json(200,{provider:'gpt',model:MODEL,reasoningEffort:REASONING_EFFORT,defaultTier:'fast',authenticated:await checkAuth(),auth:'ChatGPT',tiers:['standard','fast'],note:'Uses your Codex allowance. Fast mode requires account access and consumes more usage.'});
     if(req.method==='POST'&&['/api/chat','/api/edit'].includes(pathname)){
       const editing=pathname==='/api/edit';
       const supplied=Buffer.from(String(req.headers['x-clippy-session']||''));
@@ -64,7 +66,8 @@ export function createServer({run=generate,runEdit=editText,checkAuth=authStatus
         for await(const chunk of req){size+=chunk.length;if(size>MAX_BODY){json(413,{error:'Image/request too large (8 MB limit).'});return;}chunks.push(chunk);}
         request=(editing?normalizeEditRequest:normalizeRequest)(JSON.parse(Buffer.concat(chunks).toString('utf8')));
       }catch(e){if(!res.writableEnded)json(400,{error:e.message});return;}
-      if(!await checkAuth())return json(401,{error:'Sign in to Codex with ChatGPT first: run codex login in Terminal.'});
+      const claude=request.provider==='claude';
+      if(claude?!await checkClaude():!await checkAuth())return json(401,{error:claude?'Sign in to Claude first: run claude auth login in Terminal.':'Sign in to Codex with ChatGPT first: run codex login in Terminal.'});
       if(active>=2)return json(429,{error:'Two requests are already running.'});
       active++;
       const controller=new AbortController();
@@ -73,7 +76,7 @@ export function createServer({run=generate,runEdit=editText,checkAuth=authStatus
       res.on('close',disconnect);
       res.writeHead(200,{'Content-Type':'application/x-ndjson; charset=utf-8','X-Accel-Buffering':'no'});
       const send=event=>{if(!res.destroyed&&!res.writableEnded)res.write(JSON.stringify(event)+'\n');};
-      try{const output=await (editing?runEdit:run)(request,{signal:controller.signal,onStatus:message=>send({type:'status',message}),onPreview:result=>send({type:'preview',result})});send({type:'result',...output});}
+      try{const output=await (editing?runEdit:claude?runClaude:run)(request,{signal:controller.signal,onStatus:message=>send({type:'status',message}),onPreview:result=>send({type:'preview',result})});send({type:'result',provider:request.provider,...output});}
       catch(e){send({type:'error',message:controller.signal.aborted?(controller.signal.reason?.message||'Request cancelled.') : String(e.message||e).slice(0,1600)});}
       finally{clearTimeout(timer);res.off('close',disconnect);active--;res.end();}
       return;

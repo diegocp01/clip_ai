@@ -55,6 +55,7 @@ window.clippyVoice = {
   shareScreen: image => voice.shareScreen(image),
   setVisual: result => { voice.previous=result; },
   setMuted: value => voice.setMuted(value),
+  setProvider: value => voice.setProvider(value),
 };
 window.addEventListener('pagehide',()=>voice.stop());
 window.clippyHitTest = (x, y) => {

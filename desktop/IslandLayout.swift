@@ -7,6 +7,7 @@ enum ComposerGeometry {
     static let prompt = NSRect(x: 18, y: 65, width: 344, height: 48)
     static let send = NSRect(x: 374, y: 65, width: 48, height: 48)
     static let collapse = NSRect(x: 392, y: 134, width: 30, height: 26)
+    static let provider = NSRect(x: 310, y: 134, width: 74, height: 26)
     static let screen = NSRect(x: 18, y: 18, width: 100, height: 30)
     static let talk = NSRect(x: 126, y: 18, width: 70, height: 30)
     static let voice = NSRect(x: 204, y: 18, width: 32, height: 30)
@@ -102,7 +103,7 @@ struct IslandLayout {
         let center = notch?.midX ?? screen.midX
         let top = screen.maxY - max(safeTop, notch == nil ? 4 : 0)
         frame = NSRect(x: center - width / 2, y: top - height, width: width, height: height)
-        statusFrame = expanded ? NSRect(x: 48, y: 137, width: 330, height: 20)
+        statusFrame = expanded ? NSRect(x: 48, y: 137, width: 256, height: 20)
                                : NSRect(x: 26, y: 2, width: textWidth, height: 18)
         activityFrame = expanded ? NSRect(x: 18, y: 137, width: 24, height: 20)
                                  : NSRect(x: 8, y: 1, width: 24, height: 20)
