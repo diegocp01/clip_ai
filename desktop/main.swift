@@ -61,6 +61,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var activityMark: ActivityMark!
     private var statusDot: NSView!
     private var dotEffects: NSView!
+    private var hoverIcon: NSImageView!
     private let dotPing = CALayer()
     private var dotHovered = false
     private var collapseButton: NSButton!
@@ -232,6 +233,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         dotEffects.layer?.addSublayer(dotPing)
         dotEffects.layer?.addSublayer(dotGlow)
         islandView.addSubview(dotEffects)
+        hoverIcon = NSImageView(image: NSImage(systemSymbolName: "paperclip", accessibilityDescription: nil) ?? NSImage())
+        hoverIcon.contentTintColor = NSColor(white: 0.85, alpha: 1)
+        hoverIcon.setAccessibilityElement(false)
+        hoverIcon.isHidden = true
+        islandView.addSubview(hoverIcon)
         islandView.addSubview(statusDot)
         prompt = NSTextField(frame: NSRect(x: 16, y: 54, width: 320, height: 42))
         prompt.placeholderString = "Ask me anything…"
@@ -462,6 +468,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         activityMark.frame = layout.activityFrame
         islandView.hoverArea = content == .dot && !expanded ? layout.dotArea : .zero
         animateDot(alive, frame: layout.dotFrame)
+        if let frame = layout.hoverIconFrame {
+            hoverIcon.frame = frame
+            if hoverIcon.isHidden { hoverIcon.alphaValue = 0; hoverIcon.isHidden = false }
+        } else { hoverIcon.isHidden = true }
         if case .status = content { statusLabel.isHidden = false } else { statusLabel.isHidden = !expanded }
         activityMark.isHidden = content != .audio
         statusDot.isHidden = content == .audio
@@ -470,6 +480,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         if island.frame.isEmpty || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             island.setFrame(layout.frame, display: true)
             statusDot.frame = layout.dotFrame
+            hoverIcon.alphaValue = 1
         } else if island.frame != layout.frame || statusDot.frame != layout.dotFrame {
             NSAnimationContext.runAnimationGroup { context in
                 // Overshoots slightly at rest so the dot feels springy; the composer just opens.
@@ -477,6 +488,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 if !expanded { context.timingFunction = CAMediaTimingFunction(controlPoints: 0.3, 1.5, 0.5, 1) }
                 island.animator().setFrame(layout.frame, display: true)
                 statusDot.animator().frame = layout.dotFrame
+                hoverIcon.animator().alphaValue = 1
             }
         }
         return layout

@@ -18,6 +18,8 @@ struct IslandLayout {
     let dotFrame: NSRect
     /// The part of the island that reacts to the pointer while it rests as a dot.
     let dotArea: NSRect
+    /// Where the hover icon sits, left of the camera, when there is room for it.
+    let hoverIconFrame: NSRect?
     var bounds: NSRect { NSRect(origin: .zero, size: frame.size) }
 
     init(screen: NSRect, safeTop: CGFloat, leftArea: NSRect?, rightArea: NSRect?, expanded: Bool, content: IslandContent = .dot, hovered: Bool = false) {
@@ -39,7 +41,7 @@ struct IslandLayout {
         if let notch, !expanded {
             let leftWing: CGFloat, rightWing: CGFloat
             switch content {
-            case .dot: leftWing = 0; rightWing = hovered ? 44 : 24
+            case .dot: leftWing = hovered ? 44 : 0; rightWing = hovered ? 44 : 24
             case .audio: leftWing = 0; rightWing = 36
             case .status(let textWidth): leftWing = min(textWidth + 20, 130); rightWing = 24
             }
@@ -52,7 +54,10 @@ struct IslandLayout {
                                    y: (notch.height - 20) / 2, width: 24, height: 20)
             dotFrame = NSRect(x: leftWing + notch.width + (rightWing - dotSize) / 2,
                               y: (notch.height - dotSize) / 2, width: dotSize, height: dotSize)
-            dotArea = NSRect(x: leftWing + notch.width, y: 0, width: rightWing, height: notch.height)
+            // At rest only the dot side reacts. Once awake, the whole island keeps it awake.
+            dotArea = hovered ? NSRect(origin: .zero, size: frame.size)
+                              : NSRect(x: leftWing + notch.width, y: 0, width: rightWing, height: notch.height)
+            hoverIconFrame = hovered && content == .dot ? NSRect(x: (leftWing - 16) / 2, y: (notch.height - 16) / 2, width: 16, height: 16) : nil
             return
         }
         cornerRadius = expanded ? 18 : 11
@@ -75,6 +80,7 @@ struct IslandLayout {
         dotFrame = expanded ? NSRect(x: 24, y: 116, width: 8, height: 8)
                             : NSRect(x: content == .dot ? (width - dotSize) / 2 : 12, y: (height - dotSize) / 2, width: dotSize, height: dotSize)
         dotArea = NSRect(x: 0, y: 0, width: width, height: height)
+        hoverIconFrame = nil
         // A separate, always click-through panel connects the body to the camera
         // housing. No transparent window wings cover the adjacent menu items.
         if let notch {
