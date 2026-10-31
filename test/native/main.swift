@@ -245,7 +245,7 @@ print("Native island layout checks passed (notched, shifted, external, and missi
 
 // Opening/closing shares the final top edge, and every composer control stays visible.
 let composerBounds = NSRect(origin: .zero, size: ComposerGeometry.size)
-let controls = [ComposerGeometry.input, ComposerGeometry.send, ComposerGeometry.collapse,
+let controls = [ComposerGeometry.modelCaption, ComposerGeometry.input, ComposerGeometry.send, ComposerGeometry.collapse,
                 ComposerGeometry.screen, ComposerGeometry.talk, ComposerGeometry.voice,
                 ComposerGeometry.draw, ComposerGeometry.more, ComposerGeometry.provider]
 for (i, control) in controls.enumerated() {
@@ -276,6 +276,10 @@ for source in morphSources {
 }
 let composerLayout = IslandLayout(screen: external, safeTop: 0, leftArea: nil, rightArea: nil, expanded: true)
 expect(!composerLayout.statusFrame.intersects(ComposerGeometry.provider), "Status text must not run under the model toggle")
+for frame in [composerLayout.statusFrame, composerLayout.activityFrame, composerLayout.lineFrame] {
+    expect(composerBounds.contains(frame), "Busy/error/audio status must fit the shorter composer")
+    expect(!frame.intersects(ComposerGeometry.input), "Status must not cover the typing area")
+}
 print("Composer bounds, clean camera boundary, continuous morph and reversal checks passed.")
 
 // Hover sectors belong to one option and never cover the typing controls.
@@ -283,7 +287,7 @@ for (index, frame) in ComposerGeometry.optionFrames.enumerated() {
     expect(ComposerGeometry.option(at: NSPoint(x: frame.midX, y: frame.midY)) == index,
            "Each circular option must highlight its own wedge")
 }
-for frame in [ComposerGeometry.input, ComposerGeometry.send, ComposerGeometry.collapse] {
+for frame in [ComposerGeometry.input, ComposerGeometry.send, ComposerGeometry.modelCaption] {
     for point in [NSPoint(x: frame.minX, y: frame.minY), NSPoint(x: frame.midX, y: frame.midY),
                   NSPoint(x: frame.maxX - 0.1, y: frame.maxY - 0.1)] {
         expect(ComposerGeometry.option(at: point) == nil, "Typing and Send must not highlight an option")

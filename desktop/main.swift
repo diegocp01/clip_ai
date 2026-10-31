@@ -106,7 +106,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var voiceGeneration = 0
     private var captureButton: NSButton!
     private var voiceButton: NSButton!
-    private var providerControl: NSPopUpButton!
+    private var providerControl: NSButton!
+    private var modelCaption: NSTextField!
     private var expanded = false
     private var overlayReady = false
     private var hitTestTimer: Timer?
@@ -304,8 +305,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         expandedControls.append(prompt)
         collapseButton = button("Collapse island", frame: ComposerGeometry.collapse, action: #selector(collapseIsland), symbol: "chevron.up", iconOnly: true)
         collapseButton.toolTip = "Make smaller · Esc or ⌃⌥Space"
-        collapseButton.layer?.backgroundColor = NSColor.clear.cgColor
-        collapseButton.layer?.borderWidth = 0
+        modelCaption = NSTextField(labelWithString: "")
+        modelCaption.frame = ComposerGeometry.modelCaption
+        modelCaption.font = .systemFont(ofSize: 10, weight: .light)
+        modelCaption.textColor = NSColor.white.withAlphaComponent(0.46)
+        modelCaption.alignment = .center
+        modelCaption.lineBreakMode = .byTruncatingTail
+        islandView.addSubview(modelCaption)
+        expandedControls.append(modelCaption)
         captureButton = button("Screen", frame: ComposerGeometry.screen, action: #selector(captureScreen), symbol: "rectangle.dashed", iconOnly: true)
         captureButton.toolTip = "Attach one screenshot to your next question"
         micButton = NSButton(title: "Dictate", target: self, action: #selector(toggleDictation))
@@ -320,27 +327,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         sendButton.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 18, weight: .thin)
         sendButton.contentTintColor = .white
         sendButton.toolTip = "Send · Return"
-        let drawButton = button("Draw", frame: ComposerGeometry.draw, action: #selector(sendPrompt), symbol: "pencil.tip.crop.circle", iconOnly: true)
+        let drawButton = button("Draw", frame: ComposerGeometry.draw, action: #selector(sendPrompt), symbol: "paintbrush.pointed", iconOnly: true)
         drawButton.toolTip = "Draw your prompt · type an idea, then click Draw"
-        providerControl = NSPopUpButton(frame: ComposerGeometry.provider)
-        providerControl.addItems(withTitles: ["GPT", "Claude"])
-        providerControl.item(at: 0)?.image = mascot("mascot-gpt", description: "GPT") ?? NSImage(systemSymbolName: "cpu", accessibilityDescription: "GPT")
-        providerControl.item(at: 1)?.image = mascot("mascot-claude", description: "Claude") ?? NSImage(systemSymbolName: "sparkle", accessibilityDescription: "Claude")
-        providerControl.imagePosition = .imageOnly
-        (providerControl.cell as? NSPopUpButtonCell)?.arrowPosition = .noArrow
-        providerControl.target = self
-        providerControl.action = #selector(providerChanged)
-        providerControl.isBordered = false
-        providerControl.contentTintColor = .white
-        providerControl.wantsLayer = true
-        providerControl.layer?.cornerRadius = 18
-        providerControl.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.055).cgColor
-        providerControl.layer?.borderWidth = 0.5
-        providerControl.layer?.borderColor = NSColor.white.withAlphaComponent(0.15).cgColor
-        providerControl.setAccessibilityLabel("Model")
-        providerControl.toolTip = "GPT uses the Codex SDK · Claude uses the Claude CLI"
-        islandView.addSubview(providerControl)
-        expandedControls.append(providerControl)
+        providerControl = button("Model", frame: ComposerGeometry.provider, action: #selector(providerChanged), symbol: "cpu", iconOnly: true)
         updateProviderControl()
         _ = button("More options", frame: ComposerGeometry.more, action: #selector(showIslandOptions(_:)), symbol: "ellipsis", iconOnly: true)
         setExpanded(false)
@@ -467,9 +456,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 attachedImage == nil ? "Attach a screenshot to your next question." : "Remove the attached screenshot.",
                 voiceRequested ? "End the live voice conversation." : "Start a live voice conversation.",
                 voiceEnabled ? "Mute spoken replies." : "Turn spoken replies on.",
-                "Choose GPT or Claude.",
+                provider == .gpt ? "Using GPT · click to switch to Claude." : "Using Claude · click to switch to GPT.",
                 "Draw your prompt with the selected model.",
-                "Open settings and additional actions."
+                "Open settings and additional actions.",
+                "Close the composer and keep your draft."
             ])
             return
         }
@@ -724,6 +714,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         signalHost.layer?.maskedCorners = islandView.layer?.maskedCorners ?? []
         // Idle readiness is already represented by the compact menu-bar line.
         if case .status = content { statusLabel.isHidden = false } else { statusLabel.isHidden = true }
+        modelCaption.isHidden = !expanded || content != .idle
         activityMark.isHidden = content != .audio
         islandView.toolTip = expanded ? nil : "\(currentStatus) · Hold here to open · ⌃⌥Space"
         islandView.setAccessibilityLabel("Clippy: \(currentStatus)")
@@ -1049,7 +1040,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         setStatus("Ready")
     }
 
-    @objc private func providerChanged() { setProvider(providerControl.indexOfSelectedItem == 1 ? .claude : .gpt) }
+    @objc private func providerChanged() { setProvider(provider == .gpt ? .claude : .gpt) }
     private func mascot(_ name: String, description: String) -> NSImage? {
         guard let url = Bundle.main.url(forResource: name, withExtension: "png"), let source = NSImage(contentsOf: url) else { return nil }
         let height: CGFloat = 24, size = NSSize(width: height * source.size.width / max(source.size.height, 1), height: height)
@@ -1061,7 +1052,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         return image
     }
     private func updateProviderControl() {
-        providerControl.selectItem(at: provider == .claude ? 1 : 0)
+        let name = provider == .claude ? "Claude" : "GPT"
+        let next = provider == .claude ? "GPT" : "Claude"
+        providerControl.image = mascot(provider == .claude ? "mascot-claude" : "mascot-gpt", description: name)
+            ?? NSImage(systemSymbolName: provider == .claude ? "sparkle" : "cpu", accessibilityDescription: name)
+        providerControl.setAccessibilityLabel("Model: \(name). Switch to \(next)")
+        providerControl.toolTip = "Using \(name) · click to switch to \(next)"
+        modelCaption.stringValue = provider == .claude ? "Claude · …" : "GPT · …"
+    }
+    private func updateModelCaption(_ status: [String: Any]) {
+        guard status["provider"] as? String == provider.rawValue,
+              let model = status["model"] as? String,
+              let effort = status["reasoningEffort"] as? String else { return }
+        let name = ["gpt-6.1-terra": "GPT-6.1 Terra", "claude-sonnet-5-5": "Claude Sonnet 5.5"][model] ?? model
+        modelCaption.stringValue = "\(name) · \(effort.capitalized) effort"
     }
     // Remembered across launches, and applies to the next question.
     private func setProvider(_ value: AIProvider) {
@@ -1082,6 +1086,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             DispatchQueue.main.async {
                 guard let self else { return }
                 if let data, let value = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any], value["model"] != nil {
+                    self.updateModelCaption(value)
                     self.setConnection(value["authenticated"] as? Bool == true ? nil : self.provider.signInRequired)
                     self.webView.load(URLRequest(url: baseURL.appendingPathComponent("overlay.html")))
                     self.startHealthMonitor()
@@ -1112,6 +1117,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 guard let data, let value = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any], value["model"] != nil else {
                     self.setConnection(serverUnavailable); return
                 }
+                self.updateModelCaption(value)
                 if value["authenticated"] as? Bool != true { self.setConnection(self.provider.signInRequired) }
                 else { self.setConnection(self.overlayReady ? nil : drawingUnavailable) }
                 if !self.overlayReady { self.webView.load(URLRequest(url: baseURL.appendingPathComponent("overlay.html"))) }
