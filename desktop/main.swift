@@ -115,6 +115,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var sendHovered = false
     private var micButton: NSButton!
     private var talkButton: NSButton!
+    private var pointButton: NSButton!
+    private let pointShare = VoicePointerShare()
+    private var pointShareRequested = false
+    private var pointShareEpoch = 0
+    private var voiceConnected = false
     private var voiceRequested = false
     private var voiceGeneration = 0
     private var captureButton: NSButton!
@@ -389,6 +394,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         expandedControls.append(modelCaption)
         captureButton = button("Screen", frame: ComposerGeometry.screen, action: #selector(captureScreen), symbol: "rectangle.dashed", iconOnly: true)
         updateCaptureButton()
+        pointButton = button("Point & Share", frame: ComposerGeometry.provider, action: #selector(togglePointSharing), iconOnly: true)
+        pointButton.image = VoicePointerShare.icon(); pointButton.imagePosition = .imageOnly
+        pointButton.toolTip = "Point & Share · send focused screenshots and your red pointer trail to live voice"
+        pointButton.isHidden = true
+        pointShare.excludedRects = { [weak self] in
+            guard let self else { return [] }
+            return self.island.isVisible ? [self.island.frame] : []
+        }
+        pointShare.onFrame = { [weak self] image, context, completion in
+            guard let self, self.voiceRequested, self.voiceConnected, self.pointShareRequested else { completion(false); return }
+            let epoch = self.pointShareEpoch, voice = self.voiceGeneration
+            self.webView.callAsyncJavaScript("await window.clippyVoice.sharePoint(image, context)", arguments: ["image": image, "context": context], in: nil, in: .page) { [weak self] result in
+                guard let self, self.voiceGeneration == voice, self.pointShareEpoch == epoch, self.pointShareRequested else { completion(false); return }
+                if case .success = result {
+                    self.screenshotIndicator.stringValue = "● Point sharing · screenshot sent"
+                    self.screenshotIndicator.setAccessibilityLabel(self.screenshotIndicator.stringValue)
+                    completion(true)
+                } else { completion(false) }
+            }
+        }
+        pointShare.onStop = { [weak self] reason in
+            guard let self, self.pointShareRequested else { return }
+            self.stopPointSharing(reason)
+        }
         micButton = NSButton(title: "Dictate", target: self, action: #selector(toggleDictation))
         talkButton = button("Talk", frame: ComposerGeometry.talk, action: #selector(toggleRealtimeVoice), symbol: "waveform", iconOnly: true)
         talkButton.toolTip = "Live AI voice · separately billed API usage · click End to stop the microphone"
@@ -894,6 +923,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         // Idle readiness is already represented by the compact menu-bar line.
         if case .status = content { statusLabel.isHidden = false } else { statusLabel.isHidden = true }
         modelCaption.isHidden = !expanded || content != .idle
+        pointButton.isHidden = !expanded || !voiceRequested
+        providerControl.isHidden = !expanded || voiceRequested
         activityMark.isHidden = content != .audio
         islandView.toolTip = expanded ? nil : "\(currentStatus) · Hold here to open · ⌃⌥Space"
         islandView.setAccessibilityLabel("Clip: \(currentStatus)")
@@ -1738,9 +1769,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             let text = data["message"] as? String ?? ""
             guard text.utf16.count <= 64000 else { return }
             if state == "ended" || state == "error" {
-                voiceRequested = false; updateTalkButton()
+                voiceConnected = false; stopPointSharing(); voiceRequested = false; updateTalkButton()
                 if state == "error" { showError(text) } else { setStatus(text.isEmpty ? "Ready" : text) }
             } else if voiceRequested {
+                if state == "listening" { voiceConnected = true }
                 if state == "transcript" { showCaption(text, live: true) }
                 else if state == "transcript-start" { captionDismissed = false; captions.orderOut(nil) }
                 else if state == "transcript-cleared" { captions.orderOut(nil) }
@@ -1769,6 +1801,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         if voiceRequested { stopRealtimeVoice(); return }
         guard overlayReady else { showError("Wait for the drawing view to finish loading, then try Talk."); return }
         cancelRequest(); selectionEditor.cancel(); stopDictation(sendTranscript: false); speech.stopSpeaking(at: .immediate)
+        pointShare.resetSession(); voiceConnected = false
         voiceRequested = true; voiceGeneration += 1
         screenshotIndicator.stringValue = ""
         overlay.orderFrontRegardless()
@@ -1789,6 +1822,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             }
         }
     }
+    @objc private func togglePointSharing() {
+        if pointShareRequested { stopPointSharing("Point sharing off"); return }
+        guard voiceRequested, voiceConnected else { screenshotIndicator.stringValue = "Wait for Talk to connect"; return }
+        guard CGPreflightScreenCaptureAccess() else {
+            screenshotIndicator.stringValue = "Allow Screen Recording for Point & Share"
+            _ = CGRequestScreenCaptureAccess(); return
+        }
+        pointShareEpoch += 1
+        let epoch = pointShareEpoch
+        pointShareRequested = true
+        webView.callAsyncJavaScript("window.clippyVoice.setPointSharing(true)", arguments: [:], in: nil, in: .page) { [weak self] result in
+            guard let self, self.pointShareRequested, self.voiceRequested, self.pointShareEpoch == epoch else { return }
+            if case .success = result, self.pointShare.start() {
+                self.pointButton.contentTintColor = .systemRed
+                self.pointButton.setAccessibilityLabel("Stop Point & Share")
+                self.pointButton.toolTip = "Stop sharing pointer-focused screenshots"
+                self.screenshotIndicator.stringValue = "● Point sharing · move to show"
+                self.screenshotIndicator.setAccessibilityLabel(self.screenshotIndicator.stringValue)
+            } else { self.stopPointSharing("Point sharing unavailable") }
+        }
+    }
+    private func stopPointSharing(_ reason: String = "") {
+        pointShareRequested = false; pointShareEpoch += 1
+        pointShare.stop()
+        webView?.evaluateJavaScript("window.clippyVoice?.setPointSharing(false); void 0;")
+        pointButton?.contentTintColor = NSColor(white: 0.92, alpha: 1)
+        pointButton?.setAccessibilityLabel("Point & Share")
+        pointButton?.toolTip = "Point & Share · send focused screenshots and your red pointer trail to live voice"
+        screenshotIndicator?.stringValue = reason
+        screenshotIndicator?.setAccessibilityLabel(reason)
+    }
     private func updateTalkButton() {
         talkButton.title = voiceRequested ? "End" : "Talk"
         talkButton.image = NSImage(systemSymbolName: voiceRequested ? "stop.circle" : "waveform", accessibilityDescription: talkButton.title)
@@ -1796,6 +1860,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         talkButton.setAccessibilityLabel(voiceRequested ? "End live voice" : "Start live voice")
     }
     private func stopRealtimeVoice() {
+        voiceConnected = false; stopPointSharing(); pointShare.resetSession()
         voiceGeneration += 1; voiceRequested = false; updateTalkButton()
         webView?.evaluateJavaScript("window.clippyVoice?.stop(); void 0;")
         setStatus("Ready")
@@ -1982,6 +2047,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         return .terminateLater
     }
     func applicationWillTerminate(_ notification: Notification) {
+        pointShare.stop()
         selectionEditor.cancel()
         for key in editingHotKeys { UnregisterEventHotKey(key) }
         hitTestTimer?.invalidate()
