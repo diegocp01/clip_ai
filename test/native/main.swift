@@ -96,6 +96,21 @@ var peak: CGFloat = 0
 for _ in 0..<240 { spring.step(1.0 / 60); peak = max(peak, spring.value) }
 expect(spring.value == 1 && spring.isSettled && peak > 1 && peak < 1.2, "Wake spring must settle on target after a small overshoot")
 
+// Resting on the island for a second opens it, once, until the pointer leaves and returns.
+var hold = DwellTimer()
+expect(!hold.update(inside: true, dt: 0.5) && abs(hold.progress - 0.5) < 0.001, "The hold must fill up over time")
+expect(!hold.update(inside: false, dt: 0.1) && hold.progress == 0, "Leaving must restart the hold")
+expect(!hold.update(inside: true, dt: 0.9), "A partial hold must not open")
+expect(hold.update(inside: true, dt: 0.1), "A full second must open")
+expect(hold.progress == 0, "The ring must clear on opening")
+expect(!hold.update(inside: true, dt: 5) && hold.progress == 0, "Staying put must not open it again")
+_ = hold.update(inside: false, dt: 0.1)
+expect(!hold.update(inside: true, dt: 0.5) && hold.update(inside: true, dt: 0.5), "Returning must allow another hold")
+hold = DwellTimer()
+_ = hold.update(inside: true, dt: 0.5)
+hold.disarm()
+expect(!hold.update(inside: true, dt: 2), "Opening some other way must use up the hold")
+
 // The tether holds while near, and separates when too far, too slow or clicked away.
 var tether = GooTether()
 expect(!tether.update(inside: false, distance: 5, pressed: false, dt: 0.1) && !tether.attached, "Passing near must not attach")
@@ -173,9 +188,6 @@ expect(liquid.length > 12 && longest > liquid.length + 0.5, "Liquid must reach t
 expect(longest < LiquidSim.maxReach + 8, "The grab must stay small")
 expect(liquid.distance(to: liquid.head) < 0, "The rounded end must be inside the liquid")
 expect(liquid.distance(to: CGPoint(x: 600, y: 600)) > 0, "Far away must be outside the liquid")
-expect(liquid.touches(liquid.head, outline: island), "A click on the liquid must count")
-expect(!liquid.touches(CGPoint(x: 236, y: 220), outline: island), "The island handles its own clicks")
-expect(!liquid.touches(CGPoint(x: 600, y: 600), outline: island), "A click far away must not count")
 
 // However far the pointer goes, the reach stays short.
 var far = LiquidSim()

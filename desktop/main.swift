@@ -22,8 +22,6 @@ final class FloatingPanel: NSPanel {
 }
 final class IslandView: NSView {
     var onExpand: (() -> Void)?
-    var acceptsClick: (() -> Bool)?
-    override func mouseDown(with event: NSEvent) { if acceptsClick?() != false { onExpand?() } }
     override func accessibilityPerformPress() -> Bool { onExpand?(); return true }
 }
 
@@ -88,7 +86,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var liquid = LiquidSim()
     private var wake = Spring(stiffness: 150, damping: 17)
     private var tether = GooTether()
-    private var pointerOnGlue = false { didSet { gooPanel.ignoresMouseEvents = !pointerOnGlue } }
+    private var dwell = DwellTimer()
+    private var dwellPanel: FloatingPanel!
+    private let dwellRing = CAShapeLayer()
     private var wakeEnds: (rest: IslandLayout, awake: IslandLayout)?
     private var wakeRegion = NSRect.zero
     private var frameTimer: Timer?
@@ -244,11 +244,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         islandView.layer?.borderWidth = 0.5
         islandView.layer?.cornerCurve = .continuous
         islandView.onExpand = { [weak self] in if self?.expanded == false { self?.setExpanded(true, focus: true) } }
-        // While idle only the green area opens it. Text and errors stay clickable anywhere.
-        islandView.acceptsClick = { [weak self] in
-            guard let self, self.currentStatus == "Ready", !self.talking, !self.expanded else { return true }
-            return self.pointerOnIsland || self.wakeRegion.insetBy(dx: 0, dy: -1).contains(NSEvent.mouseLocation)
-        }
         composerSurface = ComposerSurface(content: islandView)
         island.contentView = composerSurface
         islandView.setAccessibilityElement(true)
@@ -377,23 +372,70 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         _ = button("More options", frame: ComposerGeometry.more, action: #selector(showIslandOptions(_:)), symbol: "ellipsis", iconOnly: true)
         setExpanded(false)
     }
-    // Liquid can reach past the island, so it has its own panel below it, click-through
-    // unless the pointer is on the liquid. In the island's window it would block the menu bar.
+    // Liquid can reach past the island, so it has its own click-through panel below it.
+    // In the island's window it would block the menu bar.
     private func buildGoo() {
         gooPanel = panel(.zero, level: island.level)
         gooPanel.title = "Clippy liquid edge"
         gooPanel.ignoresMouseEvents = true
         gooPanel.setAccessibilityElement(false)
-        let host = IslandView(frame: .zero)
+        let host = NSView(frame: .zero)
         host.layer = CALayer()
         host.wantsLayer = true
         host.autoresizingMask = [.width, .height]
-        host.onExpand = islandView.onExpand
         gooPanel.contentView = host
         gooFill.fillColor = NSColor.black.cgColor
         gooLiquid.contentsGravity = .resize
         for layer in [gooFill, gooLiquid] { host.layer?.addSublayer(layer) }
+        buildDwellRing()
     }
+    // A tiny click-through ring beside the pointer shows the hold filling up.
+    private func buildDwellRing() {
+        let size: CGFloat = 20
+        dwellPanel = panel(NSRect(x: 0, y: 0, width: size, height: size), level: island.level)
+        dwellPanel.title = "Clippy hold timer"
+        dwellPanel.ignoresMouseEvents = true
+        dwellPanel.setAccessibilityElement(false)
+        let host = NSView(frame: NSRect(x: 0, y: 0, width: size, height: size))
+        host.layer = CALayer()
+        host.wantsLayer = true
+        dwellPanel.contentView = host
+        let circle = CGMutablePath()
+        circle.addArc(center: CGPoint(x: size / 2, y: size / 2), radius: 6, startAngle: .pi / 2, endAngle: .pi / 2 - 2 * .pi, clockwise: true)
+        let track = CAShapeLayer()
+        track.path = circle
+        track.fillColor = nil
+        track.strokeColor = NSColor.white.withAlphaComponent(0.14).cgColor
+        track.lineWidth = 1.5
+        dwellRing.path = circle
+        dwellRing.fillColor = nil
+        dwellRing.strokeColor = NSColor.white.withAlphaComponent(0.7).cgColor
+        dwellRing.lineWidth = 1.5
+        dwellRing.lineCap = .round
+        dwellRing.strokeEnd = 0
+        host.layer?.addSublayer(track)
+        host.layer?.addSublayer(dwellRing)
+    }
+    private func updateDwell(pointer: NSPoint, inside: Bool, dt: CGFloat) {
+        guard !expanded else { dwell.disarm(); hideDwellRing(); return }
+        // Text or the waveform has no resting area of its own, so the whole island counts.
+        let onIsland = wakeRegion.isEmpty ? island.frame.insetBy(dx: 0, dy: -1).contains(pointer) : inside
+        if dwell.update(inside: island.isVisible && onIsland && NSEvent.pressedMouseButtons == 0, dt: dt) {
+            hideDwellRing()
+            setExpanded(true, focus: true)
+            return
+        }
+        // It stays hidden for a moment, so passing over the notch shows nothing.
+        guard dwell.elapsed > 0.1 else { hideDwellRing(); return }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        dwellRing.strokeEnd = dwell.progress
+        CATransaction.commit()
+        dwellPanel.alphaValue = smoothstep(0.1, 0.3, dwell.elapsed)
+        dwellPanel.setFrameOrigin(NSPoint(x: pointer.x + 10, y: pointer.y - 26))
+        if !dwellPanel.isVisible { dwellPanel.orderFrontRegardless() }
+    }
+    private func hideDwellRing() { if dwellPanel.isVisible { dwellPanel.orderOut(nil) } }
     @objc private func collapseIsland() { setExpanded(false) }
     @objc private func showIslandOptions(_ sender: NSButton) {
         let menu = NSMenu()
@@ -449,13 +491,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let inside = island.isVisible && region.contains(pointer)
         if wakeEnds?.rest.isNotched == true, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             let outline = IslandOutline(rect: island.frame)
-            let clickedAway = NSEvent.pressedMouseButtons != 0 && !pointerOnGlue
+            let clickedAway = NSEvent.pressedMouseButtons != 0
             _ = tether.update(inside: inside, distance: outline.distance(to: pointer), pressed: clickedAway, dt: dt)
         } else { tether.attached = inside }
-        guard tether.attached != pointerOnIsland else { return }
+        updateDwell(pointer: pointer, inside: inside, dt: dt)
+        guard !expanded, tether.attached != pointerOnIsland else { return }
         pointerOnIsland = tether.attached
         if pointerOnIsland {
-            // Only a fresh idle hover wakes the sound; clicks, status changes and
+            // Only a fresh idle hover wakes the sound; status changes and
             // live speech/microphone activity remain quiet. Tether motion does not retrigger it.
             if inside && !expanded && currentStatus == "Ready" && !busy && !talking
                 && !requestingPermission && !speech.isSpeaking && NSEvent.pressedMouseButtons == 0 {
@@ -694,7 +737,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         signalHost.layer?.maskedCorners = islandView.layer?.maskedCorners ?? []
         if case .status = content { statusLabel.isHidden = false } else { statusLabel.isHidden = !expanded }
         activityMark.isHidden = content != .audio
-        islandView.toolTip = expanded ? nil : "\(currentStatus) · Click to open · ⌃⌥Space"
+        islandView.toolTip = expanded ? nil : "\(currentStatus) · Hold here to open · ⌃⌥Space"
         islandView.setAccessibilityLabel("Clippy: \(currentStatus)")
         wake.target = awake ? 1 : 0
         if content == .idle && !expanded {
@@ -712,7 +755,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             stopFrames()
             wakeRegion = .zero
             wake.jump(to: 0); tether.attached = false; pointerOnIsland = false; liquid.reset()
-            if pointerOnGlue { pointerOnGlue = false }
         }
         updateSignal(content: content, layout: layout)
         if updateFrame {
@@ -874,7 +916,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         stepGoo(dt)
         if wake.isSettled, wake.value == 0, liquid.isSettled {
             stopFrames()
-            if pointerOnGlue { pointerOnGlue = false }
             layoutIsland()
         }
     }
@@ -913,8 +954,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let outline = IslandOutline(rect: island.frame)
         let pointer = NSEvent.mouseLocation
         liquid.step(dt, outline: outline, pointer: pointerOnIsland ? pointer : nil)
-        let onGlue = pointerOnIsland && liquid.touches(pointer, outline: outline)
-        if onGlue != pointerOnGlue { pointerOnGlue = onGlue }
         drawGoo(outline: outline)
     }
     private func drawGoo(outline: IslandOutline) {
@@ -1339,7 +1378,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         if attachedImage != nil { attachedImage = nil; captureButton.title = "Screen"; setStatus("Screen removed"); return }
         guard CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess() else { showError("Allow Screen Recording in System Settings, then reopen Clippy to attach a screenshot."); return }
         let overlayVisible = overlay.isVisible, captionsVisible = captions.isVisible
-        island.orderOut(nil); notchBridge.orderOut(nil); gooPanel.orderOut(nil); overlay.orderOut(nil); captions.orderOut(nil)
+        island.orderOut(nil); notchBridge.orderOut(nil); gooPanel.orderOut(nil); hideDwellRing(); overlay.orderOut(nil); captions.orderOut(nil)
         let target = FileManager.default.temporaryDirectory.appendingPathComponent("clippy-\(UUID().uuidString).png")
         DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 0.2) { [weak self] in
             let process = Process()

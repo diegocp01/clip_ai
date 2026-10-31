@@ -142,11 +142,6 @@ struct LiquidSim {
         for part in strand { d = min(d, part.distance(point.x, point.y)) }
         return d
     }
-    /// Whether a click here lands on the liquid, with some room because the pointer pulls ahead of it.
-    func touches(_ point: CGPoint, outline: IslandOutline) -> Bool {
-        !outline.rect.contains(point) && distance(to: point) < 12
-    }
-
     /// Draws the liquid: pure black, joined smoothly to the island, with a thin green edge near its end.
     func render(island: CGRect, cornerRadius: CGFloat, scale: CGFloat, clip: CGRect) -> (image: CGImage, frame: CGRect)? {
         let strand = self.strand
