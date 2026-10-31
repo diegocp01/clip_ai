@@ -3,7 +3,7 @@ import AppKit
 /// Expanded-only metrics. The compact signal/hover geometry is independent.
 enum ComposerGeometry {
     static let size = NSSize(width: 440, height: 176)
-    static let cornerRadius: CGFloat = 24
+    static let cornerRadius: CGFloat = 28
     static let prompt = NSRect(x: 18, y: 65, width: 344, height: 48)
     static let send = NSRect(x: 374, y: 65, width: 48, height: 48)
     static let collapse = NSRect(x: 392, y: 134, width: 30, height: 26)
@@ -13,10 +13,15 @@ enum ComposerGeometry {
     static let tier = NSRect(x: 250, y: 18, width: 120, height: 30)
     static let more = NSRect(x: 386, y: 18, width: 36, height: 30)
 
-    /// Both endpoints share a top edge, so window interpolation grows downward.
-    static func originFrame(for frame: NSRect, compactWidth: CGFloat) -> NSRect {
-        let width = min(frame.width, max(30, compactWidth))
-        return NSRect(x: frame.midX - width / 2, y: frame.maxY - 1, width: width, height: 1)
+    /// Keep the real compact frame as the source: never flatten the material
+    /// into a one-pixel strip or jump it below the camera before opening.
+    static func morphFrame(from source: NSRect, to target: NSRect, progress: CGFloat) -> NSRect {
+        let p = min(max(progress, 0), 1)
+        let t = p * p * (3 - 2 * p)
+        return NSRect(x: source.minX + (target.minX - source.minX) * t,
+                      y: source.minY + (target.minY - source.minY) * t,
+                      width: source.width + (target.width - source.width) * t,
+                      height: source.height + (target.height - source.height) * t)
     }
 }
 
@@ -105,11 +110,10 @@ struct IslandLayout {
         else if awake { lineFrame = NSRect(x: 10, y: 3, width: width - 20, height: 2) }
         else { lineFrame = NSRect(x: content == .idle ? (width - 3) / 2 : 12, y: (height - 14) / 2, width: 3, height: 14) }
         wakeArea = NSRect(x: 0, y: 0, width: width, height: height)
-        // A separate, always click-through panel connects the body to the camera
-        // housing. No transparent window wings cover the adjacent menu items.
+        // Cover only the physical camera area. Extending this black rectangle
+        // into a translucent composer leaves a visible dark block inside the glass.
         if let notch {
-            notchBridge = NSRect(x: notch.minX, y: top - cornerRadius, width: notch.width,
-                                 height: notch.height + cornerRadius)
+            notchBridge = notch
         } else {
             notchBridge = nil
         }

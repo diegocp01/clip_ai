@@ -61,6 +61,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var composerSurface: ComposerSurface!
     private var composerTransition = 0
     private var composerTransitioning = false
+    private var composerTimer: Timer?
+    private var composerReveal: CGFloat = 0
     private var overlay: FloatingPanel!
     private var webView: WKWebView!
     private var captions: FloatingPanel!
@@ -201,9 +203,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         b.contentTintColor = NSColor(white: 0.92, alpha: 1)
         b.wantsLayer = true
         b.layer?.cornerRadius = frame.height / 2
-        b.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.10).cgColor
+        b.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.055).cgColor
         b.layer?.borderWidth = 0.5
-        b.layer?.borderColor = NSColor.white.withAlphaComponent(0.2).cgColor
+        b.layer?.borderColor = NSColor.white.withAlphaComponent(0.10).cgColor
         if let symbol { b.image = NSImage(systemSymbolName: symbol, accessibilityDescription: text); b.imagePosition = iconOnly ? .imageOnly : .imageLeading }
         b.setAccessibilityLabel(text)
         b.toolTip = text
@@ -273,10 +275,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         buildGoo()
         let promptSurface = NSView(frame: ComposerGeometry.prompt)
         promptSurface.wantsLayer = true
-        promptSurface.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.12).cgColor
+        promptSurface.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.045).cgColor
         promptSurface.layer?.cornerRadius = 14
-        promptSurface.layer?.borderWidth = 1
-        promptSurface.layer?.borderColor = NSColor.white.withAlphaComponent(0.18).cgColor
+        promptSurface.layer?.borderWidth = 0.5
+        promptSurface.layer?.borderColor = NSColor.white.withAlphaComponent(0.12).cgColor
         islandView.addSubview(promptSurface)
         expandedControls.append(promptSurface)
         let promptField = ComposerPrompt(frame: ComposerGeometry.prompt.insetBy(dx: 12, dy: 13))
@@ -314,6 +316,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         tierPicker.selectItem(at: 1)
         tierPicker.font = .systemFont(ofSize: 11)
         tierPicker.bezelStyle = .accessoryBarAction
+        tierPicker.isBordered = false
+        tierPicker.wantsLayer = true
+        tierPicker.layer?.cornerRadius = ComposerGeometry.tier.height / 2
+        tierPicker.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.055).cgColor
         tierPicker.toolTip = "GPT-6.1 Terra · Low reasoning. Fast uses more Codex allowance."
         islandView.addSubview(tierPicker)
         expandedControls.append(tierPicker)
@@ -525,59 +531,66 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     @objc private func enableTextEditing() { selectionEditor.requestAccess() }
     private func setExpanded(_ value: Bool, focus: Bool = false, animated: Bool = true) {
         let changed = expanded != value
-        let compactWidth = value ? island.frame.width : (island.screen?.auxiliaryTopRightArea?.minX ?? 0) - (island.screen?.auxiliaryTopLeftArea?.maxX ?? 0)
+        if !changed && composerTransitioning && animated { return }
+        let sourceFrame = island.frame
+        let sourceRadius = composerTransitioning ? composerSurface.currentRadius : (islandView.layer?.cornerRadius ?? 10)
+        let sourceReveal = composerReveal
         expanded = value
         composerTransition += 1
         let generation = composerTransition
+        composerTimer?.invalidate(); composerTimer = nil
         composerTransitioning = false
         stopFrames()
         gooPanel.orderOut(nil)
-        let shouldAnimate = changed && animated && !island.frame.isEmpty && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-
-        // Retain the expanded glass while it folds away; restore the existing
-        // compact renderer only at the end. No new frame logic is used at rest.
-        if !value && shouldAnimate {
-            island.makeFirstResponder(nil)
-            island.resignKey()
-            composerTransitioning = true
-            let origin = ComposerGeometry.originFrame(for: island.frame, compactWidth: compactWidth)
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.20
-                context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-                island.animator().setFrame(origin, display: true)
-                islandView.animator().alphaValue = 0
-            } completionHandler: { [weak self] in
-                guard let self, self.composerTransition == generation else { return }
-                self.composerTransitioning = false
-                self.finishComposerLayout(focus: false)
-            }
+        let screen = island.screen ?? NSScreen.main ?? NSScreen.screens[0]
+        let content: IslandContent = talking ? .audio : currentStatus == "Ready" ? .idle
+            : .status(textWidth: ceil(statusLabel.cell?.cellSize.width ?? 52))
+        let target = IslandLayout(screen: screen.frame, safeTop: screen.safeAreaInsets.top,
+                                  leftArea: screen.auxiliaryTopLeftArea, rightArea: screen.auxiliaryTopRightArea,
+                                  expanded: value, content: content)
+        let shouldAnimate = changed && animated && !sourceFrame.isEmpty
+            && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        guard shouldAnimate else {
+            composerReveal = value ? 1 : 0
+            finishComposerLayout(focus: focus)
             return
         }
 
-        composerSurface.showComposer(value)
-        let layout = layoutIsland(updateFrame: false)
-        updateNotchBridge(layout)
-        for control in expandedControls { control.isHidden = !value }
-        island.hasShadow = value
-        islandView.alphaValue = shouldAnimate ? 0 : 1
-        if shouldAnimate {
-            island.setFrame(ComposerGeometry.originFrame(for: layout.frame, compactWidth: compactWidth), display: true)
-            composerTransitioning = true
-            island.orderFrontRegardless()
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.34
-                context.timingFunction = CAMediaTimingFunction(controlPoints: 0.16, 0.9, 0.25, 1)
-                island.animator().setFrame(layout.frame, display: true)
-                islandView.animator().alphaValue = 1
-            } completionHandler: { [weak self] in
-                guard let self, self.composerTransition == generation else { return }
+        if value { _ = layoutIsland(updateFrame: false) }
+        else { island.makeFirstResponder(nil); island.resignKey() }
+        updateNotchBridge(target)
+        composerSurface.beginMorph(area: sourceFrame.union(target.frame), time: oilTime)
+        for control in expandedControls { control.isHidden = false }
+        islandView.layer?.backgroundColor = NSColor.clear.cgColor
+        islandView.layer?.borderWidth = 0
+        composerTransitioning = true
+        composerSurface.setMorph(reveal: sourceReveal, radius: sourceRadius, notched: target.isNotched)
+        island.orderFrontRegardless()
+        let started = CACurrentMediaTime()
+        let duration = (value ? 0.52 : 0.44) * Double(max(abs((value ? 1 : 0) - sourceReveal), 0.3))
+        // One clock owns frame, curvature, petroleum clearing and control reveal.
+        // Reversals start from the current frame/material, not a stale endpoint.
+        let timer = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] timer in
+            guard let self, self.composerTransition == generation else { timer.invalidate(); return }
+            let progress = CGFloat(min((CACurrentMediaTime() - started) / duration, 1))
+            let eased = progress * progress * (3 - 2 * progress)
+            self.composerReveal = mix(sourceReveal, value ? 1 : 0, eased)
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            self.island.setFrame(ComposerGeometry.morphFrame(from: sourceFrame, to: target.frame, progress: progress), display: true)
+            self.composerSurface.setMorph(reveal: self.composerReveal,
+                                          radius: mix(sourceRadius, target.cornerRadius, eased), notched: target.isNotched)
+            CATransaction.commit()
+            self.island.hasShadow = self.composerReveal > 0.25
+            if progress >= 1 || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+                timer.invalidate(); self.composerTimer = nil
                 self.composerTransitioning = false
+                self.composerReveal = value ? 1 : 0
                 self.finishComposerLayout(focus: focus)
             }
-        } else {
-            island.setFrame(layout.frame, display: true)
-            finishComposerLayout(focus: focus)
         }
+        composerTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
     }
     private func updateNotchBridge(_ layout: IslandLayout) {
         if let bridge = layout.notchBridge {
@@ -587,11 +600,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         } else { notchBridge.orderOut(nil) }
     }
     private func finishComposerLayout(focus: Bool) {
+        composerSurface.endMorph()
         composerSurface.showComposer(expanded)
         islandView.alphaValue = 1
         for control in expandedControls { control.isHidden = !expanded }
         let layout = layoutIsland(updateFrame: false)
         island.setFrame(layout.frame, display: true)
+        signalHost.frame = layout.bounds
         updateNotchBridge(layout)
         island.hasShadow = expanded
         island.orderFrontRegardless()
@@ -601,6 +616,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         } else { gooPanel.orderOut(nil) }
         if expanded && focus { island.makeKey(); island.makeFirstResponder(prompt) }
         if !expanded { island.resignKey() }
+
     }
     private var talking: Bool { voiceRequested || recording || currentStatus == "Speaking" }
     // Resting: a green line. Audio live: the waveform. Anything else to say: text and line.
@@ -672,6 +688,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         CATransaction.setDisableActions(reduceMotion)
         CATransaction.setAnimationDuration(expanded ? 0.18 : 0.26)
         CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(controlPoints: 0.2, 0.8, 0.2, 1))
+        signalHost.frame = layout.bounds
         signalHost.layer?.cornerRadius = layout.cornerRadius
         statusLine.frame = layout.lineFrame
         statusLine.cornerRadius = min(layout.lineFrame.width, layout.lineFrame.height) / 2
@@ -725,6 +742,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let t = max(wake.value, 0)
         let frame = mix(rest.frame, awake.frame, t)
         if frame != island.frame { island.setFrame(frame, display: true) }
+        signalHost.frame = NSRect(origin: .zero, size: frame.size)
         let bead = smoothstep(0, 0.5, t), spread = smoothstep(0.3, 1, t)
         let restLine = rest.lineFrame.offsetBy(dx: rest.frame.minX - frame.minX, dy: rest.frame.minY - frame.minY)
         let awakeLine = awake.lineFrame.offsetBy(dx: awake.frame.minX - frame.minX, dy: awake.frame.minY - frame.minY)
@@ -1293,7 +1311,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         for key in editingHotKeys { UnregisterEventHotKey(key) }
         hitTestTimer?.invalidate()
         hitTestTimer = nil
-        healthTimer?.invalidate(); settleTimer?.invalidate(); frameTimer?.invalidate()
+        healthTimer?.invalidate(); settleTimer?.invalidate(); frameTimer?.invalidate(); composerTimer?.invalidate()
         cancelRequest(); stopDictation(sendTranscript: false); speech.stopSpeaking(at: .immediate)
         if let monitor = keyboardMonitor { NSEvent.removeMonitor(monitor) }
         if let monitor = outsideClickMonitor { NSEvent.removeMonitor(monitor) }
