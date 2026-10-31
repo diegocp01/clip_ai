@@ -353,7 +353,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         islandView.addSubview(modelCaption)
         expandedControls.append(modelCaption)
         captureButton = button("Screen", frame: ComposerGeometry.screen, action: #selector(captureScreen), symbol: "rectangle.dashed", iconOnly: true)
-        captureButton.toolTip = "Attach one screenshot to your next question"
+        updateCaptureButton()
         micButton = NSButton(title: "Dictate", target: self, action: #selector(toggleDictation))
         talkButton = button("Talk", frame: ComposerGeometry.talk, action: #selector(toggleRealtimeVoice), symbol: "waveform", iconOnly: true)
         talkButton.toolTip = "Live AI voice · separately billed API usage · click End to stop the microphone"
@@ -1186,7 +1186,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         history = []
         previous = nil
         attachedImage = nil
-        captureButton.title = "Screen"
+        updateCaptureButton()
         prompt.stringValue = ""
         setStatus("Ready")
     }
@@ -1487,7 +1487,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             history.append(["role": "assistant", "content": String(reply.prefix(4000))])
             history = Array(history.suffix(12))
             attachedImage = nil
-            captureButton.title = "Screen"
+            updateCaptureButton()
             prompt.stringValue = ""
             render(result)
             setExpanded(false)
@@ -1632,9 +1632,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) { if !busy && currentStatus == "Speaking" { setStatus("Ready") } }
     func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) { if !busy && !recording && currentStatus == "Speaking" { setStatus("Ready") } }
 
+    private func updateCaptureButton() {
+        let attached = attachedImage != nil
+        captureButton.title = ""
+        captureButton.imagePosition = .imageOnly
+        captureButton.contentTintColor = attached ? .systemBlue : NSColor(white: 0.92, alpha: 1)
+        captureButton.toolTip = attached ? "Screenshot attached · click to remove" : "Attach one screenshot to your next question"
+        captureButton.setAccessibilityLabel(attached ? "Remove screenshot" : "Attach screenshot")
+    }
     @objc private func captureScreen() {
         guard !busy else { return }
-        if attachedImage != nil { attachedImage = nil; captureButton.title = "Screen"; setStatus("Screen removed"); return }
+        if attachedImage != nil { attachedImage = nil; updateCaptureButton(); setStatus("Screen removed"); return }
         guard CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess() else { showError("Allow Screen Recording in System Settings, then reopen Clippy to attach a screenshot."); return }
         let overlayVisible = overlay.isVisible, captionsVisible = captions.isVisible
         island.orderOut(nil); notchBridge.orderOut(nil); gooPanel.orderOut(nil); hideDwellRing(); overlay.orderOut(nil); captions.orderOut(nil)
@@ -1658,13 +1666,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                     self.webView.callAsyncJavaScript("await window.clippyVoice.shareScreen(image)", arguments: ["image": image], in: nil, in: .page) { [weak self] result in
                         guard let self else { return }
                         switch result {
-                        case .success: self.attachedImage = nil; self.captureButton.title = "Screen"; self.setStatus("Screen shared · ask your question")
-                        case .failure: self.captureButton.title = "Remove screen"; self.showError("Screen attached for a typed question; live sharing failed.")
+                        case .success: self.attachedImage = nil; self.updateCaptureButton(); self.setStatus("Screen shared · ask your question")
+                        case .failure: self.updateCaptureButton(); self.showError("Screen attached for a typed question; live sharing failed.")
                         }
                     }
                     return
                 }
-                self.captureButton.title = "Remove screen"
+                self.updateCaptureButton()
                 self.setStatus("Screen attached · sent only with your next question")
             }
         }
