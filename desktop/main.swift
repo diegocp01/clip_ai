@@ -328,7 +328,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         voiceButton.toolTip = "Spoken replies on · click to mute"
         sendButton = button("Send", frame: ComposerGeometry.send, action: #selector(sendOrCancel), symbol: "arrow.up", iconOnly: true)
         sendButton.layer?.backgroundColor = NSColor.clear.cgColor
-        sendButton.layer?.borderWidth = 0
+        sendButton.layer?.borderWidth = 1
+        sendButton.layer?.borderColor = NSColor.white.withAlphaComponent(0.65).cgColor
         sendButton.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 18, weight: .thin)
         sendButton.contentTintColor = .white
         sendButton.toolTip = "Send · Return"
