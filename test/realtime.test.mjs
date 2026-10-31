@@ -185,3 +185,30 @@ test('a combined voice tool response waits for screenshot before drawing and res
  assert.equal(f.sent.filter(e=>e.type==='response.create').length,1);
  f.voice.stop();
 });
+
+test('voice publishes the full final audio transcript and clears it on interruption',async()=>{
+ const f=clientFixture();await f.voice.start();const s=f.voice.session;
+ f.voice.handle(s,{type:'response.created',response:{id:'r1'}});
+ const full='A complete spoken sentence. '.repeat(80);
+ f.voice.handle(s,{type:'response.output_audio_transcript.delta',response_id:'r1',delta:full});
+ assert.equal(f.events.at(-1).message,full);
+ f.voice.handle(s,{type:'response.output_audio_transcript.done',response_id:'r1',transcript:full+'End.'});
+ assert.equal(f.events.at(-1).message,full+'End.');
+ f.voice.handle(s,{type:'input_audio_buffer.speech_started'});
+ assert.ok(f.events.some(e=>e.state==='transcript-cleared'));
+ const count=f.events.filter(e=>e.state==='transcript').length;
+ f.voice.handle(s,{type:'response.output_audio_transcript.delta',response_id:'r1',delta:'late text'});
+ assert.equal(f.events.filter(e=>e.state==='transcript').length,count);f.voice.stop();
+});
+
+test('a late completed response cannot replace the current voice reply',async()=>{
+ const f=clientFixture();await f.voice.start();const s=f.voice.session;
+ f.voice.handle(s,{type:'response.created',response:{id:'new'}});
+ f.voice.handle(s,{type:'response.output_audio_transcript.delta',response_id:'new',delta:'Current reply'});
+ f.voice.handle(s,{type:'response.done',response:{id:'old',status:'completed',output:[{type:'message',content:[{type:'audio',transcript:'Stale reply'}]}]}});
+ assert.equal(s.responding,true);
+ assert.equal(f.events.filter(e=>e.state==='transcript').at(-1).message,'Current reply');
+ f.voice.handle(s,{type:'response.done',response:{id:'new',status:'completed',output:[{type:'message',content:[{type:'audio',transcript:'Current reply.'}]}]}});
+ assert.equal(f.events.filter(e=>e.state==='transcript').at(-1).message,'Current reply.');
+ f.voice.stop();
+});

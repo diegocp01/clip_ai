@@ -54,7 +54,6 @@ The app is branded Clip and builds as `build/Clip.app`. Its bundle identifier re
 
 Ask “How do molecules work?” in Talk: the Realtime voice can call Draw without a separate drawing command, using the current Draw provider/model/effort. The existing desktop overlay receives the progressive visual and the voice explains it after the tool confirms it is shown. Ask for “voice only” to avoid a drawing. Greetings/simple facts stay verbal, drawing failures get a verbal fallback, and interrupted responses cannot start a stale drawing call. End stops microphone/audio and pending drawing work.
 
-
 ### Automatic screenshots
 
 Send/Draw first asks Decisions whether the submitted prompt needs the visible screen. An attached image bypasses that check; missing/failed/uncertain decisions continue without capturing. Screen-specific requests capture the main display once after hiding Clip’s panels. The small **Screenshot captured** line sits below the input and selected-text badge. **Screenshot unavailable** indicates missing access or a failed capture; automatic requests never open a permission prompt. Click Screen to request Screen Recording access manually.
@@ -63,9 +62,18 @@ Talk can call `capture_screen` for screen-dependent questions (one per spoken tu
 
 Verify with a disposable page: send “What does this error on my screen mean?” and confirm the screenshot line appears before the answer. Ask “How do molecules work?” and confirm there is no capture. Repeat in Talk, then End during capture; no late image should be shared. Screen Recording permission and actual voice playback need native verification separately from the automated tests.
 
-
 ### Compare with Both
 
 Choose the provider circle → Both, then send a question or attach a screenshot and ask about it. The native comparison window shows Codex and Claude independently, including each model/effort, a selectable full answer, and separate Copy buttons. Stop or closing a running comparison cancels both requests. A provider error stays in its own column while the other can finish. A screenshot taken for Both is shared with both providers; Clip hides the comparison window as well as its other panels during capture.
 
 For proofreading, choose Both before selecting text in another app and opening the notch, or use the existing proofreading/rewriting shortcuts. Decisions chooses one edit action, then both models edit the exact same selection. The original text remains untouched and either alternative can be copied. These editing calls keep the existing fixed editing models/efforts. Each chat comparison is independent: answers from one provider are never fed into the other, and previous comparison results are not included in the next prompt.
+
+### Floating reply bubbles
+
+Single replies appear in a minimal floating frosted bubble with selectable, scrollable full text and quiet Copy/Dismiss controls. There is no header or fixed three-line cutoff. The same full string feeds local spoken replies. Dismissing stops local speech; during Talk it hides the bubble until the next voice response without ending the microphone. Both shows two compact provider-labeled bubbles and remains silent.
+
+Realtime captions follow audio transcript delta/done events and the completed audio transcript, not the drawing model’s reply. Draw rendering cannot overwrite a live voice caption. The old 500-character native and 1,500-character bridge truncation is removed. On interruption the old transcript is cleared because audio timing cannot provide a precise heard-word transcript; a final transcript may arrive ahead of playback. Check a long reply (>500 characters), scroll to its end and copy it; check Talk drawing while it speaks, then interrupt it and confirm an old caption does not reappear.
+
+### Opening greeting
+
+Each fresh opening briefly replaces the idle model caption with a short greeting (at most five words). A shuffled local set avoids repeats until its 24 lines are used, remembers the last line across launches, and works offline without sending any user context. It holds for 3.2 seconds, fades out over 1.2 seconds, then fades the current model selector back in over 0.5 seconds. Reduced Motion uses a simple timed replacement. Clicking opens model settings immediately; automatic hover menus wait until the greeting is gone. Closing cancels the timer, and reopening starts a fresh line. Repositioning an already-open composer does not restart it. Work and voice status retain their existing priority.

@@ -1,3 +1,4 @@
+import { VoiceTranscript } from './voice-transcript.js';
 import { readEvents } from './stream.js';
 // WebRTC transports live audio directly to OpenAI. The long-lived API key
 // stays on the localhost server; this module never receives it.
@@ -15,7 +16,7 @@ export class VoiceConversation {
   }
   async start() {
     if(this.session)return;
-    const s={controller:new AbortController(),tracks:null,peer:null,channel:null,audio:null,id:null,token:null,seen:new Set(),drawing:false,drawCount:0,responding:false,userSpeaking:false,pendingResponse:false,screen:null,screenBusy:false,screenCount:0,screenTurnUsed:false,toolBatches:0};
+    const s={controller:new AbortController(),tracks:null,peer:null,channel:null,audio:null,id:null,token:null,seen:new Set(),drawing:false,drawCount:0,responding:false,userSpeaking:false,pendingResponse:false,screen:null,screenBusy:false,screenCount:0,screenTurnUsed:false,toolBatches:0,captions:new VoiceTranscript()};
     this.session=s;this.emit('connecting','Connecting live voice…');
     const stillCurrent=()=>{if(this.session!==s)throw new Error('Voice session cancelled.');};
     s.startTimer=setTimeout(()=>{if(this.session===s)this.fail(s,new Error('Voice connection timed out.'));},25000);
@@ -55,15 +56,19 @@ export class VoiceConversation {
       case 'session.created':
         clearTimeout(s.startTimer);this.emit('listening','Listening · live voice');break;
       case 'input_audio_buffer.speech_started':
-        s.userSpeaking=true;s.screenTurnUsed=false;this.emit('listening','Listening…');break;
+        s.userSpeaking=true;s.screenTurnUsed=false;s.captions.interrupt();this.emit('transcript-cleared');this.emit('listening','Listening…');break;
       case 'input_audio_buffer.speech_stopped':s.userSpeaking=false;this.flush(s);break;
-      case 'response.created':s.responding=true;s.transcript='';this.emit('thinking','Thinking…');break;
+      case 'response.created':s.responding=true;s.captions.begin(event.response?.id);this.emit('transcript-start');this.emit('thinking','Thinking…');break;
       case 'output_audio_buffer.started':this.emit('speaking','Speaking · live voice');break;
       case 'output_audio_buffer.stopped':case 'output_audio_buffer.cleared':this.emit('listening','Listening · live voice');break;
       case 'response.output_audio_transcript.delta':
-        s.transcript=(s.transcript||'')+(event.delta||'');this.notify({state:'transcript',message:s.transcript.slice(-1500)});break;
+      case 'response.output_audio_transcript.done': {
+        const text=s.captions.update(event);if(text!==null)this.emit('transcript',text);break;
+      }
       case 'response.done':
+        if(event.response?.id&&s.captions.responseID&&event.response.id!==s.captions.responseID)break;
         s.responding=false;
+        const transcript=s.captions.finish(event.response);if(transcript!==null)this.emit('transcript',transcript);
         if(event.response?.status==='failed'){this.fail(s,new Error('Realtime could not answer. Check API billing and model access.'));break;}
         if(event.response?.status==='completed')void this.runTools(s,(event.response.output||[]).filter(item=>item.type==='function_call'));
         this.flush(s);break;
