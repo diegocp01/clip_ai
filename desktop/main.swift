@@ -1258,7 +1258,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         overlay.ignoresMouseEvents = true
         if voiceRequested {
             // Keep WebKit's live media document visible while hiding its marks.
-            webView.evaluateJavaScript("document.getElementById('overlay').hidden = true; void 0;")
+            webView.evaluateJavaScript("window.clippyDismissVisual?.(); void 0;")
         } else { overlay.orderOut(nil) }
         captions.orderOut(nil); speech.stopSpeaking(at: .immediate)
     }
@@ -1747,6 +1747,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         let url = navigationAction.request.url
+        // Only the sandboxed generated-content subframe may load srcdoc.
+        // It has no scripts, network or native bridge access.
+        if navigationAction.targetFrame?.isMainFrame == false, url?.absoluteString == "about:srcdoc" {
+            decisionHandler(.allow); return
+        }
         decisionHandler(url?.scheme == "http" && url?.host == "127.0.0.1" && url?.port == 4317 ? .allow : .cancel)
     }
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {

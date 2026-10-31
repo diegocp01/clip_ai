@@ -88,3 +88,25 @@ Motion samples stay in memory, at up to 30 Hz and 90 recent points. After moveme
 Stopping, ending Talk, connection failure, lock/session-inactive notification, display sleep, or display reconfiguration cancels the mode and prevents late uploads. Existing Screen Recording permission is required. Leaving the notch open is optional; its sharing notice is visible when expanded and the red marker identifies active sharing elsewhere. The model receives bounded snapshots and trail coordinates, not a continuous video or access to control the cursor. Drawing can use the latest shared crop as context.
 
 Validation: verify with a disposable page containing several labeled objects, enable Talk → Point & Share, circle one label and ask which one is circled. Check the red tail, screenshot-sent notice, normal click-through, second-monitor crop, and immediate stop when toggled off or Talk ends. Physical pointer/microphone and screen-lock behavior require an unlocked Mac; compilation and synthetic image checks alone do not verify those paths.
+
+### Live HTML explanations during Talk
+
+With Talk connected, enable the comet-pointer circle and circle the relevant area.
+Ask “Explain this with an example and a question I can answer.” Realtime can now
+call `show_explanation` for a floating HTML panel, or `draw_visual` for a 3D/diagram
+explanation. HTML uses the selected drawing provider/model, the latest shared crop,
+and the previous HTML panel for follow-up edits. The renderer displays completed
+sections as they stream, rather than waiting for the full answer.
+
+HTML supports semantic text, tables, CSS, checkbox/radio controls and expandable
+answers (`details`/`summary`). It does **not** execute generated JavaScript, load
+remote content, submit forms, navigate, or expose the native bridge. A tag/attribute
+allowlist, an empty iframe sandbox and a restrictive CSP enforce that boundary.
+There is one panel, at most eight 8,000-character sections, and a 300ms preview
+coalescer. No new WebView or local AI model is created. This is bounded resource
+usage by design, not a measured RAM guarantee. Dismiss cancels the in-flight visual;
+ending Talk cancels the request and pointer sharing. The API retains the existing
+120-second timeout, local-session authentication and two-request concurrency limit.
+
+`/overlay.html?demo=html` is an offline illustrative fixture for layout and answer
+expansion checks; it does not start the microphone or an AI request.

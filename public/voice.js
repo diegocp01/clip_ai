@@ -3,9 +3,9 @@ import { readEvents } from './stream.js';
 // WebRTC transports live audio directly to OpenAI. The long-lived API key
 // stays on the localhost server; this module never receives it.
 export class VoiceConversation {
-  constructor({notify=()=>{},render=()=>{},preview=()=>{},rollback=()=>{},fetchImpl=globalThis.fetch.bind(globalThis),media=globalThis.navigator?.mediaDevices,Peer=globalThis.RTCPeerConnection,makeAudio=()=>new Audio(),captureScreen=null,prepareScreen=screenPreview}={}) {
-    Object.assign(this,{notify,render,preview,rollback,fetch:fetchImpl,media,Peer,makeAudio,captureScreen,prepareScreen});
-    this.session=null;this.previous=null;this.muted=false;this.provider='gpt';this.drawingSettings={};
+  constructor({notify=()=>{},render=()=>{},preview=()=>{},rollback=()=>{},renderHTML=()=>{},previewHTML=()=>{},rollbackHTML=()=>{},fetchImpl=globalThis.fetch.bind(globalThis),media=globalThis.navigator?.mediaDevices,Peer=globalThis.RTCPeerConnection,makeAudio=()=>new Audio(),captureScreen=null,prepareScreen=screenPreview}={}) {
+    Object.assign(this,{notify,render,preview,rollback,renderHTML,previewHTML,rollbackHTML,fetch:fetchImpl,media,Peer,makeAudio,captureScreen,prepareScreen});
+    this.session=null;this.previous=null;this.previousHTML=null;this.muted=false;this.provider='gpt';this.drawingSettings={};
   }
   emit(state,message='') {this.notify({state,message});}
   send(session,event) {if(this.session===session&&session.channel?.readyState==='open')session.channel.send(JSON.stringify(event));}
@@ -92,31 +92,37 @@ export class VoiceConversation {
   async draw(s,item) {
     if(s.seen.has(item.call_id))return;
     s.seen.add(item.call_id);
-    let output,ownsDrawing=false;
+    let output,ownsDrawing=false,abortVisual;
     try {
-      if(item.name!=='draw_visual'||s.drawing||s.drawCount>=12)throw new Error('Drawing unavailable or another drawing is still running.');
+      const html=item.name==='show_explanation';
+      if(!['draw_visual','show_explanation'].includes(item.name)||s.drawing||s.drawCount>=12)throw new Error('Drawing unavailable or another drawing is still running.');
       const args=JSON.parse(item.arguments);
       if(!args||Object.keys(args).length!==1||typeof args.prompt!=='string'||!args.prompt.trim()||args.prompt.length>6000)throw new Error('Invalid drawing request.');
-      s.drawing=true;ownsDrawing=true;s.drawCount++;this.emit('drawing','Thinking…');
-      const response=await this.post(s,'/api/chat',{message:args.prompt,mode:'draw',tier:'fast',provider:this.provider,...this.drawingSettings[this.provider],history:[],previous:this.previous,image:s.screen});
+      s.drawing=true;ownsDrawing=true;s.drawCount++;s.visualDismissed=false;s.visualAbort=new AbortController();abortVisual=()=>s.visualAbort?.abort();s.controller.signal.addEventListener('abort',abortVisual,{once:true});this.emit('drawing','Thinking…');
+      const response=await this.post(s,html?'/api/explanation':'/api/chat',{message:args.prompt,mode:'draw',tier:'fast',provider:this.provider,...this.drawingSettings[this.provider],history:[],previous:html?this.previousHTML:this.previous,image:s.screen},s.visualAbort.signal);
       let result;
       for await(const event of readEvents(response)){
         if(this.session!==s)return;
+        s.visualAbort.signal.throwIfAborted();
         if(event.type==='error')throw new Error(event.message);
         if(event.type==='status')this.emit('drawing',event.message);
-        if(event.type==='preview'){s.previewing=true;this.preview(event.result);}
+        if(event.type==='preview'){s.previewing=true;s.previewHTML=html;(html?this.previewHTML:this.preview)(event.result);}
         if(event.type==='result')result=event.result;
       }
-      if(!result)throw new Error('No drawing returned.');
+      s.visualAbort.signal.throwIfAborted();
+      if(!result)throw new Error('No explanation returned.');
       if(this.session!==s)return;
-      s.previewing=false;this.previous=result;this.render(result);
-      output={shown:true,title:result.title,summary:result.reply};
-    } catch(error) {if(ownsDrawing&&s.previewing&&this.session===s){s.previewing=false;this.rollback(this.previous);}output={shown:false,error:String(error.message).slice(0,500)};}
-    finally {if(ownsDrawing)s.drawing=false;}
+      s.previewing=false;
+      if(html){this.previousHTML=result;this.renderHTML(result);}else{this.previous=result;this.render(result);}
+      output={shown:true,title:result.title,summary:html?result.summary:result.reply};
+    } catch(error) {if(ownsDrawing&&s.previewing&&this.session===s){s.previewing=false;this.restorePreview(s);}output={shown:false,error:String(error.message).slice(0,500)};}
+    finally {if(ownsDrawing){s.drawing=false;s.controller.signal.removeEventListener('abort',abortVisual);s.visualAbort=null;}}
     if(this.session!==s)return;
     this.send(s,{type:'conversation.item.create',item:{type:'function_call_output',call_id:item.call_id,output:JSON.stringify(output)}});
     s.pendingResponse=true;this.flush(s);
   }
+  cancelVisual(){const s=this.session;if(!s)return;s.visualDismissed=true;s.previewing=false;s.visualAbort?.abort();}
+  restorePreview(s) {if(s.visualDismissed)return;if(s.previewHTML)this.rollbackHTML(this.previousHTML);else this.rollback(this.previous);}
   async capture(s,item) {
     if(s.seen.has(item.call_id))return;
     s.seen.add(item.call_id);let output,ownsCapture=false;
@@ -196,7 +202,7 @@ export class VoiceConversation {
     s.controller.abort();s.tracks?.getTracks().forEach(track=>track.stop());
     s.channel?.close();s.peer?.close();
     if(s.audio){s.audio.pause();s.audio.srcObject=null;}
-    if(s.previewing)this.rollback(this.previous);
+    if(s.previewing)this.restorePreview(s);
     s.pointSharing=false;s.pointEpoch++;s.pointItems=[];s.pointScreen=null;s.screen=null;void this.hangup(s);this.emit('ended','Voice ended');
   }
   fail(s,error) {if(this.session!==s)return;this.stop();this.emit('error',error.message||'Live voice failed.');}
