@@ -47,7 +47,7 @@ Verify: hover open and check the signal above the model caption; in Follow mode 
 
 The frosted composer uses an active behind-window HUD material at full view opacity. Its translucency comes from AppKit's material; the separate black tint is only 8% (with an 80% finish multiplier) plus fine grain. Do not reduce the material or an ancestor's alpha to adjust transparency: that mixes sharp background detail back into the blur. The petroleum cover and independent finish still drive the opening/closing morph. macOS accessibility transparency settings remain respected.
 
-On notched screens, a separate elliptical black gradient joins the camera's lower edge to the expanded glass shell. Its opaque center follows the detected notch width, fading sideways and downward into the unchanged frosted material within the upper 90 points. It is clipped to the shell, stays behind the controls, and disappears on screens without a notch. The native blur retains full opacity.
+The half circle has a pure black center around the typing area, centered on the camera. It fades out just before the divider lines begin, so the ring holding the lines and controls keeps the gray frosted material out to the border. The black is clipped to the shell, stays behind the controls, and also appears on screens without a notch. The native blur retains full opacity.
 
 The app is branded Clip and builds as `build/Clip.app`. Its bundle identifier remains `local.clippy.codex` so existing preferences and permission identity are retained. Internal `clippy` WebKit messages and session headers are compatibility interfaces, not displayed branding.
 

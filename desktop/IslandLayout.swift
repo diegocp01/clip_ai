@@ -22,6 +22,13 @@ enum ComposerGeometry {
     static let optionNames = ["Screen", "Talk", "Voice", "Model", "Draw", "More", "Collapse"]
     static let optionCenter = NSPoint(x: size.width / 2, y: size.height)
     static let innerRing = NSRect(x: 45, y: 80, width: 390, height: 240)
+    /// The shell is pure black up to here and gray from there outward, measured from
+    /// the camera with 1 at the inner ring, which is where the divider lines begin.
+    static let blackUntil: CGFloat = 0.8
+    static let grayFrom: CGFloat = 1.02
+    static func ringDistance(_ point: NSPoint) -> CGFloat {
+        hypot((point.x - optionCenter.x) / (innerRing.width / 2), (point.y - optionCenter.y) / (innerRing.height / 2))
+    }
 
     /// Split the lower ring midway between neighboring option centers.
     /// The central typing area never participates in hover selection.

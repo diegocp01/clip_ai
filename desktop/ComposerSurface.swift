@@ -81,7 +81,6 @@ final class ComposerSurface: NSView {
         }
         content.frame = bounds
     }
-    func setNotchWidth(_ width: CGFloat?) { shell.setNotchWidth(width) }
 
     func updateHover(at point: NSPoint?) {
         let index = expanded ? point.flatMap { ComposerGeometry.option(at: $0) } : nil
@@ -99,7 +98,7 @@ final class ComposerSurface: NSView {
 private final class PetroleumCradle: NSVisualEffectView {
     private let finishMask = CAShapeLayer()
     private let blendMask = CAShapeLayer()
-    private let notchBlend = NotchBlend(frame: .zero)
+    private let blackCenter = BlackCenter(frame: .zero)
     private var maskedSize = NSSize.zero
     private let finish = FrostedFinish(frame: .zero)
 
@@ -115,15 +114,14 @@ private final class PetroleumCradle: NSVisualEffectView {
         finish.autoresizingMask = [.width, .height]
         finish.frame = bounds
         addSubview(finish)
-        notchBlend.wantsLayer = true
-        notchBlend.layer?.mask = blendMask
-        notchBlend.autoresizingMask = [.width, .height]
-        notchBlend.frame = bounds
-        addSubview(notchBlend)
+        blackCenter.wantsLayer = true
+        blackCenter.layer?.mask = blendMask
+        blackCenter.autoresizingMask = [.width, .height]
+        blackCenter.frame = bounds
+        addSubview(blackCenter)
         alphaValue = 1
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-    func setNotchWidth(_ width: CGFloat?) { notchBlend.notchWidth = width }
     func setFinishReveal(_ value: CGFloat) {
         // Never fade this NSVisualEffectView or an ancestor to tune transparency.
         // A lower alpha mixes the original, unblurred desktop back into the shell.
@@ -139,7 +137,7 @@ private final class PetroleumCradle: NSVisualEffectView {
         finishMask.path = path.cgPath
         blendMask.frame = bounds
         blendMask.path = ComposerGeometry.shellPath(in: bounds).cgPath
-        notchBlend.needsDisplay = true
+        blackCenter.needsDisplay = true
         // AppKit must mask the backdrop material itself, not just its CALayer.
         // Reuse the raster mask until the morph changes the view size.
         if maskedSize != bounds.size, bounds.width > 1, bounds.height > 1 {
@@ -154,27 +152,20 @@ private final class PetroleumCradle: NSVisualEffectView {
     }
 }
 
-/// Opaque at the camera seam, then clear outward/downward so the native frost
-/// remains visible. Separate from the finish opacity to meet the real black notch.
-private final class NotchBlend: NSView {
-    var notchWidth: CGFloat? { didSet { if notchWidth != oldValue { needsDisplay = true } } }
+/// Pure black around the typing area, fading out just before the divider lines begin,
+/// so the ring holding the lines keeps the gray frost. It scales with the morph.
+private final class BlackCenter: NSView {
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
     override func draw(_ dirtyRect: NSRect) {
-        guard let width = notchWidth, width > 0, bounds.width > 1,
-              let context = NSGraphicsContext.current?.cgContext else { return }
-        let baseRadius = max(bounds.width * 0.46, width / 2 + 12)
-        // Expand the entire black falloff, including its fully opaque core,
-        // 25% away from the camera seam. The outer material keeps its blur.
-        let spread: CGFloat = 1.25
-        let radius = baseRadius * spread
-        let depth = min(bounds.height * 0.45, 90) * spread
-        let core = min((width / 2 + 1) / baseRadius, 0.8)
-        let colors = [CGFloat(1), 1, 0.65, 0.2, 0].map { NSColor.black.withAlphaComponent($0).cgColor }
-        let locations: [CGFloat] = [0, core, core + (1 - core) * 0.32, core + (1 - core) * 0.7, 1]
+        guard bounds.width > 1, bounds.height > 1, let context = NSGraphicsContext.current?.cgContext else { return }
+        let size = ComposerGeometry.size, ring = ComposerGeometry.innerRing, core = ComposerGeometry.blackUntil / ComposerGeometry.grayFrom
+        let colors = [CGFloat(1), 1, 0.72, 0.28, 0].map { NSColor.black.withAlphaComponent($0).cgColor }
+        let locations: [CGFloat] = [0, core, core + (1 - core) * 0.35, core + (1 - core) * 0.7, 1]
         guard let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors as CFArray, locations: locations) else { return }
         context.saveGState()
         context.translateBy(x: bounds.midX, y: bounds.maxY)
-        context.scaleBy(x: radius, y: max(depth, 1))
+        context.scaleBy(x: ring.width / 2 * ComposerGeometry.grayFrom * bounds.width / size.width,
+                        y: ring.height / 2 * ComposerGeometry.grayFrom * bounds.height / size.height)
         context.drawRadialGradient(gradient, startCenter: .zero, startRadius: 0, endCenter: .zero, endRadius: 1, options: [])
         context.restoreGState()
     }

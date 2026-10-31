@@ -212,6 +212,16 @@ for frame in [ComposerGeometry.input, ComposerGeometry.send, ComposerGeometry.mo
 for point in [NSPoint(x: -1, y: 100), NSPoint(x: 480, y: 0), NSPoint(x: 240, y: -1)] {
     expect(ComposerGeometry.option(at: point) == nil, "Leaving the shell clears the option")
 }
+// The shell is black in the middle and gray where the divider lines are.
+expect(ComposerGeometry.blackUntil < 1 && ComposerGeometry.grayFrom >= 1, "The fade must finish about where the lines begin")
+let typing = NSPoint(x: ComposerGeometry.input.midX, y: ComposerGeometry.input.midY)
+expect(ComposerGeometry.ringDistance(typing) < ComposerGeometry.blackUntil, "The typing area must sit on pure black")
+expect(ComposerGeometry.ringDistance(ComposerGeometry.optionCenter) == 0, "The black must be centered on the camera")
+for frame in ComposerGeometry.optionFrames {
+    expect(ComposerGeometry.ringDistance(NSPoint(x: frame.midX, y: frame.midY)) > ComposerGeometry.grayFrom, "Each control must sit on the gray ring")
+}
+expect(ComposerGeometry.ringDistance(NSPoint(x: ComposerGeometry.innerRing.midX, y: ComposerGeometry.innerRing.minY)) == 1, "Distance 1 must be where the lines begin")
+expect(ComposerGeometry.ringDistance(NSPoint(x: ComposerGeometry.size.width / 2, y: 0)) > ComposerGeometry.grayFrom, "The outer border must be gray")
 print("Composer hover sectors and central input exclusion passed.")
 
 // Selection persistence and provider isolation use the same catalog as the server.
