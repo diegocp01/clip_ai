@@ -17,6 +17,29 @@ final class SelectionEditor: NSObject {
     private var resultPanel: NSPanel?
     private var resultText = ""
     private var clipboardBusy = false
+    private var lastAutomaticFingerprint: String?
+    private(set) var automaticRunning = false
+    var onAutomaticActivity: ((Bool) -> Void)?
+    private func setAutomaticRunning(_ running: Bool) {
+        automaticRunning = running
+        onAutomaticActivity?(running)
+    }
+    func cancelAutomatic() {
+        if automaticRunning { cancel(); onStatus("Text edit cancelled") }
+    }
+    func startAutomatic(_ snapshot: SelectionSummary.Snapshot) {
+        guard !clipboardBusy, !automaticRunning, task == nil, snapshot.fingerprint != lastAutomaticFingerprint else { return }
+        guard snapshot.text.utf16.count <= 12000 else { onStatus("Select at most 12,000 characters"); return }
+        let original = Selection(pid: snapshot.pid, element: snapshot.element, range: snapshot.range, text: snapshot.text)
+        capture(pid: snapshot.pid, allowCopy: false) { [weak self] fresh in
+            guard let self, let fresh, self.matches(original, fresh) else { return }
+            self.cancel()
+            self.lastAutomaticFingerprint = snapshot.fingerprint
+            self.setAutomaticRunning(true)
+            self.onStatus("Choosing edit…")
+            self.run(original, action: "auto", provider: self.provider(), current: self.generation)
+        }
+    }
     init(provider: @escaping () -> String, onStatus: @escaping (String) -> Void) { self.provider = provider; self.onStatus = onStatus }
 
     func requestAccess() {
@@ -29,6 +52,7 @@ final class SelectionEditor: NSObject {
     func cancel() {
         generation += 1
         task?.cancel(); task = nil
+        if automaticRunning { setAutomaticRunning(false) }
     }
     func start(_ action: String) {
         guard !clipboardBusy else { onStatus("Finishing the previous edit…"); return }
@@ -56,44 +80,64 @@ final class SelectionEditor: NSObject {
                 guard selection.text.utf16.count <= 12000 else {
                     self.onStatus("Select at most 12,000 characters"); return
                 }
-                self.task = Task { @MainActor [weak self] in
-                    guard let self else { return }
-                    do {
-                        let base = URL(string: "http://127.0.0.1:4317")!
-                        let (tokenBytes, tokenResponse) = try await URLSession.shared.data(from: base.appendingPathComponent("api/session"))
-                        guard (tokenResponse as? HTTPURLResponse)?.statusCode == 200,
-                              let object = try JSONSerialization.jsonObject(with: tokenBytes) as? [String: String], let token = object["token"] else {
-                            throw NSError(domain: "Clip", code: 1, userInfo: [NSLocalizedDescriptionKey: "Local server unavailable"])
-                        }
-                        try Task.checkCancellation()
-                        var request = URLRequest(url: base.appendingPathComponent("api/edit"), timeoutInterval: 135)
-                        request.httpMethod = "POST"
-                        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                        request.setValue(token, forHTTPHeaderField: "X-Clippy-Session")
-                        request.httpBody = try JSONSerialization.data(withJSONObject: ["text": selection.text, "action": action, "provider": provider])
-                        let (data, response) = try await URLSession.shared.data(for: request)
-                        try Task.checkCancellation()
-                        guard self.generation == current else { return }
-                        guard (response as? HTTPURLResponse)?.statusCode == 200 else {
-                            let value = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
-                            throw NSError(domain: "Clip", code: 2, userInfo: [NSLocalizedDescriptionKey: value?["error"] as? String ?? "Editing request failed"])
-                        }
-                        var output: String?
-                        for line in String(decoding: data, as: UTF8.self).split(separator: "\n") {
-                            guard let event = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any] else { continue }
-                            if event["type"] as? String == "error" {
-                                throw NSError(domain: "Clip", code: 3, userInfo: [NSLocalizedDescriptionKey: event["message"] as? String ?? "Editing failed"])
-                            }
-                            if event["type"] as? String == "result", let result = event["result"] as? [String: Any] { output = result["text"] as? String }
-                        }
-                        guard let output, !output.isEmpty, output.utf16.count <= 24000 else {
-                            throw NSError(domain: "Clip", code: 4, userInfo: [NSLocalizedDescriptionKey: "No edited text returned"])
-                        }
-                        self.replace(selection, with: output, generation: current)
-                    } catch {
-                        if !Task.isCancelled && self.generation == current { self.onStatus("Edit failed: \(error.localizedDescription)") }
-                    }
+                self.run(selection, action: action, provider: provider, current: current)
+            }
+        }
+    }
+    private func run(_ selection: Selection, action: String, provider: String, current: Int) {
+        self.task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            var replacing = false
+            defer {
+                if self.generation == current {
+                    self.task = nil
+                    if !replacing && self.automaticRunning { self.setAutomaticRunning(false) }
                 }
+            }
+            do {
+                let base = URL(string: "http://127.0.0.1:4317")!
+                let (tokenBytes, tokenResponse) = try await URLSession.shared.data(from: base.appendingPathComponent("api/session"))
+                guard (tokenResponse as? HTTPURLResponse)?.statusCode == 200,
+                      let object = try JSONSerialization.jsonObject(with: tokenBytes) as? [String: String], let token = object["token"] else {
+                    throw NSError(domain: "Clip", code: 1, userInfo: [NSLocalizedDescriptionKey: "Local server unavailable"])
+                }
+                try Task.checkCancellation()
+                var request = URLRequest(url: base.appendingPathComponent("api/edit"), timeoutInterval: 135)
+                request.httpMethod = "POST"
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                request.setValue(token, forHTTPHeaderField: "X-Clippy-Session")
+                request.httpBody = try JSONSerialization.data(withJSONObject: ["text": selection.text, "action": action, "provider": provider])
+                let (bytes, response) = try await URLSession.shared.bytes(for: request)
+                try Task.checkCancellation()
+                guard self.generation == current else { return }
+                guard (response as? HTTPURLResponse)?.statusCode == 200 else {
+                    var data = Data()
+                    for try await byte in bytes { if data.count >= 16000 { break }; data.append(byte) }
+                    let value = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+                    throw NSError(domain: "Clip", code: 2, userInfo: [NSLocalizedDescriptionKey: value?["error"] as? String ?? "Editing request failed"])
+                }
+                var output: String?
+                for try await line in bytes.lines {
+                    try Task.checkCancellation()
+                    guard self.generation == current else { return }
+                    guard line.utf8.count < 2_000_000 else { throw NSError(domain: "Clip", code: 5, userInfo: [NSLocalizedDescriptionKey: "Editing response too large"]) }
+                    guard let event = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any] else { continue }
+                    if event["type"] as? String == "status", let status = event["message"] as? String { self.onStatus(status) }
+                    if event["type"] as? String == "error" {
+                        throw NSError(domain: "Clip", code: 3, userInfo: [NSLocalizedDescriptionKey: event["message"] as? String ?? "Editing failed"])
+                    }
+                    if event["type"] as? String == "result", let result = event["result"] as? [String: Any] { output = result["text"] as? String }
+                }
+                guard let output, !output.isEmpty, output.utf16.count <= 24000 else {
+                    throw NSError(domain: "Clip", code: 4, userInfo: [NSLocalizedDescriptionKey: "No edited text returned"])
+                }
+                replacing = true
+                self.replace(selection, with: output, generation: current, automatic: action == "auto") { [weak self] in
+                    guard let self, self.generation == current else { return }
+                    if self.automaticRunning { self.setAutomaticRunning(false) }
+                }
+            } catch {
+                if !Task.isCancelled && self.generation == current { self.onStatus("Edit failed: \(error.localizedDescription)") }
             }
         }
     }
@@ -117,7 +161,7 @@ final class SelectionEditor: NSObject {
         var range = CFRange()
         return AXValueGetValue(axValue, .cfRange, &range) ? range : nil
     }
-    private func capture(pid: pid_t, completion: @escaping (Selection?) -> Void) {
+    private func capture(pid: pid_t, allowCopy: Bool = true, completion: @escaping (Selection?) -> Void) {
         guard NSWorkspace.shared.frontmostApplication?.processIdentifier == pid, !IsSecureEventInputEnabled() else { completion(nil); return }
         let element = focusedElement(pid)
         if let element {
@@ -132,7 +176,7 @@ final class SelectionEditor: NSObject {
         }
         // Some editors copy a whole line with no selection. Require a positive
         // selection range before using Copy when AXSelectedText is unavailable.
-        guard let element, let range = selectedRange(element), range.length > 0 else { completion(nil); return }
+        guard allowCopy, let element, let range = selectedRange(element), range.length > 0 else { completion(nil); return }
         copySelection(pid: pid) { [weak self] text in
             guard let self, let text, !text.isEmpty else { completion(nil); return }
             completion(Selection(pid: pid, element: element, range: self.selectedRange(element), text: text))
@@ -144,20 +188,28 @@ final class SelectionEditor: NSObject {
         if let range = old.range { guard let other = fresh.range, range.location == other.location, range.length == other.length else { return false } }
         return true
     }
-    private func replace(_ original: Selection, with text: String, generation current: Int) {
-        guard generation == current else { return }
-        guard original.text != text else { onStatus("No changes needed"); return }
-        afterModifiersReleased { [weak self] in
-            guard let self, self.generation == current else { return }
-            self.capture(pid: original.pid) { fresh in
-                guard self.generation == current else { return }
+    private func replace(_ original: Selection, with text: String, generation current: Int, automatic: Bool, completion: @escaping () -> Void) {
+        guard generation == current else { completion(); return }
+        guard original.text != text else { onStatus("No changes needed"); completion(); return }
+        afterModifiersReleased({ [weak self] in
+            guard let self, self.generation == current else { completion(); return }
+            self.capture(pid: original.pid, allowCopy: !automatic) { fresh in
+                guard self.generation == current else { completion(); return }
                 guard let fresh, self.matches(original, fresh) else {
-                    self.showResult(text, reason: "Selection changed. Your text was left untouched."); return
+                    self.showResult(text, reason: "Selection changed. Your text was left untouched."); completion(); return
                 }
                 // Use normal Paste for native Undo and broad editor compatibility.
                 // Recheck focus immediately before dispatch; never activate a stale app.
                 guard NSWorkspace.shared.frontmostApplication?.processIdentifier == original.pid else {
-                    self.showResult(text, reason: "You switched apps. Your text was left untouched."); return
+                    self.showResult(text, reason: "You switched apps. Your text was left untouched."); completion(); return
+                }
+                if automatic {
+                    var writable = DarwinBoolean(false)
+                    guard let element = original.element,
+                          AXUIElementIsAttributeSettable(element, kAXSelectedTextAttribute as CFString, &writable) == .success,
+                          writable.boolValue else {
+                        self.showResult(text, reason: "Edited text is ready. The source selection is read-only."); completion(); return
+                    }
                 }
                 let clipboard = ClipboardSnapshot()
                 self.clipboardBusy = true
@@ -166,6 +218,7 @@ final class SelectionEditor: NSObject {
                 let change = NSPasteboard.general.changeCount
                 self.commandKey(9, pid: original.pid) // Command-V, never Return/Submit.
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
+                    defer { completion() }
                     clipboard.restore(ifUnchanged: change)
                     self.clipboardBusy = false
                     guard self.generation == current else { return }
@@ -176,7 +229,7 @@ final class SelectionEditor: NSObject {
                     } else { self.onStatus("Replacement sent · ⌘Z to undo") }
                 }
             }
-        }
+        }, onTimeout: completion)
     }
     private func commandKey(_ key: CGKeyCode, pid: pid_t) {
         guard let source = CGEventSource(stateID: .privateState),
@@ -192,11 +245,11 @@ final class SelectionEditor: NSObject {
         guard AXUIElementCopyParameterizedAttributeValue(element, kAXStringForRangeParameterizedAttribute as CFString, parameter, &value) == .success else { return nil }
         return value as? String
     }
-    private func afterModifiersReleased(_ completion: @escaping () -> Void, attempts: Int = 40) {
+    private func afterModifiersReleased(_ completion: @escaping () -> Void, attempts: Int = 40, onTimeout: @escaping () -> Void = {}) {
         let flags = CGEventSource.flagsState(.combinedSessionState)
         if flags.intersection([.maskControl, .maskAlternate, .maskCommand, .maskShift]).isEmpty { completion(); return }
-        guard attempts > 0 else { onStatus("Release the shortcut keys, then try again"); return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { self.afterModifiersReleased(completion, attempts: attempts - 1) }
+        guard attempts > 0 else { onStatus("Release the shortcut keys, then try again"); onTimeout(); return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { self.afterModifiersReleased(completion, attempts: attempts - 1, onTimeout: onTimeout) }
     }
     private func copySelection(pid: pid_t, completion: @escaping (String?) -> Void) {
         clipboardBusy = true
@@ -221,7 +274,7 @@ final class SelectionEditor: NSObject {
     }
     private func showResult(_ text: String, reason: String) {
         resultText = text
-        onStatus("Edit ready · selection changed")
+        onStatus("Edited text ready")
         resultPanel?.close()
         let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 520, height: 330), styleMask: [.titled, .closable, .utilityWindow], backing: .buffered, defer: false)
         panel.title = "Clip · edited text"

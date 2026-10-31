@@ -5,15 +5,16 @@ export function normalizeEditRequest(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value) ||
       Object.keys(value).some(k=>!['text','action','provider'].includes(k)) ||
       !['gpt','claude',undefined].includes(value.provider) ||
-      !['proofread','rewrite'].includes(value.action) || typeof value.text!=='string' ||
+      !['proofread','rewrite','auto'].includes(value.action) || typeof value.text!=='string' ||
       !value.text.trim() || value.text.length>12000) {
-    throw new Error('Select 1–12,000 characters and choose proofread or rewrite.');
+    throw new Error('Select 1–12,000 characters and choose proofread, rewrite or auto.');
   }
   return {text:value.text,action:value.action,provider:value.provider??'gpt'};
 }
 const schema={type:'object',additionalProperties:false,required:['text'],properties:{text:{type:'string',minLength:1,maxLength:24000}}};
 export function editText(request,options={}) {
   const {text,action,provider}=normalizeEditRequest(request);
+  if(action==='auto')throw new Error('Automatic editing must be resolved by Decisions before generation.');
   const task=action==='proofread'
     ? 'Correct spelling, grammar, punctuation and obvious typos with minimal edits. Preserve the writer’s voice, wording and structure wherever possible.'
     : 'Rewrite for clarity, flow and natural phrasing. Preserve the writer’s intent, tone, language and factual claims; do not invent details or add commitments.';
