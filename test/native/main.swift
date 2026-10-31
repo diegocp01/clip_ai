@@ -99,27 +99,132 @@ for point in [CGPoint(x: 200, y: 150), CGPoint(x: 400, y: 220), CGPoint(x: 50, y
 }
 expect(island.point(at: island.nearest(to: CGPoint(x: 200, y: 150))) == CGPoint(x: 200, y: 200), "Point below must anchor on the bottom edge")
 
-// The blob reaches the tip and stays out of the way when there is nothing to draw.
-for tip in [CGPoint(x: 200, y: 150), CGPoint(x: 400, y: 220), CGPoint(x: 390, y: 170), CGPoint(x: 60, y: 210)] {
-    let box = GooShape.blob(outline: island, tip: tip)!.boundingBoxOfPath
-    expect(box.insetBy(dx: -1, dy: -1).contains(tip), "Blob must reach its tip")
-    expect(box.intersects(island.rect), "Blob must stay joined to the island")
+// The awake line wanders side to side, then splits into two eyes that look at the pointer and blink.
+let barLine = CGRect(x: 51.5, y: 4, width: 130, height: 2)
+let barBounds = CGRect(x: 0, y: 0, width: 233, height: 44)
+var bar = SignalBar()
+var leftmost = CGFloat.infinity, rightmost = -CGFloat.infinity
+for _ in 0..<Int(SignalBar.sweepTime * 60) {
+    bar.step(1.0 / 60, pointer: 0)
+    let parts = bar.bars(line: barLine, room: 51.5)
+    leftmost = min(leftmost, parts.left.midX); rightmost = max(rightmost, parts.left.midX)
+    expect(barBounds.contains(parts.left) && barBounds.contains(parts.right), "The line must stay inside the island")
 }
-// Close to the island the blob still has real body, so it reads as dragged-out black.
-let shortBlob = GooShape.blob(outline: island, tip: CGPoint(x: 200, y: 180))!.boundingBoxOfPath
-expect(shortBlob.minX <= 200 - 40 && shortBlob.maxX >= 200 + 40, "A short blob must flare out wide from the island")
-let longBulb = GooShape.bulb(outline: island, tip: CGPoint(x: 200, y: 130))!
-expect(longBulb.radius >= 14, "A stretched blob must keep a visible body")
-// Clicks count on the blob and just around it, never on the island itself or further away.
-let tip = CGPoint(x: 200, y: 150)
-expect(GooShape.touches(outline: island, tip: tip, point: CGPoint(x: 200, y: 160)), "A point inside the blob must count")
-expect(GooShape.touches(outline: island, tip: tip, point: CGPoint(x: 200, y: 142)), "A point just past the tip must count")
-expect(!GooShape.touches(outline: island, tip: tip, point: CGPoint(x: 200, y: 100)), "A point far past the tip must not count")
-expect(!GooShape.touches(outline: island, tip: tip, point: CGPoint(x: 300, y: 160)), "A point beside the blob must not count")
-expect(!GooShape.touches(outline: island, tip: tip, point: CGPoint(x: 200, y: 220)), "The island handles its own clicks")
-expect(!GooShape.touches(outline: island, tip: CGPoint(x: 200, y: 220), point: CGPoint(x: 200, y: 180)), "No blob must mean no click")
-expect(GooShape.blob(outline: island, tip: CGPoint(x: 200, y: 220)) == nil, "A tip inside the island must draw nothing")
-expect(GooShape.blob(outline: island, tip: CGPoint(x: 200, y: 199.5)) == nil, "A tip on the edge must draw nothing")
+expect(!bar.isEyes && leftmost < barLine.midX - 15 && rightmost > barLine.midX + 15, "The line must move left and right")
+expect(abs(bar.bars(line: barLine, room: 51.5).left.midX - bar.bars(line: barLine, room: 51.5).right.midX) < 8, "While sweeping it must read as one line")
+for _ in 0..<60 { bar.step(1.0 / 60, pointer: 1) }
+expect(bar.isEyes, "It must split into eyes after sweeping")
+let lookingRight = bar.bars(line: barLine, room: 51.5)
+expect(lookingRight.right.minX > lookingRight.left.maxX, "The eyes must be fully apart")
+expect(lookingRight.left.width < barLine.width / 2, "Each eye must be much shorter than the line")
+expect((lookingRight.left.midX + lookingRight.right.midX) / 2 > barLine.midX + 10, "The eyes must look toward the pointer")
+expect(barBounds.contains(lookingRight.left) && barBounds.contains(lookingRight.right), "The eyes must stay inside the island")
+for _ in 0..<60 { bar.step(1.0 / 60, pointer: -1) }
+let lookingLeft = bar.bars(line: barLine, room: 51.5)
+expect((lookingLeft.left.midX + lookingLeft.right.midX) / 2 < barLine.midX - 10, "The eyes must follow the pointer across")
+var blinked = false, shortest = CGFloat.infinity
+for _ in 0..<Int(SignalBar.eyesTime * 60) {
+    if bar.isEyes { shortest = min(shortest, bar.bars(line: barLine, room: 51.5).left.height); if bar.blink > 0.9 { blinked = true } }
+    bar.step(1.0 / 60, pointer: 0)
+}
+expect(blinked && shortest < barLine.height, "The eyes must blink")
+for _ in 0..<60 { bar.step(1.0 / 60, pointer: 0) }
+expect(!bar.isEyes, "The eyes must flow back into one line")
+
+// The liquid behaves like something heavy and viscous rather than following the pointer exactly.
+func run(_ sim: inout LiquidSim, _ seconds: CGFloat, pointer: CGPoint?, each: (LiquidSim) -> Void = { _ in }) {
+    for _ in 0..<Int(seconds * 60) {
+        sim.step(1.0 / 60, outline: island, pointer: pointer)
+        for node in sim.nodes { expect(node.x.isFinite && node.y.isFinite, "Liquid must stay finite") }
+        each(sim)
+    }
+}
+var liquid = LiquidSim()
+expect(liquid.isSettled, "New liquid must be at rest")
+let below = CGPoint(x: 236, y: 130)
+liquid.attach(at: island.point(at: island.nearest(to: below)))
+run(&liquid, 0.05, pointer: below)
+expect(liquid.length < 30, "Liquid must lag behind the pointer at first")
+var longest: CGFloat = 0
+run(&liquid, 2, pointer: below) { longest = max(longest, $0.length) }
+expect(liquid.length > 50 && longest > liquid.length + 1, "Liquid must reach toward the pointer, overshoot and settle")
+expect(liquid.distance(to: liquid.head) < 0, "The rounded end must be inside the liquid")
+expect(liquid.distance(to: CGPoint(x: 600, y: 600)) > 0, "Far away must be outside the liquid")
+expect(liquid.touches(liquid.head, outline: island), "A click on the liquid must count")
+expect(!liquid.touches(CGPoint(x: 236, y: 220), outline: island), "The island handles its own clicks")
+expect(!liquid.touches(CGPoint(x: 600, y: 600), outline: island), "A click far away must not count")
+
+// It thins as it stretches.
+let stretchedNeck = liquid.neckRadius
+var short = LiquidSim()
+let close = CGPoint(x: 236, y: 180)
+short.attach(at: island.point(at: island.nearest(to: close)))
+run(&short, 2, pointer: close)
+expect(short.neckRadius > stretchedNeck + 3, "A longer strand must have a thinner neck")
+
+// Gravity makes a sideways strand sag.
+var sideways = LiquidSim()
+let beside = CGPoint(x: 460, y: 225)
+sideways.attach(at: island.point(at: island.nearest(to: beside)))
+run(&sideways, 2, pointer: beside)
+expect(sideways.nodes[3].y < (sideways.nodes[0].y + sideways.head.y) / 2, "A sideways strand must sag under gravity")
+
+// The neck gives way, the end flies on as a drop, and everything merges back.
+let before = liquid.head
+liquid.separate()
+run(&liquid, 0.3, pointer: nil)
+expect(liquid.drops.count == 2 && !liquid.isSettled, "Separating must leave a drop and a smaller one")
+let drop = liquid.drops[0]
+expect(hypot(drop.position.x - before.x, drop.position.y - before.y) < 60, "The drop must carry on from where the end was")
+expect(drop.radius > liquid.drops[1].radius, "The main drop must be the larger one")
+expect(liquid.distance(to: drop.position) < 0, "A drop must be solid")
+expect(liquid.length < 40, "The stump must recoil")
+var merged = false
+run(&liquid, 4, pointer: nil) { if $0.isSettled { merged = true } }
+expect(merged && liquid.isSettled && liquid.drops.isEmpty, "Drops must merge back and the liquid must come to rest")
+
+// It's drawn as solid black with a green glow, and not at all when there's no liquid.
+expect(liquid.render(island: island.rect, cornerRadius: 18, scale: 2, clip: CGRect(x: 0, y: 0, width: 800, height: 800)) == nil, "Settled liquid must draw nothing")
+var drawn = LiquidSim()
+drawn.attach(at: island.point(at: island.nearest(to: below)))
+run(&drawn, 2, pointer: below)
+let clip = CGRect(x: 0, y: 0, width: 800, height: 800)
+let picture = drawn.render(island: island.rect, cornerRadius: 18, scale: 2, clip: clip)!
+expect(picture.frame.contains(drawn.head) && clip.contains(picture.frame), "The picture must cover the liquid inside the panel")
+let bitmap = NSBitmapImageRep(cgImage: picture.image)
+func pixel(_ point: CGPoint) -> (r: CGFloat, g: CGFloat, b: CGFloat, a: CGFloat) {
+    let color = bitmap.colorAt(x: Int((point.x - picture.frame.minX) * 2), y: Int((picture.frame.maxY - point.y) * 2))!
+    return (color.redComponent, color.greenComponent, color.blueComponent, color.alphaComponent)
+}
+let middle = pixel(CGPoint(x: drawn.nodes[3].x, y: drawn.nodes[3].y))
+expect(middle.a > 0.99 && max(middle.r, middle.g, middle.b) < 0.45, "The inside of the liquid must be solid and dark")
+expect(pixel(drawn.head).a > 0.99, "The liquid's end must be drawn")
+let outside = pixel(CGPoint(x: drawn.head.x + 12.5 + 12, y: drawn.head.y - 4))
+expect(outside.a < 0.6 && outside.g > outside.r, "Outside the liquid must be a green glow, not black")
+// The petroleum look is texture only: colorless, mostly pure black, and drifting over time.
+var brightest: CGFloat = 0, blackPoints = 0, points = 0
+for x in stride(from: CGFloat(0), to: 400, by: 3) {
+    for y in stride(from: CGFloat(0), to: 200, by: 3) {
+        let level = Petroleum.gloss(x, y, 1)
+        brightest = max(brightest, level); points += 1
+        if level == 0 { blackPoints += 1 }
+    }
+}
+expect(brightest > 0.05 && brightest <= 0.2, "The gloss must show without stopping it reading as black")
+expect(blackPoints * 2 > points, "Most of the surface must be pure black")
+let moved = (0..<80).contains { i in
+    let x = CGFloat(i) * 9
+    return abs(Petroleum.gloss(x, 50, 1) - Petroleum.gloss(x, 50, 9)) > 0.01
+}
+expect(moved, "The gloss must drift over time")
+let oilArea = CGRect(x: 100, y: 200, width: 100, height: 44)
+let oilHole = CGRect(x: 120, y: 214, width: 60, height: 30)
+let oilBitmap = NSBitmapImageRep(cgImage: Petroleum.image(area: oilArea, hole: oilHole, time: 1)!)
+expect(oilBitmap.colorAt(x: 50, y: 5)!.alphaComponent == 0 && oilBitmap.colorAt(x: 50, y: 40)!.alphaComponent == 1 && oilBitmap.colorAt(x: 5, y: 5)!.alphaComponent == 1, "The texture must skip the camera and cover the rest")
+for x in stride(from: 0, to: 100, by: 7) {
+    let color = oilBitmap.colorAt(x: x, y: 40)!
+    expect(color.redComponent == color.greenComponent && color.greenComponent == color.blueComponent, "The texture must have no color")
+}
 print("Native island layout checks passed (notched, shifted, external, and missing bounds).")
 
 // Opening/closing shares the final top edge, and every composer control stays visible.

@@ -66,19 +66,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var signalHost: NSView!
     private let statusLine = CALayer()
     private let sensingLine = CAGradientLayer()
-    private let sensingGlow = CAGradientLayer()
-    private var signalPoint: CGFloat = 0.5
+    private let sensingEye = CAGradientLayer()
+    private var signalBar = SignalBar()
     private var pointerOnIsland = false
     private let wakeSound = WakeSound()
     private var gooPanel: FloatingPanel!
     private let gooFill = CAShapeLayer()
-    private let gooRimMask = CAShapeLayer()
-    private let gooRimGlow = CAGradientLayer()
+    private let gooLiquid = CALayer()
+    private let islandOil = CALayer()
+    private var oilTime: CGFloat = 0
+    private var liquid = LiquidSim()
     private var wake = Spring(stiffness: 150, damping: 17)
-    private var tipX = Spring(stiffness: 210, damping: 20)
-    private var tipY = Spring(stiffness: 210, damping: 20)
     private var tether = GooTether()
-    private var droplet: GooDroplet?
     private var pointerOnGlue = false { didSet { gooPanel.ignoresMouseEvents = !pointerOnGlue } }
     private var wakeEnds: (rest: IslandLayout, awake: IslandLayout)?
     private var wakeRegion = NSRect.zero
@@ -243,24 +242,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         signalHost.wantsLayer = true
         signalHost.layer?.masksToBounds = true
         signalHost.autoresizingMask = [.width, .height]
-        sensingGlow.type = .radial
-        sensingGlow.colors = [signalGreen.withAlphaComponent(0.26).cgColor, signalGreen.withAlphaComponent(0).cgColor]
-        sensingGlow.opacity = 0
-        sensingLine.startPoint = CGPoint(x: 0, y: 0.5)
-        sensingLine.endPoint = CGPoint(x: 1, y: 0.5)
-        sensingLine.colors = [signalGreen.withAlphaComponent(0), signalGreen.withAlphaComponent(0.6), NSColor(calibratedRed: 0.8, green: 1, blue: 0.86, alpha: 1), signalGreen.withAlphaComponent(0.6), signalGreen.withAlphaComponent(0)].map(\.cgColor)
-        sensingLine.cornerRadius = 1
-        sensingLine.shadowColor = signalGreen.cgColor
-        sensingLine.shadowOffset = .zero
-        sensingLine.shadowRadius = 5
-        sensingLine.shadowOpacity = 1
-        sensingLine.opacity = 0
+        // Two bars lying on top of each other read as one line until they split apart.
+        for bar in [sensingLine, sensingEye] {
+            bar.startPoint = CGPoint(x: 0, y: 0.5)
+            bar.endPoint = CGPoint(x: 1, y: 0.5)
+            bar.colors = [signalGreen.withAlphaComponent(0), signalGreen.withAlphaComponent(0.6), NSColor(calibratedRed: 0.8, green: 1, blue: 0.86, alpha: 1), signalGreen.withAlphaComponent(0.6), signalGreen.withAlphaComponent(0)].map(\.cgColor)
+            bar.locations = [0, 0.3, 0.5, 0.7, 1]
+            bar.cornerRadius = 1
+            bar.shadowColor = signalGreen.cgColor
+            bar.shadowOffset = .zero
+            bar.shadowRadius = 5
+            bar.shadowOpacity = 1
+            bar.opacity = 0
+        }
         statusLine.backgroundColor = coral.cgColor
         statusLine.shadowColor = coral.cgColor
         statusLine.shadowOffset = .zero
         statusLine.shadowRadius = 4
         statusLine.shadowOpacity = 0.8
-        for layer in [sensingGlow, sensingLine, statusLine] { signalHost.layer?.addSublayer(layer) }
+        islandOil.contentsGravity = .resize
+        islandOil.opacity = 0
+        for layer in [islandOil, sensingLine, sensingEye, statusLine] { signalHost.layer?.addSublayer(layer) }
         islandView.addSubview(signalHost, positioned: .below, relativeTo: statusLabel)
         buildGoo()
         let promptSurface = NSView(frame: ComposerGeometry.prompt)
@@ -326,18 +328,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         host.onExpand = islandView.onExpand
         gooPanel.contentView = host
         gooFill.fillColor = NSColor.black.cgColor
-        gooRimMask.fillColor = nil
-        gooRimMask.strokeColor = NSColor.white.cgColor
-        gooRimMask.lineWidth = 3
-        gooRimMask.shadowColor = NSColor.white.cgColor
-        gooRimMask.shadowOffset = .zero
-        gooRimMask.shadowRadius = 5
-        gooRimMask.shadowOpacity = 1
-        gooRimGlow.type = .radial
-        gooRimGlow.colors = [signalGreen.cgColor, signalGreen.withAlphaComponent(0).cgColor]
-        gooRimGlow.mask = gooRimMask
-        // The black covers the rim's inner half, so the liquid stays solid and only its outside glows.
-        for layer in [gooRimGlow, gooFill] { host.layer?.addSublayer(layer) }
+        gooLiquid.contentsGravity = .resize
+        for layer in [gooFill, gooLiquid] { host.layer?.addSublayer(layer) }
     }
     @objc private func collapseIsland() { setExpanded(false) }
     @objc private func showIslandOptions(_ sender: NSButton) {
@@ -395,7 +387,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         if wakeEnds?.rest.isNotched == true, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             let outline = IslandOutline(rect: island.frame)
             let clickedAway = NSEvent.pressedMouseButtons != 0 && !pointerOnGlue
-            if tether.update(inside: inside, distance: outline.distance(to: pointer), pressed: clickedAway, dt: dt) { separateGoo() }
+            if tether.update(inside: inside, distance: outline.distance(to: pointer), pressed: clickedAway, dt: dt) { liquid.separate() }
         } else { tether.attached = inside }
         guard tether.attached != pointerOnIsland else { return }
         pointerOnIsland = tether.attached
@@ -408,7 +400,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             }
             let anchor = IslandOutline(rect: island.frame)
             let start = anchor.point(at: anchor.nearest(to: pointer))
-            tipX.jump(to: start.x); tipY.jump(to: start.y)
+            liquid.attach(at: start)
+            if wake.value < 0.1 { signalBar = SignalBar() }
         }
         layoutIsland()
     }
@@ -634,8 +627,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             let rest = makeLayout(false)
             wakeEnds = (rest, makeLayout(true))
             wakeRegion = rest.wakeArea.offsetBy(dx: rest.frame.minX, dy: rest.frame.minY)
-            gooPanel.setFrame(rest.frame.insetBy(dx: -220, dy: 0).union(rest.frame.offsetBy(dx: 0, dy: -150)), display: false)
-            if awake || wake.value > 0 || droplet != nil || frameTimer != nil {
+            gooPanel.setFrame(rest.frame.insetBy(dx: -220, dy: 0).union(rest.frame.offsetBy(dx: 0, dy: -210)), display: false)
+            if awake || wake.value > 0 || !liquid.isSettled || frameTimer != nil {
                 startFrames()
                 applyWake()
                 return layout
@@ -644,7 +637,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             // Text or the composer takes over from any liquid still in motion.
             stopFrames()
             wakeRegion = .zero
-            wake.jump(to: 0); tether.attached = false; pointerOnIsland = false; droplet = nil
+            wake.jump(to: 0); tether.attached = false; pointerOnIsland = false; liquid.reset()
             if pointerOnGlue { pointerOnGlue = false }
         }
         updateSignal(content: content, layout: layout)
@@ -661,8 +654,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             }
         }
         if layout.isNotched && !expanded {
-            gooPanel.setFrame(layout.frame.insetBy(dx: -220, dy: 0).union(layout.frame.offsetBy(dx: 0, dy: -150)), display: false)
-            drawGoo(outline: IslandOutline(rect: layout.frame), tip: nil)
+            gooPanel.setFrame(layout.frame.insetBy(dx: -220, dy: 0).union(layout.frame.offsetBy(dx: 0, dy: -210)), display: false)
+            drawGoo(outline: IslandOutline(rect: layout.frame))
         }
         return layout
     }
@@ -678,7 +671,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         statusLine.cornerRadius = min(layout.lineFrame.width, layout.lineFrame.height) / 2
         statusLine.opacity = content == .audio ? 0 : 1
         sensingLine.opacity = 0
-        sensingGlow.opacity = 0
+        sensingEye.opacity = 0
+        islandOil.opacity = 0
+        islandOil.contents = nil
         CATransaction.commit()
         guard content == .idle, !expanded, !reduceMotion else { statusLine.removeAnimation(forKey: "pulse"); return }
         guard statusLine.animation(forKey: "pulse") == nil else { return }
@@ -705,10 +700,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         lastFrame = now
         updatePointer()
         guard frameTimer != nil else { return }
-        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion { wake.jump(to: wake.target) } else { wake.step(dt) }
+        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion { wake.jump(to: wake.target) } else {
+            wake.step(dt)
+            signalBar.step(dt, pointer: (NSEvent.mouseLocation.x - island.frame.midX) / max(island.frame.width / 2, 1))
+        }
         applyWake()
         stepGoo(dt)
-        if wake.isSettled, wake.value == 0, droplet == nil, tipX.isSettled, tipY.isSettled {
+        if wake.isSettled, wake.value == 0, liquid.isSettled {
             stopFrames()
             if pointerOnGlue { pointerOnGlue = false }
             layoutIsland()
@@ -725,8 +723,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let restLine = rest.lineFrame.offsetBy(dx: rest.frame.minX - frame.minX, dy: rest.frame.minY - frame.minY)
         let awakeLine = awake.lineFrame.offsetBy(dx: awake.frame.minX - frame.minX, dy: awake.frame.minY - frame.minY)
         let width = mix(restLine.width, 6, bead), height = mix(restLine.height, awakeLine.height, bead)
-        let lean = max(min((NSEvent.mouseLocation.x - frame.midX) / max(frame.width, 1), 0.5), -0.5) * 0.25
-        signalPoint += (0.5 + lean - signalPoint) * 0.12
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         let radius = mix(rest.cornerRadius, awake.cornerRadius, min(t, 1))
@@ -735,69 +731,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         statusLine.frame = NSRect(x: mix(restLine.midX, awakeLine.midX, bead) - width / 2, y: mix(restLine.midY, awakeLine.midY, bead) - height / 2, width: width, height: height)
         statusLine.cornerRadius = min(width, height) / 2
         statusLine.opacity = Float(1 - smoothstep(0.45, 0.75, t))
-        let lineWidth = mix(8, awakeLine.width, spread)
-        sensingLine.frame = NSRect(x: awakeLine.midX - lineWidth / 2, y: awakeLine.minY, width: lineWidth, height: awakeLine.height)
-        sensingLine.opacity = Float(smoothstep(0.4, 0.75, t))
-        sensingLine.locations = [0, signalPoint * 0.4, signalPoint, signalPoint + (1 - signalPoint) * 0.6, 1].map { NSNumber(value: Double($0)) }
-        sensingGlow.frame = NSRect(origin: .zero, size: frame.size)
-        sensingGlow.opacity = Float(spread)
-        sensingGlow.startPoint = CGPoint(x: signalPoint, y: 0.1)
-        sensingGlow.endPoint = CGPoint(x: signalPoint + 0.22, y: 1)
+        // The bars spread out of the bead, from the middle of the line.
+        let bars = signalBar.bars(line: awakeLine, room: (awake.frame.width - awake.lineFrame.width) / 2)
+        for (layer, bar) in [(sensingLine, bars.left), (sensingEye, bars.right)] {
+            let barWidth = mix(8, bar.width, spread)
+            layer.frame = NSRect(x: mix(awakeLine.midX, bar.midX, spread) - barWidth / 2, y: bar.minY, width: barWidth, height: bar.height)
+            layer.cornerRadius = bar.height / 2
+            layer.opacity = Float(smoothstep(0.4, 0.75, t))
+        }
         CATransaction.commit()
     }
     private func stepGoo(_ dt: CGFloat) {
         guard wakeEnds?.rest.isNotched == true else { return }
         let outline = IslandOutline(rect: island.frame)
         let pointer = NSEvent.mouseLocation
-        let target: CGPoint
-        if pointerOnIsland {
-            // The blob reaches most of the way, then the pointer pulls away from it.
-            let anchor = outline.point(at: outline.nearest(to: pointer))
-            let gap = outline.rect.contains(pointer) ? 0 : hypot(pointer.x - anchor.x, pointer.y - anchor.y)
-            let reach = min(gap * 0.9, 70) / max(gap, 1)
-            target = CGPoint(x: anchor.x + (pointer.x - anchor.x) * reach, y: anchor.y + (pointer.y - anchor.y) * reach)
-            tipX.stiffness = 210; tipY.stiffness = 210; tipX.damping = 20; tipY.damping = 20
-        } else {
-            target = outline.point(at: outline.nearest(to: CGPoint(x: tipX.value, y: tipY.value)))
-            tipX.stiffness = 340; tipY.stiffness = 340; tipX.damping = 26; tipY.damping = 26
-        }
-        tipX.target = target.x; tipY.target = target.y
-        tipX.step(dt); tipY.step(dt)
-        let onGlue = pointerOnIsland && GooShape.touches(outline: outline, tip: CGPoint(x: tipX.value, y: tipY.value), point: pointer)
-        if onGlue != pointerOnGlue { pointerOnGlue = onGlue }
-        if var drop = droplet {
-            drop.center.x += drop.velocity.x * dt; drop.center.y += drop.velocity.y * dt
-            drop.radius -= 28 * dt
-            droplet = drop.radius > 0.5 ? drop : nil
-        }
-        drawGoo(outline: outline, tip: CGPoint(x: tipX.value, y: tipY.value))
-    }
-    private func separateGoo() {
-        guard let bulb = GooShape.bulb(outline: IslandOutline(rect: island.frame), tip: CGPoint(x: tipX.value, y: tipY.value)) else { return }
-        droplet = GooDroplet(center: bulb.center, radius: bulb.radius * 0.7, velocity: CGPoint(x: bulb.direction.x * 45, y: bulb.direction.y * 45))
-    }
-    private func drawGoo(outline: IslandOutline, tip: CGPoint?) {
-        let bounds = gooPanel.frame
-        let toPanel = CGAffineTransform(translationX: -bounds.minX, y: -bounds.minY)
-        let liquid = CGMutablePath()
-        if let tip, let blob = GooShape.blob(outline: outline, tip: tip) { liquid.addPath(blob, transform: toPanel) }
-        if let droplet {
-            liquid.addEllipse(in: CGRect(x: droplet.center.x - droplet.radius, y: droplet.center.y - droplet.radius, width: droplet.radius * 2, height: droplet.radius * 2), transform: toPanel)
-        }
-        let fill = CGMutablePath()
-        fill.addPath(liquid)
-        fill.addPath(GooShape.shoulders(rect: outline.rect, radius: mix(8, 16, min(max(wake.value, 0), 1))), transform: toPanel)
+        liquid.step(dt, outline: outline, pointer: pointerOnIsland ? pointer : nil)
+        oilTime += dt
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        let local = CGRect(origin: .zero, size: bounds.size)
-        for layer in [gooRimGlow, gooFill] { layer.frame = local }
-        gooRimMask.frame = local
-        gooFill.path = fill
-        gooRimMask.path = liquid
-        let focus = (tip ?? .zero).applying(toPanel)
-        let unit = CGPoint(x: focus.x / max(local.width, 1), y: focus.y / max(local.height, 1))
-        gooRimGlow.startPoint = unit
-        gooRimGlow.endPoint = CGPoint(x: unit.x + 60 / max(local.width, 1), y: unit.y + 60 / max(local.height, 1))
+        islandOil.frame = CGRect(origin: .zero, size: outline.rect.size)
+        islandOil.contents = wake.value > 0.01 ? Petroleum.image(area: outline.rect, hole: wakeEnds?.rest.notchFrame, time: oilTime) : nil
+        islandOil.opacity = Float(smoothstep(0.2, 0.9, wake.value))
+        CATransaction.commit()
+        let onGlue = pointerOnIsland && liquid.touches(pointer, outline: outline)
+        if onGlue != pointerOnGlue { pointerOnGlue = onGlue }
+        drawGoo(outline: outline)
+    }
+    private func drawGoo(outline: IslandOutline) {
+        let bounds = gooPanel.frame
+        let toPanel = CGAffineTransform(translationX: -bounds.minX, y: -bounds.minY)
+        let shoulders = CGMutablePath()
+        shoulders.addPath(GooShape.shoulders(rect: outline.rect, radius: mix(8, 16, min(max(wake.value, 0), 1))), transform: toPanel)
+        let drawn = liquid.render(island: outline.rect, cornerRadius: islandView.layer?.cornerRadius ?? 10, scale: gooPanel.backingScaleFactor, clip: bounds, time: oilTime)
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        gooFill.frame = CGRect(origin: .zero, size: bounds.size)
+        gooFill.path = shoulders
+        gooLiquid.contents = drawn?.image
+        if let frame = drawn?.frame { gooLiquid.frame = frame.applying(toPanel) }
         CATransaction.commit()
     }
     @objc private func reposition() { setExpanded(expanded, animated: false); positionOverlay() }

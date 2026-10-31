@@ -25,6 +25,42 @@ struct Spring {
     mutating func jump(to position: CGFloat) { value = position; velocity = 0 }
 }
 
+/// The awake line's behavior: it wanders side to side, then splits into two eyes that
+/// look toward the pointer and blink, then flows back together.
+struct SignalBar {
+    static let sweepTime: CGFloat = 3.6
+    static let eyesTime: CGFloat = 3.2
+    private(set) var time: CGFloat = 0
+    private var sway = Spring(stiffness: 40, damping: 9)
+    private var split = Spring(stiffness: 60, damping: 10)
+    private var look = Spring(stiffness: 70, damping: 11)
+    private var phase: CGFloat { time.truncatingRemainder(dividingBy: SignalBar.sweepTime + SignalBar.eyesTime) }
+    var isEyes: Bool { phase > SignalBar.sweepTime }
+    /// Two quick closes while the eyes are open: 1 is shut.
+    var blink: CGFloat {
+        let first = (phase - SignalBar.sweepTime - 1.3) / 0.07, second = (phase - SignalBar.sweepTime - 2.4) / 0.07
+        return min(exp(-first * first) + exp(-second * second), 1)
+    }
+    /// `pointer` runs from -1 at the island's left edge to 1 at its right.
+    mutating func step(_ dt: CGFloat, pointer: CGFloat) {
+        time += dt
+        split.target = isEyes ? 1 : 0
+        sway.target = isEyes ? 0 : sin(time * 2 * .pi / 2.4)
+        look.target = min(max(pointer, -1), 1)
+        split.step(dt); sway.step(dt); look.step(dt)
+    }
+    /// Where the two bars sit. They overlap as one line until it splits. `room` is the free space beside the line.
+    func bars(line: CGRect, room: CGFloat) -> (left: CGRect, right: CGRect) {
+        let s = min(max(split.value, 0), 1.15)
+        let center = line.midX + sway.value * (1 - min(s, 1)) * room * 0.7 + look.value * room * mix(0.2, 0.45, min(s, 1))
+        let width = mix(line.width, line.width * 0.26, s) * (1 - 0.2 * blink), height = mix(line.height, line.height * 1.6, s) * (1 - 0.7 * blink)
+        let gap = line.width * 0.24 * s
+        let y = line.midY - height / 2
+        return (CGRect(x: center - gap - width / 2, y: y, width: width, height: height),
+                CGRect(x: center + gap - width / 2, y: y, width: width, height: height))
+    }
+}
+
 /// Holds on to the pointer after it leaves the island, until it goes too far, takes too long or clicks elsewhere.
 struct GooTether {
     static let reach: CGFloat = 110
@@ -72,52 +108,7 @@ struct IslandOutline {
     }
 }
 
-/// A small drop left behind for a moment when the tether separates.
-struct GooDroplet {
-    var center: CGPoint
-    var radius: CGFloat
-    var velocity: CGPoint
-}
-
 enum GooShape {
-    /// Where the blob's rounded end sits for a tip, and how it points.
-    static func bulb(outline: IslandOutline, tip: CGPoint) -> (center: CGPoint, radius: CGFloat, direction: CGPoint, length: CGFloat)? {
-        guard !outline.rect.contains(tip) else { return nil }
-        let anchor = outline.point(at: outline.nearest(to: tip))
-        let length = hypot(tip.x - anchor.x, tip.y - anchor.y)
-        guard length > 1 else { return nil }
-        let direction = CGPoint(x: (tip.x - anchor.x) / length, y: (tip.y - anchor.y) / length)
-        let radius = min(mix(22, 14, smoothstep(10, 70, length)), length * 0.6)
-        return (CGPoint(x: tip.x - direction.x * radius, y: tip.y - direction.y * radius), radius, direction, length)
-    }
-    /// A liquid neck from the island's edge out to the tip. Its base closes through
-    /// the island's interior, which the opaque island window covers.
-    static func blob(outline: IslandOutline, tip: CGPoint) -> CGPath? {
-        guard let bulb = bulb(outline: outline, tip: tip) else { return nil }
-        let position = outline.nearest(to: tip)
-        let baseHalf = mix(46, 30, smoothstep(10, 70, bulb.length))
-        let a = outline.point(at: position - baseHalf), b = outline.point(at: position + baseHalf)
-        let ta = outline.tangent(at: position - baseHalf), tb = outline.tangent(at: position + baseHalf)
-        let d = bulb.direction, side = CGPoint(x: -d.y, y: d.x), r = bulb.radius, fillet = baseHalf * 0.75
-        let neck = max(bulb.length - r, 0) * 0.55
-        let pa = CGPoint(x: bulb.center.x - side.x * r, y: bulb.center.y - side.y * r)
-        let pb = CGPoint(x: bulb.center.x + side.x * r, y: bulb.center.y + side.y * r)
-        let path = CGMutablePath()
-        path.move(to: a)
-        path.addCurve(to: pa, control1: CGPoint(x: a.x + ta.x * fillet, y: a.y + ta.y * fillet),
-                      control2: CGPoint(x: pa.x - d.x * neck, y: pa.y - d.y * neck))
-        path.addArc(center: bulb.center, radius: r, startAngle: atan2(-side.y, -side.x), endAngle: atan2(side.y, side.x), clockwise: false)
-        path.addCurve(to: b, control1: CGPoint(x: pb.x - d.x * neck, y: pb.y - d.y * neck),
-                      control2: CGPoint(x: b.x - tb.x * fillet, y: b.y - tb.y * fillet))
-        path.addLine(to: CGPoint(x: outline.rect.midX, y: outline.rect.midY))
-        path.closeSubpath()
-        return path
-    }
-    /// Whether a point is on the blob, with some room around it because the pointer pulls ahead of the tip.
-    static func touches(outline: IslandOutline, tip: CGPoint, point: CGPoint) -> Bool {
-        guard !outline.rect.contains(point), let blob = blob(outline: outline, tip: tip) else { return false }
-        return blob.contains(point) || blob.copy(strokingWithWidth: 24, lineCap: .round, lineJoin: .round, miterLimit: 1).contains(point)
-    }
     /// Concave corners that melt the island's top edge into the menu bar.
     static func shoulders(rect: CGRect, radius: CGFloat = 8) -> CGPath {
         let path = CGMutablePath()
