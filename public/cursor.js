@@ -61,8 +61,8 @@ export function stepDuration(step) {
 
 // Plays steps over time. It knows nothing about the page, so it can be tested without one.
 export class CursorPlayer {
-  constructor({ locate = () => null, orbit = () => {}, zoom = () => {}, center = () => ({ x: 0, y: 0 }), reducedMotion = false } = {}) {
-    Object.assign(this, { locate, orbit, zoom, center, reducedMotion });
+  constructor({ locate = () => null, orbit = () => {}, zoom = () => {}, center = () => ({ x: 0, y: 0 }), reveal = () => {}, reducedMotion = false } = {}) {
+    Object.assign(this, { locate, orbit, zoom, center, reveal, reducedMotion });
     this.queue = []; this.step = null; this.position = null; this.ink = []; this.tail = []; this.opacity = 0; this.idleSince = null;
     this.nextInk = 1;
   }
@@ -76,6 +76,8 @@ export class CursorPlayer {
     if (step.target) {
       const place = this.locate(step.target);
       if (place) return place;
+      // Out of view for now, such as while a panel scrolls to it: wait where it is.
+      if (this.position) return { x: this.position.x, y: this.position.y, r: 24 };
     }
     const middle = this.center();
     return { x: middle.x, y: middle.y, r: 24 };
@@ -84,11 +86,12 @@ export class CursorPlayer {
     const step = this.queue.shift();
     const start = this.position || (() => { const middle = this.center(); return { x: middle.x + 60, y: middle.y + 60 }; })();
     this.step = { ...step, began: now, duration: this.reducedMotion ? 1 : stepDuration(step), from: { ...start }, progress: 0 };
+    if (step.target) this.reveal(step.target);
     if (step.action === 'clear') this.clearInk();
     if (step.action === 'circle') { this.step.ink = { id: this.nextInk++, kind: 'circle', target: step.target, progress: 0 }; this.ink.push(this.step.ink); }
     if (step.action === 'write') {
       const place = this.anchor(step);
-      this.step.ink = { id: this.nextInk++, kind: 'write', target: step.target, text: step.text, progress: 0, offsetX: step.target ? place.r + 16 : -60, offsetY: step.target ? -place.r * 0.4 : 0, x: place.x, y: place.y };
+      this.step.ink = { id: this.nextInk++, kind: 'write', target: step.target, text: step.text, progress: 0, offsetX: place.noteX ?? (step.target ? place.r + 16 : -60), offsetY: place.noteY ?? (step.target ? -place.r * 0.4 : 0), x: place.x, y: place.y };
       this.ink.push(this.step.ink);
     }
     while (this.ink.length > 12) this.ink.shift();
@@ -116,8 +119,8 @@ export class CursorPlayer {
       const place = this.anchor(step);
       const approach = ease(clamp(progress / 0.35, 0, 1)), drawn = ease(clamp((progress - 0.35) / 0.65, 0, 1));
       if (step.action === 'circle') {
-        const radius = place.r + 12, angle = -Math.PI / 2 + drawn * Math.PI * 2;
-        const onCircle = { x: place.x + Math.cos(angle) * radius, y: place.y + Math.sin(angle) * radius };
+        const angle = -Math.PI / 2 + drawn * Math.PI * 2;
+        const onCircle = { x: place.x + Math.cos(angle) * ((place.rx ?? place.r) + 12), y: place.y + Math.sin(angle) * ((place.ry ?? place.r) + 12) };
         return { x: lerp(step.from.x, onCircle.x, approach), y: lerp(step.from.y, onCircle.y, approach) };
       }
       const width = step.text.length * 11, left = place.x + step.ink.offsetX;
@@ -159,8 +162,8 @@ export class CursorPlayer {
 const SVG = 'http://www.w3.org/2000/svg';
 // Paints the player's state onto the overlay. Nothing here takes clicks.
 export class VoiceCursor {
-  constructor({ root, locate, orbit, zoom, center, schedule = callback => requestAnimationFrame(callback), clock = () => performance.now(), reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches }) {
-    this.player = new CursorPlayer({ locate, orbit, zoom, center, reducedMotion });
+  constructor({ root, locate, orbit, zoom, center, reveal, schedule = callback => requestAnimationFrame(callback), clock = () => performance.now(), reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches }) {
+    this.player = new CursorPlayer({ locate, orbit, zoom, center, reveal, reducedMotion });
     this.locate = locate; this.schedule = schedule; this.clock = clock; this.running = false;
     this.layer = document.createElement('div'); this.layer.id = 'voice-cursor'; this.layer.setAttribute('aria-hidden', 'true');
     this.canvas = document.createElement('canvas');
@@ -214,8 +217,8 @@ export class VoiceCursor {
       element.style.display = place ? '' : 'none';
       if (!place) continue;
       if (item.kind === 'circle') {
-        const r = place.r + 12;
-        element.setAttribute('d', `M ${place.x} ${place.y - r} a ${r} ${r} 0 1 1 -0.01 0`);
+        const rx = (place.rx ?? place.r) + 12, ry = (place.ry ?? place.r) + 12;
+        element.setAttribute('d', `M ${place.x} ${place.y - ry} a ${rx} ${ry} 0 1 1 -0.01 0`);
         element.style.strokeDasharray = `${item.progress} 1`;
       } else {
         element.setAttribute('x', place.x + item.offsetX); element.setAttribute('y', place.y + item.offsetY);

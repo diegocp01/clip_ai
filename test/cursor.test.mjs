@@ -107,6 +107,31 @@ test('with reduced motion, steps land at once and still end in the right place',
   assert.ok(Math.abs(yaw-Math.PI/4)<1e-9);
 });
 
+test('wide targets like a line of text get an ellipse and a note below them',()=>{
+  const place={x:300,y:100,r:120,rx:120,ry:12,noteX:-120,noteY:33};
+  const player=new CursorPlayer({locate:()=>place,center:()=>({x:0,y:0})});
+  player.play([{action:'circle',target:'line'},{action:'write',text:'Next',target:'line'}]);
+  let widest=0,tallest=0;
+  for(let now=0;now<1200;now+=16){const {position}=player.advance(now);if(now>600){widest=Math.max(widest,Math.abs(position.x-300));tallest=Math.max(tallest,Math.abs(position.y-100));}}
+  assert.ok(widest>120&&widest<=133,`width ${widest}`);assert.ok(tallest<=25,`height ${tallest}`);
+  run(player,1200,2600);
+  const note=player.ink.find(item=>item.kind==='write');
+  assert.equal(note.offsetX,-120);assert.equal(note.offsetY,33);
+});
+test('a part out of view is scrolled to, and the cursor waits instead of flying away',()=>{
+  const revealed=[];let place=null;
+  const player=new CursorPlayer({locate:()=>place,reveal:id=>revealed.push(id),center:()=>({x:0,y:0})});
+  place={x:50,y:50,r:10};
+  player.play([{action:'point',target:'first'}]);run(player,0,800);
+  place=null;
+  player.play([{action:'point',target:'second'}]);
+  const waiting=run(player,800,1000);
+  assert.deepEqual(waiting.position,{x:50,y:50});
+  assert.deepEqual(revealed,['first','second']);
+  place={x:200,y:300,r:10};
+  assert.deepEqual(run(player,1000,1700).position,{x:200,y:300});
+});
+
 function session(cursor,{previous=null}={}) {
   const sent=[];
   const voice=new VoiceConversation({fetchImpl:async()=>new Response('{}'),cursor});
@@ -147,7 +172,7 @@ test('with nothing on screen, the voice is told to draw first',async()=>{
   const cursor=fakeCursor([]),{voice,s,sent}=session(cursor);
   await voice.runTools(s,[call({steps:[{action:'clear'}]})]);
   assert.equal(cursor.log.length,0);
-  assert.match(outputs(sent)[0].error,/draw_visual/);
+  assert.match(outputs(sent)[0].error,/draw_visual or show_explanation/);
 });
 test('a session has a limit on cursor requests',async()=>{
   const cursor=fakeCursor(),{voice,s,sent}=session(cursor);

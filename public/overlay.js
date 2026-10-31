@@ -1,9 +1,13 @@
+import {HTMLPanel,htmlParts} from './html-panel.js';
 import { createScene, renderDiagram, sample } from './scene.js';
 import { VoiceConversation } from './voice.js';
 import { VoiceCursor,visualParts } from './cursor.js';
 
 const $ = id => document.getElementById(id);
 let current = null, part = null, streaming = false, liveVoice = false;
+const htmlPanel=new HTMLPanel($('html-panel'));
+let htmlResult=null;
+function clearHTML(){htmlResult=null;htmlPanel.clear();}
 const viewer = createScene($('scene-host'), selectPart);
 function post(action, extra = {}) { window.webkit?.messageHandlers?.clippy?.postMessage({ action, ...extra }); }
 function hidePart() { part = null; $('part').hidden = true; viewer.clearSelection(); }
@@ -18,6 +22,7 @@ function view(kind) {
   $('fit').hidden = !scene; $('scene-hint').hidden = !scene; hidePart();
 }
 function render(result, preview = false) {
+  clearHTML();$('overlay').classList.remove('html-explanation');
   const preserveCamera = streaming; streaming = preview;
   // Marks made on the last visual don't belong on a new one.
   if (!preview && !preserveCamera) cursor.clear();
@@ -45,12 +50,22 @@ function render(result, preview = false) {
   view(hasScene ? 'scene' : 'diagram');
   if (!hasScene && !hasDiagram) { $('diagram-frame').hidden = true; $('fit').hidden = true; }
 }
+function renderHTML(result,preview=false){
+  $('overlay').hidden=false;$('overlay').classList.add('html-explanation');
+  $('visual-title').textContent=result.title+(preview?' · Building…':'');
+  for(const id of ['scene-host','diagram-frame','view-tabs','fit','scene-hint','part','demo-label'])$(id).hidden=true;
+  viewer.update([]);$('cards').replaceChildren();$('overlay').classList.remove('has-cards');
+  htmlResult=result;if(!preview)cursor.clear();
+  htmlPanel.render(result,preview);
+}
+window.clippyDismissVisual=()=>{voice.cancelVisual();cursor.reset();clearHTML();$('overlay').hidden=true;post('visualCleared');};
 // The red cursor's coordinates are relative to the overlay, which is what it draws on.
 function toOverlay(place) {
   const root = $('overlay').getBoundingClientRect();
   return { x: place.x - root.left, y: place.y - root.top, r: place.r };
 }
 function locatePart(id) {
+  if (htmlResult) { const place = htmlPanel.locate(id); return place ? { ...toOverlay(place), rx: place.rx, ry: place.ry, noteX: place.noteX, noteY: place.noteY } : null; }
   const showing = !$('scene-host').hidden;
   if (showing) { const place = viewer.locate(id); if (place) return toOverlay(place); }
   else {
@@ -65,9 +80,15 @@ function locatePart(id) {
 const cursor = new VoiceCursor({
   root: $('overlay'), locate: locatePart,
   orbit: (yaw, pitch) => viewer.orbit(yaw, pitch), zoom: factor => viewer.zoom(factor),
-  center: () => { const root = $('overlay').getBoundingClientRect(); return { x: root.width / 2, y: root.height / 2 }; },
+  reveal: id => { if (htmlResult) htmlPanel.reveal(id); },
+  center: () => {
+    const root = $('overlay').getBoundingClientRect();
+    if (!htmlResult) return { x: root.width / 2, y: root.height / 2 };
+    const panel = $('html-panel').getBoundingClientRect();
+    return { x: panel.left - root.left + panel.width / 2, y: panel.top - root.top + panel.height / 2 };
+  },
 });
-const hasScene = () => Boolean(current?.scene?.objects?.length);
+const hasScene = () => !htmlResult && Boolean(current?.scene?.objects?.length);
 // A part the voice names may be in the other view, so show the one that has it.
 function showPartView(steps) {
   if (!hasScene() || !current?.diagram?.nodes?.length) return;
@@ -78,7 +99,7 @@ function showPartView(steps) {
   if (scene === $('scene-host').hidden) view(scene ? 'scene' : 'diagram');
 }
 const voiceCursor = {
-  parts: () => ($('overlay').hidden ? [] : visualParts(current)),
+  parts: () => ($('overlay').hidden ? [] : htmlResult ? htmlParts(htmlResult) : visualParts(current)),
   canOrbit: () => !$('overlay').hidden && hasScene(),
   play: steps => { showPartView(steps); cursor.play(steps); },
   cancel: () => cursor.cancel(),
@@ -87,6 +108,9 @@ const voiceCursor = {
 window.clippyCursor = voiceCursor;
 // If the person takes hold of the drawing themselves, the cursor gets out of the way.
 $('scene-host').addEventListener('pointerdown', () => cursor.cancel());
+$('html-panel').addEventListener('load', () => {
+  for (const type of ['pointerdown', 'wheel']) $('html-panel').contentDocument?.addEventListener(type, () => cursor.cancel(), { passive: true });
+});
 window.clippyRender = render;
 window.clippyRollback = result => { streaming = false; if(result)render(result);else{$('overlay').hidden=true;post('visualCleared');} };
 let voiceGeneration = 0;
@@ -107,6 +131,9 @@ function captureScreen({signal}) {
 const voice = new VoiceConversation({
   captureScreen,
   cursor: voiceCursor,
+  renderHTML:result=>{renderHTML(result);post('voicePreview',{generation:voiceGeneration});},
+  previewHTML:result=>{renderHTML(result,true);post('voicePreview',{generation:voiceGeneration});},
+  rollbackHTML:result=>{if(result)renderHTML(result);else{clearHTML();$('overlay').hidden=true;post('visualCleared');}},
   notify: event => {
     if(event.state==='connecting')liveVoice=true;
     if(['ended','error'].includes(event.state))liveVoice=false;
@@ -125,8 +152,10 @@ const voice = new VoiceConversation({
 window.clippyVoice = {
   start: generation => {voiceGeneration=generation;return voice.start();}, stop: () => voice.stop(),
   shareScreen: image => voice.shareScreen(image),
+  setPointSharing: enabled => voice.setPointSharing(enabled),
+  sharePoint: (image,context) => voice.sharePoint(image,context),
   finishScreenCapture: (id,image,error) => pendingScreens.get(id)?.(image,error),
-  setVisual: result => { voice.previous=result; },
+  setVisual: result => { voice.previous=result;if(!result){voice.previousHTML=null;clearHTML();} },
   setMuted: value => voice.setMuted(value),
   setProvider: value => voice.setProvider(value),
   setDrawingSettings: value => voice.setDrawingSettings(value),
@@ -137,7 +166,7 @@ window.clippyHitTest = (x, y) => {
   // elementFromPoint also respects clipping and hidden ancestors. Only real
   // painted controls/cards count; the transparent stage and its canvas do not.
   const element = document.elementFromPoint(x, y);
-  const control = element?.closest('.overlay-tools, .scene-label, .explanation-card, #diagram-frame, #part, #caption, .scene-fallback');
+  const control = element?.closest('.overlay-tools, .scene-label, .explanation-card, #diagram-frame, #html-panel, #part, #caption, .scene-fallback');
   if (control) {
     const style = getComputedStyle(control);
     if (style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0' &&
@@ -155,10 +184,15 @@ $('part-ask').addEventListener('click', () => {
 });
 $('drag-handle').addEventListener('mousedown', event => { if (event.button === 0) { event.preventDefault(); post('dragOverlay'); } });
 document.addEventListener('keydown', event => {
-  if (event.key === 'Escape') { if (!$('part').hidden) hidePart(); else { $('overlay').hidden = true; post('closeOverlay'); } }
+  if (event.key === 'Escape') { if (!$('part').hidden) hidePart(); else { window.clippyDismissVisual(); post('closeOverlay'); } }
 });
 if (new URLSearchParams(location.search).get('demo') === 'water') { render(sample); $('demo-label').hidden = false; }
-// A way to see the cursor without a live voice session: /overlay.html?demo=water&cursor=1
+if(new URLSearchParams(location.search).get('demo')==='html')renderHTML({title:'Inputs and targets',sections:[{html:'<h1>Make a question and its answer</h1><p>A language model learns from a sequence by predicting the next token.</p>'},{html:'<table><thead><tr><th>Input tensor</th><th>Target: known answer</th></tr></thead><tbody><tr><td>[18]</td><td>47</td></tr><tr><td>[18, 47]</td><td>56</td></tr></tbody></table><details><summary>Why does the input grow?</summary><p>Each step adds the previous token as context. The target is the next token in the original sequence.</p></details>'}],summary:'Illustrative token prediction example.'});
+// A way to see the cursor without a live voice session: /overlay.html?demo=water&cursor=1 or demo=html&cursor=1
+if (new URLSearchParams(location.search).get('cursor') === '1' && htmlResult) {
+  const parts = voiceCursor.parts();
+  setTimeout(() => voiceCursor.play([{ action: 'point', target: parts[0].id }, { action: 'circle', target: parts[1].id }, { action: 'write', text: 'Next token', target: parts[1].id }, { action: 'circle', target: parts.at(-1).id }]), 800);
+}
 if (new URLSearchParams(location.search).get('cursor') === '1' && current) {
   setTimeout(() => voiceCursor.play([{ action: 'point', target: 'oxygen' }, { action: 'circle', target: 'oxygen' }, { action: 'write', text: 'Pulls electrons', target: 'oxygen' }, { action: 'rotate', yaw: 70, pitch: -15 }, { action: 'circle', target: 'hydrogen-1' }, { action: 'write', text: 'Slightly positive', target: 'hydrogen-1' }]), 800);
 }
