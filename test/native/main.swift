@@ -78,7 +78,7 @@ expect(spring.value == 1 && spring.isSettled && peak > 1 && peak < 1.2, "Wake sp
 var tether = GooTether()
 expect(!tether.update(inside: false, distance: 5, pressed: false, dt: 0.1) && !tether.attached, "Passing near must not attach")
 expect(!tether.update(inside: true, distance: 0, pressed: false, dt: 0.1) && tether.attached, "Being inside must attach")
-expect(!tether.update(inside: false, distance: 60, pressed: false, dt: 0.1) && tether.attached, "Nearby pointer must stay attached")
+expect(!tether.update(inside: false, distance: 30, pressed: false, dt: 0.1) && tether.attached, "Nearby pointer must stay attached")
 expect(tether.update(inside: false, distance: GooTether.reach + 1, pressed: false, dt: 0.1) && !tether.attached, "Too far must separate")
 expect(!tether.update(inside: false, distance: 0, pressed: false, dt: 0.1), "Separating must only report once")
 _ = tether.update(inside: true, distance: 0, pressed: false, dt: 0.1)
@@ -131,7 +131,7 @@ expect(blinked && shortest < barLine.height, "The eyes must blink")
 for _ in 0..<60 { bar.step(1.0 / 60, pointer: 0) }
 expect(!bar.isEyes, "The eyes must flow back into one line")
 
-// The liquid behaves like something heavy and viscous rather than following the pointer exactly.
+// The liquid grabs a little like something heavy and viscous, and doesn't follow the pointer exactly.
 func run(_ sim: inout LiquidSim, _ seconds: CGFloat, pointer: CGPoint?, each: (LiquidSim) -> Void = { _ in }) {
     for _ in 0..<Int(seconds * 60) {
         sim.step(1.0 / 60, outline: island, pointer: pointer)
@@ -141,50 +141,53 @@ func run(_ sim: inout LiquidSim, _ seconds: CGFloat, pointer: CGPoint?, each: (L
 }
 var liquid = LiquidSim()
 expect(liquid.isSettled, "New liquid must be at rest")
-let below = CGPoint(x: 236, y: 130)
+let below = CGPoint(x: 236, y: 165)
 liquid.attach(at: island.point(at: island.nearest(to: below)))
 run(&liquid, 0.05, pointer: below)
-expect(liquid.length < 30, "Liquid must lag behind the pointer at first")
+expect(liquid.length < LiquidSim.maxReach - 5, "Liquid must lag behind the pointer at first")
 var longest: CGFloat = 0
 run(&liquid, 2, pointer: below) { longest = max(longest, $0.length) }
-expect(liquid.length > 50 && longest > liquid.length + 1, "Liquid must reach toward the pointer, overshoot and settle")
+expect(liquid.length > 12 && longest > liquid.length + 0.5, "Liquid must reach toward the pointer, overshoot and settle")
+expect(longest < LiquidSim.maxReach + 8, "The grab must stay small")
 expect(liquid.distance(to: liquid.head) < 0, "The rounded end must be inside the liquid")
 expect(liquid.distance(to: CGPoint(x: 600, y: 600)) > 0, "Far away must be outside the liquid")
 expect(liquid.touches(liquid.head, outline: island), "A click on the liquid must count")
 expect(!liquid.touches(CGPoint(x: 236, y: 220), outline: island), "The island handles its own clicks")
 expect(!liquid.touches(CGPoint(x: 600, y: 600), outline: island), "A click far away must not count")
 
+// However far the pointer goes, the reach stays short.
+var far = LiquidSim()
+let distant = CGPoint(x: 236, y: 60)
+far.attach(at: island.point(at: island.nearest(to: distant)))
+var farthest: CGFloat = 0
+run(&far, 2, pointer: distant) { farthest = max(farthest, island.distance(to: $0.head)) }
+expect(farthest < LiquidSim.maxReach + 8, "The reach must stay short however far the pointer goes")
+
 // It thins as it stretches.
-let stretchedNeck = liquid.neckRadius
 var short = LiquidSim()
-let close = CGPoint(x: 236, y: 180)
+let close = CGPoint(x: 236, y: 172)
 short.attach(at: island.point(at: island.nearest(to: close)))
 run(&short, 2, pointer: close)
-expect(short.neckRadius > stretchedNeck + 3, "A longer strand must have a thinner neck")
+expect(short.neckRadius > far.neckRadius + 1, "A longer pull must have a thinner neck")
 
-// Gravity makes a sideways strand sag.
+// Gravity makes a sideways pull sag.
 var sideways = LiquidSim()
 let beside = CGPoint(x: 460, y: 225)
 sideways.attach(at: island.point(at: island.nearest(to: beside)))
 run(&sideways, 2, pointer: beside)
-expect(sideways.nodes[3].y < (sideways.nodes[0].y + sideways.head.y) / 2, "A sideways strand must sag under gravity")
+expect(sideways.nodes[3].y < (sideways.nodes[0].y + sideways.head.y) / 2, "A sideways pull must sag under gravity")
 
-// The neck gives way, the end flies on as a drop, and everything merges back.
-let before = liquid.head
-liquid.separate()
-run(&liquid, 0.3, pointer: nil)
-expect(liquid.drops.count == 2 && !liquid.isSettled, "Separating must leave a drop and a smaller one")
-let drop = liquid.drops[0]
-expect(hypot(drop.position.x - before.x, drop.position.y - before.y) < 60, "The drop must carry on from where the end was")
-expect(drop.radius > liquid.drops[1].radius, "The main drop must be the larger one")
-expect(liquid.distance(to: drop.position) < 0, "A drop must be solid")
-expect(liquid.length < 40, "The stump must recoil")
-var merged = false
-run(&liquid, 4, pointer: nil) { if $0.isSettled { merged = true } }
-expect(merged && liquid.isSettled && liquid.drops.isEmpty, "Drops must merge back and the liquid must come to rest")
-
-// It's drawn as solid black with a green glow, and not at all when there's no liquid.
+// Letting go, it flows back quickly in one piece, with nothing left behind.
+var settledAt: CGFloat?, elapsed: CGFloat = 0
+run(&liquid, 2, pointer: nil) {
+    elapsed += 1.0 / 60
+    if $0.isSettled && settledAt == nil { settledAt = elapsed }
+    expect($0.distance(to: CGPoint(x: 236, y: 100)) > 0, "Nothing may detach from the island")
+}
+expect(settledAt != nil && settledAt! < 1.5 && liquid.isSettled, "Letting go must flow back and come to rest")
 expect(liquid.render(island: island.rect, cornerRadius: 18, scale: 2, clip: CGRect(x: 0, y: 0, width: 800, height: 800)) == nil, "Settled liquid must draw nothing")
+
+// It's drawn pure black with a green edge, with no color or texture inside.
 var drawn = LiquidSim()
 drawn.attach(at: island.point(at: island.nearest(to: below)))
 run(&drawn, 2, pointer: below)
@@ -196,42 +199,21 @@ func pixel(_ point: CGPoint) -> (r: CGFloat, g: CGFloat, b: CGFloat, a: CGFloat)
     let color = bitmap.colorAt(x: Int((point.x - picture.frame.minX) * 2), y: Int((picture.frame.maxY - point.y) * 2))!
     return (color.redComponent, color.greenComponent, color.blueComponent, color.alphaComponent)
 }
-let middle = pixel(CGPoint(x: drawn.nodes[3].x, y: drawn.nodes[3].y))
-expect(middle.a > 0.99 && max(middle.r, middle.g, middle.b) < 0.45, "The inside of the liquid must be solid and dark")
-expect(pixel(drawn.head).a > 0.99, "The liquid's end must be drawn")
-let outside = pixel(CGPoint(x: drawn.head.x + 12.5 + 12, y: drawn.head.y - 4))
-expect(outside.a < 0.6 && outside.g > outside.r, "Outside the liquid must be a green glow, not black")
-// The petroleum look is texture only: colorless, mostly pure black, and drifting over time.
-var brightest: CGFloat = 0, blackPoints = 0, points = 0
-for x in stride(from: CGFloat(0), to: 400, by: 3) {
-    for y in stride(from: CGFloat(0), to: 200, by: 3) {
-        let level = Petroleum.gloss(x, y, 1)
-        brightest = max(brightest, level); points += 1
-        if level == 0 { blackPoints += 1 }
-    }
+for point in [drawn.nodes[3], drawn.head, CGPoint(x: drawn.nodes[1].x, y: drawn.nodes[1].y - 1)] {
+    let inside = pixel(point)
+    expect(inside.a > 0.99 && max(inside.r, inside.g, inside.b) < 0.004, "The inside of the liquid must be pure black")
 }
-expect(brightest > 0.05 && brightest <= 0.2, "The gloss must show without stopping it reading as black")
-expect(blackPoints * 2 > points, "Most of the surface must be pure black")
-let moved = (0..<80).contains { i in
-    let x = CGFloat(i) * 9
-    return abs(Petroleum.gloss(x, 50, 1) - Petroleum.gloss(x, 50, 9)) > 0.01
-}
-expect(moved, "The gloss must drift over time")
-let oilArea = CGRect(x: 100, y: 200, width: 100, height: 44)
-let oilHole = CGRect(x: 120, y: 214, width: 60, height: 30)
-let oilBitmap = NSBitmapImageRep(cgImage: Petroleum.image(area: oilArea, hole: oilHole, time: 1)!)
-expect(oilBitmap.colorAt(x: 50, y: 5)!.alphaComponent == 0 && oilBitmap.colorAt(x: 50, y: 40)!.alphaComponent == 1 && oilBitmap.colorAt(x: 5, y: 5)!.alphaComponent == 1, "The texture must skip the camera and cover the rest")
-for x in stride(from: 0, to: 100, by: 7) {
-    let color = oilBitmap.colorAt(x: x, y: 40)!
-    expect(color.redComponent == color.greenComponent && color.greenComponent == color.blueComponent, "The texture must have no color")
-}
+var edge = drawn.head
+while drawn.distance(to: edge) < 1.5 { edge.y -= 0.5 }
+let outside = pixel(edge)
+expect(outside.a < 0.9 && outside.g > outside.r && outside.g > 0.05, "Just outside the liquid must be a green edge, not black")
 print("Native island layout checks passed (notched, shifted, external, and missing bounds).")
 
 // Opening/closing shares the final top edge, and every composer control stays visible.
 let composerBounds = NSRect(origin: .zero, size: ComposerGeometry.size)
 let controls = [ComposerGeometry.prompt, ComposerGeometry.send, ComposerGeometry.collapse,
                 ComposerGeometry.screen, ComposerGeometry.talk, ComposerGeometry.voice,
-                ComposerGeometry.tier, ComposerGeometry.more]
+                ComposerGeometry.tier, ComposerGeometry.more, ComposerGeometry.provider]
 for (i, control) in controls.enumerated() {
     expect(composerBounds.contains(control), "Composer control must fit inside the surface")
     for other in controls.dropFirst(i + 1) { expect(!control.intersects(other), "Composer controls must not overlap") }
@@ -253,4 +235,6 @@ for source in morphSources {
         expect(abs(frame.minX - backwards.minX) < 0.0001 && abs(frame.height - backwards.height) < 0.0001, "Opening and closing must follow the same shape path")
     }
 }
+let composerLayout = IslandLayout(screen: external, safeTop: 0, leftArea: nil, rightArea: nil, expanded: true)
+expect(!composerLayout.statusFrame.intersects(ComposerGeometry.provider), "Status text must not run under the model toggle")
 print("Composer bounds, clean camera boundary, continuous morph and reversal checks passed.")

@@ -81,8 +81,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var gooPanel: FloatingPanel!
     private let gooFill = CAShapeLayer()
     private let gooLiquid = CALayer()
-    private let islandOil = CALayer()
-    private var oilTime: CGFloat = 0
     private var liquid = LiquidSim()
     private var wake = Spring(stiffness: 150, damping: 17)
     private var tether = GooTether()
@@ -104,6 +102,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var captureButton: NSButton!
     private var voiceButton: NSButton!
     private var tierPicker: NSPopUpButton!
+    private var providerControl: NSSegmentedControl!
     private var expanded = false
     private var overlayReady = false
     private var hitTestTimer: Timer?
@@ -268,9 +267,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         statusLine.shadowOffset = .zero
         statusLine.shadowRadius = 4
         statusLine.shadowOpacity = 0.8
-        islandOil.contentsGravity = .resize
-        islandOil.opacity = 0
-        for layer in [islandOil, sensingLine, sensingEye, statusLine] { signalHost.layer?.addSublayer(layer) }
+        for layer in [sensingLine, sensingEye, statusLine] { signalHost.layer?.addSublayer(layer) }
         islandView.addSubview(signalHost, positioned: .below, relativeTo: statusLabel)
         buildGoo()
         let promptSurface = NSView(frame: ComposerGeometry.prompt)
@@ -323,6 +320,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         tierPicker.toolTip = "GPT-6.1 Terra · Low reasoning. Fast uses more Codex allowance."
         islandView.addSubview(tierPicker)
         expandedControls.append(tierPicker)
+        providerControl = NSSegmentedControl(labels: ["GPT", "Claude"], trackingMode: .selectOne, target: self, action: #selector(providerChanged))
+        providerControl.frame = ComposerGeometry.provider
+        providerControl.segmentStyle = .capsule
+        providerControl.controlSize = .small
+        providerControl.font = .systemFont(ofSize: 11, weight: .medium)
+        providerControl.setAccessibilityLabel("Model")
+        providerControl.toolTip = "GPT answers through the Codex SDK · Claude through the Claude CLI"
+        islandView.addSubview(providerControl)
+        expandedControls.append(providerControl)
+        updateProviderControl()
         _ = button("More options", frame: ComposerGeometry.more, action: #selector(showIslandOptions(_:)), symbol: "ellipsis", iconOnly: true)
         setExpanded(false)
     }
@@ -399,7 +406,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         if wakeEnds?.rest.isNotched == true, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             let outline = IslandOutline(rect: island.frame)
             let clickedAway = NSEvent.pressedMouseButtons != 0 && !pointerOnGlue
-            if tether.update(inside: inside, distance: outline.distance(to: pointer), pressed: clickedAway, dt: dt) { liquid.separate() }
+            _ = tether.update(inside: inside, distance: outline.distance(to: pointer), pressed: clickedAway, dt: dt)
         } else { tether.attached = inside }
         guard tether.attached != pointerOnIsland else { return }
         pointerOnIsland = tether.attached
@@ -559,7 +566,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         if value { _ = layoutIsland(updateFrame: false) }
         else { island.makeFirstResponder(nil); island.resignKey() }
         updateNotchBridge(target)
-        composerSurface.beginMorph(area: sourceFrame.union(target.frame), time: oilTime)
+        composerSurface.beginMorph()
         for control in expandedControls { control.isHidden = false }
         islandView.layer?.backgroundColor = NSColor.clear.cgColor
         islandView.layer?.borderWidth = 0
@@ -568,7 +575,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         island.orderFrontRegardless()
         let started = CACurrentMediaTime()
         let duration = (value ? 0.52 : 0.44) * Double(max(abs((value ? 1 : 0) - sourceReveal), 0.3))
-        // One clock owns frame, curvature, petroleum clearing and control reveal.
+        // One clock owns frame, curvature, the black clearing and control reveal.
         // Reversals start from the current frame/material, not a stale endpoint.
         let timer = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] timer in
             guard let self, self.composerTransition == generation else { timer.invalidate(); return }
@@ -695,8 +702,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         statusLine.opacity = content == .audio ? 0 : 1
         sensingLine.opacity = 0
         sensingEye.opacity = 0
-        islandOil.opacity = 0
-        islandOil.contents = nil
         CATransaction.commit()
         guard content == .idle, !expanded, !reduceMotion else { statusLine.removeAnimation(forKey: "pulse"); return }
         guard statusLine.animation(forKey: "pulse") == nil else { return }
@@ -770,13 +775,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let outline = IslandOutline(rect: island.frame)
         let pointer = NSEvent.mouseLocation
         liquid.step(dt, outline: outline, pointer: pointerOnIsland ? pointer : nil)
-        oilTime += dt
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        islandOil.frame = CGRect(origin: .zero, size: outline.rect.size)
-        islandOil.contents = wake.value > 0.01 ? Petroleum.image(area: outline.rect, hole: wakeEnds?.rest.notchFrame, time: oilTime) : nil
-        islandOil.opacity = Float(smoothstep(0.2, 0.9, wake.value))
-        CATransaction.commit()
         let onGlue = pointerOnIsland && liquid.touches(pointer, outline: outline)
         if onGlue != pointerOnGlue { pointerOnGlue = onGlue }
         drawGoo(outline: outline)
@@ -786,7 +784,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let toPanel = CGAffineTransform(translationX: -bounds.minX, y: -bounds.minY)
         let shoulders = CGMutablePath()
         shoulders.addPath(GooShape.shoulders(rect: outline.rect, radius: mix(8, 16, min(max(wake.value, 0), 1))), transform: toPanel)
-        let drawn = liquid.render(island: outline.rect, cornerRadius: islandView.layer?.cornerRadius ?? 10, scale: gooPanel.backingScaleFactor, clip: bounds, time: oilTime)
+        let drawn = liquid.render(island: outline.rect, cornerRadius: islandView.layer?.cornerRadius ?? 10, scale: gooPanel.backingScaleFactor, clip: bounds)
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         gooFill.frame = CGRect(origin: .zero, size: bounds.size)
@@ -885,11 +883,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         setStatus("Ready")
     }
 
-    // Hook for the composer's GPT/Claude toggle: read `provider` to show the current choice and
-    // call this when it changes. It's remembered across launches and applies to the next question.
+    @objc private func providerChanged() { setProvider(providerControl.selectedSegment == 1 ? .claude : .gpt) }
+    private func updateProviderControl() {
+        providerControl.selectedSegment = provider == .claude ? 1 : 0
+        // Standard and Fast are Codex service tiers.
+        tierPicker.isEnabled = provider == .gpt
+        tierPicker.toolTip = provider == .gpt ? "GPT-6.1 Terra · Low reasoning. Fast uses more Codex allowance." : "Standard and Fast only apply to GPT."
+    }
+    // Remembered across launches, and applies to the next question.
     private func setProvider(_ value: AIProvider) {
         guard value != provider else { return }
         provider = value
+        updateProviderControl()
         UserDefaults.standard.set(value.rawValue, forKey: "aiProvider")
         // Each backend has its own sign-in, which decides whether the line can be green.
         pollServer()
