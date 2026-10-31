@@ -52,9 +52,9 @@ function renderHTML(result,preview=false){
   viewer.update([]);$('cards').replaceChildren();$('overlay').classList.remove('has-cards');
   htmlPanel.render(result,preview);
 }
-window.clippyDismissVisual=()=>{voice.cancelVisual();htmlPanel.clear();$('overlay').hidden=true;};
+window.clippyDismissVisual=()=>{voice.cancelVisual();htmlPanel.clear();$('overlay').hidden=true;post('visualCleared');};
 window.clippyRender = render;
-window.clippyRollback = result => { streaming = false; if(result)render(result);else $('overlay').hidden=true; };
+window.clippyRollback = result => { streaming = false; if(result)render(result);else{$('overlay').hidden=true;post('visualCleared');} };
 let voiceGeneration = 0;
 const pendingScreens = new Map();
 let screenRequestID = 0;
@@ -74,7 +74,7 @@ const voice = new VoiceConversation({
   captureScreen,
   renderHTML:result=>{renderHTML(result);post('voicePreview',{generation:voiceGeneration});},
   previewHTML:result=>{renderHTML(result,true);post('voicePreview',{generation:voiceGeneration});},
-  rollbackHTML:result=>{if(result)renderHTML(result);else{htmlPanel.clear();$('overlay').hidden=true;}},
+  rollbackHTML:result=>{if(result)renderHTML(result);else{htmlPanel.clear();$('overlay').hidden=true;post('visualCleared');}},
   notify: event => {
     if(event.state==='connecting')liveVoice=true;
     if(['ended','error'].includes(event.state))liveVoice=false;
@@ -118,7 +118,6 @@ window.clippyHitTest = (x, y) => {
 $('scene-tab').addEventListener('click', () => view('scene'));
 $('diagram-tab').addEventListener('click', () => view('diagram'));
 $('fit').addEventListener('click', () => viewer.reset());
-$('close').addEventListener('click', () => { window.clippyDismissVisual(); post('closeOverlay'); });
 $('part-close').addEventListener('click', hidePart);
 $('part-ask').addEventListener('click', () => {
   if (!part) return;

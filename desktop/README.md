@@ -8,7 +8,7 @@ Build with `npm run desktop:build`, then open `build/Clip.app`. The app reuses a
 
 - Type a question and press Return, Send, or Draw. The native app calls the local Codex backend and progressively shows validated visual parts in a transparent floating drawing panel above the current desktop. No sample drawing appears automatically.
 - Rotate, zoom or select 3D parts in the drawing. Follow-ups keep the previous scene and bounded conversation history in memory.
-- Drag the drawing using its drag handle. Hide drawing dismisses both the drawing and captions. The … menu or menu-bar paperclip can reopen the last drawing.
+- Drag the drawing using its drag handle. While a drawing, reply or comparison is on screen, a small floating X appears right under the notch, or under the composer when it's open. It closes all of them at once, as does Hide drawing. The … menu or menu-bar paperclip can reopen the last drawing.
 - Captions float near the bottom of the display. Voice on/off toggles local macOS speech synthesis.
 - Talk starts an OpenAI Realtime voice conversation. End or Escape stops the microphone and connection. Collapse keeps the voice session running, indicated by the island’s activity state. The speaker button mutes output, not the microphone. … → Dictate on-device remains available separately.
 - Screen captures the main display once, with Clip's panels temporarily hidden. It requests Screen Recording permission only when used. The screenshot remains in memory until sent or removed, and the temporary capture file is deleted immediately. Clicking Remove screen clears it. During Talk, Screen explicitly shares that single screenshot with the live voice session instead.
@@ -70,7 +70,7 @@ For proofreading, choose Both before selecting text in another app and opening t
 
 ### Floating reply bubbles
 
-Single replies appear in a minimal floating frosted bubble with selectable, scrollable full text and quiet Copy/Dismiss controls. There is no header or fixed three-line cutoff. The same full string feeds local spoken replies. Dismissing stops local speech; during Talk it hides the bubble until the next voice response without ending the microphone. Both shows two compact provider-labeled bubbles and remains silent.
+Single replies appear in a minimal floating frosted bubble with selectable, scrollable full text and a quiet Copy control. There is no header or fixed three-line cutoff. The same full string feeds local spoken replies. Dismissing stops local speech; during Talk it hides the bubble until the next voice response without ending the microphone. Both shows two compact provider-labeled bubbles and remains silent.
 
 Realtime captions follow audio transcript delta/done events and the completed audio transcript, not the drawing model’s reply. Draw rendering cannot overwrite a live voice caption. The old 500-character native and 1,500-character bridge truncation is removed. On interruption the old transcript is cleared because audio timing cannot provide a precise heard-word transcript; a final transcript may arrive ahead of playback. Check a long reply (>500 characters), scroll to its end and copy it; check Talk drawing while it speaks, then interrupt it and confirm an old caption does not reappear.
 

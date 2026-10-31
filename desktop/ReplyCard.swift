@@ -12,10 +12,8 @@ enum ReplyCardLayout {
 }
 
 final class ReplyCard: NSVisualEffectView {
-    var onDismiss: (() -> Void)?
     private(set) var text = ""
     private let copyButton = NSButton()
-    private let closeButton = NSButton()
     private let scroll = NSScrollView()
     private let body = NSTextView()
     override init(frame: NSRect) {
@@ -24,7 +22,7 @@ final class ReplyCard: NSVisualEffectView {
         appearance = NSAppearance(named: .darkAqua)
         wantsLayer = true; layer?.cornerRadius = 22; layer?.masksToBounds = true
         layer?.borderWidth = 0.75; layer?.borderColor = NSColor.white.withAlphaComponent(0.08).cgColor
-        for (button, symbol, label, action) in [(copyButton, "doc.on.doc", "Copy reply", #selector(copyReply)), (closeButton, "xmark", "Dismiss reply", #selector(dismissReply))] {
+        for (button, symbol, label, action) in [(copyButton, "doc.on.doc", "Copy reply", #selector(copyReply))] {
             button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
             button.imagePosition = .imageOnly; button.isBordered = false
             button.contentTintColor = NSColor.white.withAlphaComponent(0.45)
@@ -45,9 +43,8 @@ final class ReplyCard: NSVisualEffectView {
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     override func layout() {
         super.layout()
-        copyButton.frame = NSRect(x: bounds.width - 66, y: bounds.height - 40, width: 24, height: 24)
-        closeButton.frame = NSRect(x: bounds.width - 38, y: bounds.height - 40, width: 24, height: 24)
-        scroll.frame = NSRect(x: 20, y: 17, width: bounds.width - 86, height: max(30, bounds.height - 34))
+        copyButton.frame = NSRect(x: bounds.width - 38, y: bounds.height - 40, width: 24, height: 24)
+        scroll.frame = NSRect(x: 20, y: 17, width: bounds.width - 58, height: max(30, bounds.height - 34))
         body.setFrameSize(NSSize(width: scroll.contentSize.width, height: max(scroll.contentSize.height, body.frame.height)))
     }
     func show(_ value: String, live: Bool) {
@@ -63,5 +60,4 @@ final class ReplyCard: NSVisualEffectView {
         NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string)
         copyButton.toolTip = "Copied"
     }
-    @objc private func dismissReply() { onDismiss?() }
 }
