@@ -366,3 +366,19 @@ for pattern in ["line", "eyes", "wave"] {
     assert(signal.isEyes == (pattern == "eyes"))
 }
 print("Expanded signal stays within its strip and clear of caption/input.")
+
+// Translucency must not attenuate the actual backdrop blur, including mid-morph.
+let frostedSurface = ComposerSurface(content: NSView(frame: .zero))
+frostedSurface.frame = NSRect(origin: .zero, size: ComposerGeometry.size)
+frostedSurface.showComposer(true)
+let material = frostedSurface.subviews.compactMap { $0 as? NSVisualEffectView }.first!
+assert(material.material == .hudWindow && material.blendingMode == .behindWindow)
+assert(material.state == .active)
+for reveal: CGFloat in [0, 0.2, 0.5, 0.8, 1] {
+    frostedSurface.setMorph(reveal: reveal, radius: 28, notched: true)
+    assert(material.alphaValue == 1 && frostedSurface.alphaValue == 1)
+}
+frostedSurface.endMorph()
+assert(material.alphaValue == 1)
+assert(material.subviews.first!.alphaValue == 0.8)
+print("Frosted material retains full blur while tint fades independently.")

@@ -5,7 +5,6 @@ import AppKit
 final class ComposerSurface: NSView {
     private let content: NSView
     private let shell = PetroleumCradle(frame: .zero)
-    private let shellOpacity: CGFloat = 0.8
     private let wedges = ComposerWedges(frame: NSRect(origin: .zero, size: ComposerGeometry.size))
     private var hoveredOption: Int?
     private var expanded = false
@@ -49,7 +48,7 @@ final class ComposerSurface: NSView {
             : [.layerMinXMinYCorner, .layerMaxXMinYCorner, .layerMinXMaxYCorner, .layerMaxXMaxYCorner]
         clearing.colors = [NSColor.white.withAlphaComponent(1 - smoothstep(0.12, 0.72, p)).cgColor,
                            NSColor.white.withAlphaComponent(1 - smoothstep(0.32, 1, p)).cgColor]
-        shell.alphaValue = shellOpacity * smoothstep(0.2, 0.8, p)
+        shell.setFinishReveal(smoothstep(0.2, 0.8, p))
         wedges.alphaValue = smoothstep(0.82, 1, p)
         content.alphaValue = smoothstep(0.82, 1, p)
         CATransaction.commit()
@@ -58,7 +57,7 @@ final class ComposerSurface: NSView {
     func endMorph() {
         oil.removeFromSuperlayer()
         oil.contents = nil
-        shell.alphaValue = shellOpacity
+        shell.setFinishReveal(1)
         wedges.alphaValue = 1
         content.alphaValue = 1
     }
@@ -92,8 +91,9 @@ final class ComposerSurface: NSView {
 }
 
 /// A sandblasted material across the whole shell; the input itself has no box.
-/// The parent applies the requested opacity only to this backdrop; controls
-/// remain fully opaque above the native blur and fine grain.
+/// Keep the native effect at full opacity: translucency comes from its material,
+/// not from blending sharp desktop pixels back over the blurred result.
+/// Only the separate tint/grain finish fades during the morph.
 private final class PetroleumCradle: NSVisualEffectView {
     private let finishMask = CAShapeLayer()
     private var maskedSize = NSSize.zero
@@ -101,7 +101,7 @@ private final class PetroleumCradle: NSVisualEffectView {
 
     override init(frame: NSRect) {
         super.init(frame: frame)
-        material = .popover
+        material = .hudWindow
         blendingMode = .behindWindow
         state = .active
         appearance = NSAppearance(named: .darkAqua)
@@ -114,6 +114,11 @@ private final class PetroleumCradle: NSVisualEffectView {
         alphaValue = 1
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    func setFinishReveal(_ value: CGFloat) {
+        // Never fade this NSVisualEffectView or an ancestor to tune transparency.
+        // A lower alpha mixes the original, unblurred desktop back into the shell.
+        finish.alphaValue = 0.8 * min(max(value, 0), 1)
+    }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
     override func layout() {
         super.layout()
@@ -151,7 +156,7 @@ private final class FrostedFinish: NSView {
         return true
     }
     override func draw(_ dirtyRect: NSRect) {
-        NSColor.black.withAlphaComponent(0.16).setFill()
+        NSColor.black.withAlphaComponent(0.08).setFill()
         bounds.fill()
         NSColor(patternImage: Self.grain).setFill()
         bounds.fill()
