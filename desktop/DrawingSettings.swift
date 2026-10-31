@@ -52,6 +52,6 @@ final class DrawingPreferences {
         ["xhigh": "Extra high", "max": "Maximum"][value] ?? value.capitalized
     }
     func caption(for provider: String) -> String {
-        "\(model(for: provider).name) · \(Self.effortTitle(effort(for: provider))) effort"
+        "\(model(for: provider).name) · \(Self.effortTitle(effort(for: provider)))"
     }
 }
