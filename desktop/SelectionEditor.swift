@@ -19,6 +19,10 @@ final class SelectionEditor: NSObject {
     private var clipboardBusy = false
     private var lastAutomaticFingerprint: String?
     private(set) var automaticRunning = false
+    var onComparisonStart: (() -> Void)?
+    var onComparisonEvent: (([String: Any]) -> Void)?
+    var onComparisonEnd: ((String) -> Void)?
+    private var comparing = false
     var onAutomaticActivity: ((Bool) -> Void)?
     private func setAutomaticRunning(_ running: Bool) {
         automaticRunning = running
@@ -50,6 +54,7 @@ final class SelectionEditor: NSObject {
     }
 
     func cancel() {
+        if comparing { onComparisonEnd?("Cancelled"); comparing = false }
         generation += 1
         task?.cancel(); task = nil
         if automaticRunning { setAutomaticRunning(false) }
@@ -85,6 +90,8 @@ final class SelectionEditor: NSObject {
         }
     }
     private func run(_ selection: Selection, action: String, provider: String, current: Int) {
+        comparing = provider == "both"
+        if comparing { onComparisonStart?() }
         self.task = Task { @MainActor [weak self] in
             guard let self else { return }
             var replacing = false
@@ -102,11 +109,12 @@ final class SelectionEditor: NSObject {
                     throw NSError(domain: "Clip", code: 1, userInfo: [NSLocalizedDescriptionKey: "Local server unavailable"])
                 }
                 try Task.checkCancellation()
-                var request = URLRequest(url: base.appendingPathComponent("api/edit"), timeoutInterval: 135)
+                var request = URLRequest(url: base.appendingPathComponent(provider == "both" ? "api/compare" : "api/edit"), timeoutInterval: 135)
                 request.httpMethod = "POST"
                 request.setValue("application/json", forHTTPHeaderField: "Content-Type")
                 request.setValue(token, forHTTPHeaderField: "X-Clippy-Session")
-                request.httpBody = try JSONSerialization.data(withJSONObject: ["text": selection.text, "action": action, "provider": provider])
+                let body = provider == "both" ? ["task": "edit", "text": selection.text, "action": action] : ["text": selection.text, "action": action, "provider": provider]
+                request.httpBody = try JSONSerialization.data(withJSONObject: body)
                 let (bytes, response) = try await URLSession.shared.bytes(for: request)
                 try Task.checkCancellation()
                 guard self.generation == current else { return }
@@ -116,17 +124,26 @@ final class SelectionEditor: NSObject {
                     let value = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
                     throw NSError(domain: "Clip", code: 2, userInfo: [NSLocalizedDescriptionKey: value?["error"] as? String ?? "Editing request failed"])
                 }
+                var comparisonComplete = false
                 var output: String?
                 for try await line in bytes.lines {
                     try Task.checkCancellation()
                     guard self.generation == current else { return }
                     guard line.utf8.count < 2_000_000 else { throw NSError(domain: "Clip", code: 5, userInfo: [NSLocalizedDescriptionKey: "Editing response too large"]) }
                     guard let event = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any] else { continue }
+                    if provider == "both" {
+                        self.onComparisonEvent?(event)
+                        if event["type"] as? String == "comparison-complete" { comparisonComplete = true }
+                    }
                     if event["type"] as? String == "status", let status = event["message"] as? String { self.onStatus(status) }
                     if event["type"] as? String == "error" {
                         throw NSError(domain: "Clip", code: 3, userInfo: [NSLocalizedDescriptionKey: event["message"] as? String ?? "Editing failed"])
                     }
                     if event["type"] as? String == "result", let result = event["result"] as? [String: Any] { output = result["text"] as? String }
+                }
+                if provider == "both" {
+                    guard comparisonComplete else { throw NSError(domain: "Clip", code: 6, userInfo: [NSLocalizedDescriptionKey: "Comparison ended early"]) }
+                    self.comparing = false; self.onStatus("Ready"); return
                 }
                 guard let output, !output.isEmpty, output.utf16.count <= 24000 else {
                     throw NSError(domain: "Clip", code: 4, userInfo: [NSLocalizedDescriptionKey: "No edited text returned"])
@@ -137,6 +154,7 @@ final class SelectionEditor: NSObject {
                     if self.automaticRunning { self.setAutomaticRunning(false) }
                 }
             } catch {
+                if self.generation == current && self.comparing { self.onComparisonEnd?("Comparison ended"); self.comparing = false }
                 if !Task.isCancelled && self.generation == current { self.onStatus("Edit failed: \(error.localizedDescription)") }
             }
         }
