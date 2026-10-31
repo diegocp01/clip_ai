@@ -67,12 +67,49 @@ expect(hoveredPill.lineFrame.width > hoveredPill.lineFrame.height, "Floating pil
 expect(audioPill.frame.width == 40 && audioPill.bounds.contains(audioPill.activityFrame), "Floating pill must fit the waveform")
 let statusPill = IslandLayout(screen: external, safeTop: 0, leftArea: nil, rightArea: nil, expanded: false, content: .status(textWidth: 600))
 expect(statusPill.frame.width == 278 && statusPill.bounds.contains(statusPill.statusFrame), "Floating pill must cap and fit status text")
+// At startup a light sweeps around the camera, ending exactly where the resting line sits.
+do {
+    let screen = NSRect(x: 0, y: 0, width: 1710, height: 1107)
+    let left = NSRect(x: 0, y: screen.maxY - 33.5, width: 762.5, height: 33.5)
+    let right = NSRect(x: 947.5, y: left.minY, width: 762.5, height: 33.5)
+    let loading = IslandLayout(screen: screen, safeTop: 33.5, leftArea: left, rightArea: right, expanded: false, content: .loading)
+    let resting = IslandLayout(screen: screen, safeTop: 33.5, leftArea: left, rightArea: right, expanded: false)
+    let onScreen = { (p: CGPoint) in CGPoint(x: p.x + loading.frame.minX, y: p.y + loading.frame.minY) }
+    let path = loading.loadingPath.map(onScreen)
+    expect(loading.frame.midX == screen.midX && loading.frame.minY < left.minY, "The startup shape must wrap the camera evenly")
+    expect(path.count == 4 && path.allSatisfy { loading.frame.contains($0) }, "The light must stay inside the island")
+    expect(path[0].x < left.maxX && path[1].x < left.maxX, "The light must start left of the camera")
+    expect(path[1].y < left.minY && path[2].y < left.minY, "The light must pass under the camera, where there are pixels")
+    expect(path[2].x > right.minX && path[3].x > right.minX, "The light must finish right of the camera")
+    expect(path[3].x == resting.lineFrame.midX + resting.frame.minX && path[3].y == resting.lineFrame.maxY + resting.frame.minY, "The light must end on the resting line")
+    let settled = loading.lineFrame.offsetBy(dx: loading.frame.minX, dy: loading.frame.minY), line = resting.lineFrame.offsetBy(dx: resting.frame.minX, dy: resting.frame.minY)
+    expect(settled == line, "The light must become the resting line without moving")
+    expect(loading.loadingLineFraction > 0 && loading.loadingLineFraction < 0.1, "The resting line must be a small part of the path")
+    let pill = IslandLayout(screen: NSRect(x: 0, y: 0, width: 2560, height: 1440), safeTop: 0, leftArea: nil, rightArea: nil, expanded: false, content: .loading)
+    expect(pill.loadingPath.count == 2 && pill.loadingPath.allSatisfy { pill.bounds.contains($0) } && pill.bounds.contains(pill.lineFrame), "Without a camera the light must cross the pill")
+}
+
 // The spring settles exactly on its target, overshooting a little on the way.
 var spring = Spring(stiffness: 150, damping: 17)
 spring.target = 1
 var peak: CGFloat = 0
 for _ in 0..<240 { spring.step(1.0 / 60); peak = max(peak, spring.value) }
 expect(spring.value == 1 && spring.isSettled && peak > 1 && peak < 1.2, "Wake spring must settle on target after a small overshoot")
+
+// Resting on the island for a second opens it, once, until the pointer leaves and returns.
+var hold = DwellTimer()
+expect(!hold.update(inside: true, dt: 0.5) && abs(hold.progress - 0.5) < 0.001, "The hold must fill up over time")
+expect(!hold.update(inside: false, dt: 0.1) && hold.progress == 0, "Leaving must restart the hold")
+expect(!hold.update(inside: true, dt: 0.9), "A partial hold must not open")
+expect(hold.update(inside: true, dt: 0.1), "A full second must open")
+expect(hold.progress == 0, "The ring must clear on opening")
+expect(!hold.update(inside: true, dt: 5) && hold.progress == 0, "Staying put must not open it again")
+_ = hold.update(inside: false, dt: 0.1)
+expect(!hold.update(inside: true, dt: 0.5) && hold.update(inside: true, dt: 0.5), "Returning must allow another hold")
+hold = DwellTimer()
+_ = hold.update(inside: true, dt: 0.5)
+hold.disarm()
+expect(!hold.update(inside: true, dt: 2), "Opening some other way must use up the hold")
 
 // The tether holds while near, and separates when too far, too slow or clicked away.
 var tether = GooTether()
@@ -151,9 +188,6 @@ expect(liquid.length > 12 && longest > liquid.length + 0.5, "Liquid must reach t
 expect(longest < LiquidSim.maxReach + 8, "The grab must stay small")
 expect(liquid.distance(to: liquid.head) < 0, "The rounded end must be inside the liquid")
 expect(liquid.distance(to: CGPoint(x: 600, y: 600)) > 0, "Far away must be outside the liquid")
-expect(liquid.touches(liquid.head, outline: island), "A click on the liquid must count")
-expect(!liquid.touches(CGPoint(x: 236, y: 220), outline: island), "The island handles its own clicks")
-expect(!liquid.touches(CGPoint(x: 600, y: 600), outline: island), "A click far away must not count")
 
 // However far the pointer goes, the reach stays short.
 var far = LiquidSim()

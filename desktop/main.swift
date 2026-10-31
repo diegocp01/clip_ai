@@ -22,8 +22,6 @@ final class FloatingPanel: NSPanel {
 }
 final class IslandView: NSView {
     var onExpand: (() -> Void)?
-    var acceptsClick: (() -> Bool)?
-    override func mouseDown(with event: NSEvent) { if acceptsClick?() != false { onExpand?() } }
     override func accessibilityPerformPress() -> Bool { onExpand?(); return true }
 }
 
@@ -72,6 +70,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var activityMark: ActivityMark!
     private var signalHost: NSView!
     private let statusLine = CALayer()
+    private let loadingLine = CAShapeLayer()
+    private var startupLoading = true
+    private var loadingFinishing = false
+    private var loadingStarted: CFTimeInterval = 0
     private let sensingLine = CAGradientLayer()
     private let sensingEye = CAGradientLayer()
     private var signalBar = SignalBar()
@@ -84,7 +86,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var liquid = LiquidSim()
     private var wake = Spring(stiffness: 150, damping: 17)
     private var tether = GooTether()
-    private var pointerOnGlue = false { didSet { gooPanel.ignoresMouseEvents = !pointerOnGlue } }
+    private var dwell = DwellTimer()
+    private var dwellPanel: FloatingPanel!
+    private let dwellRing = CAShapeLayer()
     private var wakeEnds: (rest: IslandLayout, awake: IslandLayout)?
     private var wakeRegion = NSRect.zero
     private var frameTimer: Timer?
@@ -240,11 +244,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         islandView.layer?.borderWidth = 0.5
         islandView.layer?.cornerCurve = .continuous
         islandView.onExpand = { [weak self] in if self?.expanded == false { self?.setExpanded(true, focus: true) } }
-        // While idle only the green area opens it. Text and errors stay clickable anywhere.
-        islandView.acceptsClick = { [weak self] in
-            guard let self, self.currentStatus == "Ready", !self.talking, !self.expanded else { return true }
-            return self.pointerOnIsland || self.wakeRegion.insetBy(dx: 0, dy: -1).contains(NSEvent.mouseLocation)
-        }
         composerSurface = ComposerSurface(content: islandView)
         island.contentView = composerSurface
         islandView.setAccessibilityElement(true)
@@ -279,7 +278,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         statusLine.shadowOffset = .zero
         statusLine.shadowRadius = 4
         statusLine.shadowOpacity = 0.8
-        for layer in [sensingLine, sensingEye, statusLine] { signalHost.layer?.addSublayer(layer) }
+        loadingLine.fillColor = nil
+        loadingLine.strokeColor = NSColor.white.cgColor
+        loadingLine.lineWidth = 2.5
+        loadingLine.lineCap = .round
+        loadingLine.lineJoin = .round
+        loadingLine.shadowColor = NSColor.white.cgColor
+        loadingLine.shadowOffset = .zero
+        loadingLine.shadowRadius = 5
+        loadingLine.shadowOpacity = 0.9
+        loadingLine.opacity = 0
+        for layer in [sensingLine, sensingEye, statusLine, loadingLine] { signalHost.layer?.addSublayer(layer) }
         islandView.addSubview(signalHost, positioned: .below, relativeTo: statusLabel)
         buildGoo()
         prompt = NSTextField(frame: ComposerGeometry.input)
@@ -355,23 +364,70 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         _ = button("More options", frame: ComposerGeometry.more, action: #selector(showIslandOptions(_:)), symbol: "ellipsis", iconOnly: true)
         setExpanded(false)
     }
-    // Liquid can reach past the island, so it has its own panel below it, click-through
-    // unless the pointer is on the liquid. In the island's window it would block the menu bar.
+    // Liquid can reach past the island, so it has its own click-through panel below it.
+    // In the island's window it would block the menu bar.
     private func buildGoo() {
         gooPanel = panel(.zero, level: island.level)
         gooPanel.title = "Clippy liquid edge"
         gooPanel.ignoresMouseEvents = true
         gooPanel.setAccessibilityElement(false)
-        let host = IslandView(frame: .zero)
+        let host = NSView(frame: .zero)
         host.layer = CALayer()
         host.wantsLayer = true
         host.autoresizingMask = [.width, .height]
-        host.onExpand = islandView.onExpand
         gooPanel.contentView = host
         gooFill.fillColor = NSColor.black.cgColor
         gooLiquid.contentsGravity = .resize
         for layer in [gooFill, gooLiquid] { host.layer?.addSublayer(layer) }
+        buildDwellRing()
     }
+    // A tiny click-through ring beside the pointer shows the hold filling up.
+    private func buildDwellRing() {
+        let size: CGFloat = 20
+        dwellPanel = panel(NSRect(x: 0, y: 0, width: size, height: size), level: island.level)
+        dwellPanel.title = "Clippy hold timer"
+        dwellPanel.ignoresMouseEvents = true
+        dwellPanel.setAccessibilityElement(false)
+        let host = NSView(frame: NSRect(x: 0, y: 0, width: size, height: size))
+        host.layer = CALayer()
+        host.wantsLayer = true
+        dwellPanel.contentView = host
+        let circle = CGMutablePath()
+        circle.addArc(center: CGPoint(x: size / 2, y: size / 2), radius: 6, startAngle: .pi / 2, endAngle: .pi / 2 - 2 * .pi, clockwise: true)
+        let track = CAShapeLayer()
+        track.path = circle
+        track.fillColor = nil
+        track.strokeColor = NSColor.white.withAlphaComponent(0.14).cgColor
+        track.lineWidth = 1.5
+        dwellRing.path = circle
+        dwellRing.fillColor = nil
+        dwellRing.strokeColor = NSColor.white.withAlphaComponent(0.7).cgColor
+        dwellRing.lineWidth = 1.5
+        dwellRing.lineCap = .round
+        dwellRing.strokeEnd = 0
+        host.layer?.addSublayer(track)
+        host.layer?.addSublayer(dwellRing)
+    }
+    private func updateDwell(pointer: NSPoint, inside: Bool, dt: CGFloat) {
+        guard !expanded else { dwell.disarm(); hideDwellRing(); return }
+        // Text or the waveform has no resting area of its own, so the whole island counts.
+        let onIsland = wakeRegion.isEmpty ? island.frame.insetBy(dx: 0, dy: -1).contains(pointer) : inside
+        if dwell.update(inside: island.isVisible && onIsland && NSEvent.pressedMouseButtons == 0, dt: dt) {
+            hideDwellRing()
+            setExpanded(true, focus: true)
+            return
+        }
+        // It stays hidden for a moment, so passing over the notch shows nothing.
+        guard dwell.elapsed > 0.1 else { hideDwellRing(); return }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        dwellRing.strokeEnd = dwell.progress
+        CATransaction.commit()
+        dwellPanel.alphaValue = smoothstep(0.1, 0.3, dwell.elapsed)
+        dwellPanel.setFrameOrigin(NSPoint(x: pointer.x + 10, y: pointer.y - 26))
+        if !dwellPanel.isVisible { dwellPanel.orderFrontRegardless() }
+    }
+    private func hideDwellRing() { if dwellPanel.isVisible { dwellPanel.orderOut(nil) } }
     @objc private func collapseIsland() { setExpanded(false) }
     @objc private func showIslandOptions(_ sender: NSButton) {
         let menu = NSMenu()
@@ -423,6 +479,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         lastPointerCheck = now
         let pointer = NSEvent.mouseLocation
         if expanded {
+            updateDwell(pointer: pointer, inside: false, dt: dt)
             let point = island.isVisible && menuTrackingDepth == 0
                 ? NSPoint(x: pointer.x - island.frame.minX, y: pointer.y - island.frame.minY) : nil
             composerSurface.updateHover(at: point, details: [
@@ -440,13 +497,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let inside = island.isVisible && region.contains(pointer)
         if wakeEnds?.rest.isNotched == true, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             let outline = IslandOutline(rect: island.frame)
-            let clickedAway = NSEvent.pressedMouseButtons != 0 && !pointerOnGlue
+            let clickedAway = NSEvent.pressedMouseButtons != 0
             _ = tether.update(inside: inside, distance: outline.distance(to: pointer), pressed: clickedAway, dt: dt)
         } else { tether.attached = inside }
-        guard tether.attached != pointerOnIsland else { return }
+        updateDwell(pointer: pointer, inside: inside, dt: dt)
+        guard !expanded, tether.attached != pointerOnIsland else { return }
         pointerOnIsland = tether.attached
         if pointerOnIsland {
-            // Only a fresh idle hover wakes the sound; clicks, status changes and
+            // Only a fresh idle hover wakes the sound; status changes and
             // live speech/microphone activity remain quiet. Tether motion does not retrigger it.
             if inside && !expanded && currentStatus == "Ready" && !busy && !talking
                 && !requestingPermission && !speech.isSpeaking && NSEvent.pressedMouseButtons == 0 {
@@ -558,7 +616,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }, 1, &spec, Unmanaged.passUnretained(self).toOpaque(), &eventHandler)
         let id = EventHotKeyID(signature: OSType(0x434C5059), id: 1)
         if RegisterEventHotKey(49, UInt32(controlKey | optionKey), id, GetApplicationEventTarget(), 0, &hotKey) != noErr {
-            setStatus("Shortcut unavailable. Click the island to open it.")
+            setStatus("Shortcut unavailable. Hold the pointer on the island to open it.")
         }
         for (number, modifiers) in [(UInt32(2), UInt32(controlKey | optionKey)), (UInt32(3), UInt32(controlKey))] {
             var key: EventHotKeyRef?
@@ -663,7 +721,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var talking: Bool { voiceRequested || recording || currentStatus == "Speaking" }
     // Resting: a green line. Audio live: the waveform. Anything else to say: text and line.
     @discardableResult private func layoutIsland(updateFrame: Bool = true) -> IslandLayout {
-        let content: IslandContent = talking ? .audio : currentStatus == "Ready" ? .idle : .status(textWidth: ceil(statusLabel.cell?.cellSize.width ?? 52))
+        let content: IslandContent = startupLoading && !expanded ? .loading : talking ? .audio : currentStatus == "Ready" ? .idle : .status(textWidth: ceil(statusLabel.cell?.cellSize.width ?? 52))
         let awake = pointerOnIsland && content == .idle && !expanded
         let screen = island?.screen ?? NSScreen.main ?? NSScreen.screens[0]
         let makeLayout = { [expanded] (hovered: Bool) in
@@ -672,6 +730,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                          expanded: expanded, content: content, hovered: hovered)
         }
         let layout = makeLayout(awake)
+        updateLoadingLine(layout: content == .loading ? layout : nil)
         guard !composerTransitioning else { return layout }
         islandView.layer?.cornerRadius = layout.cornerRadius
         islandView.layer?.maskedCorners = layout.isNotched && !expanded
@@ -685,7 +744,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         // Idle readiness is already represented by the compact menu-bar line.
         if case .status = content { statusLabel.isHidden = false } else { statusLabel.isHidden = true }
         activityMark.isHidden = content != .audio
-        islandView.toolTip = expanded ? nil : "\(currentStatus) · Click to open · ⌃⌥Space"
+        islandView.toolTip = expanded ? nil : "\(currentStatus) · Hold here to open · ⌃⌥Space"
         islandView.setAccessibilityLabel("Clippy: \(currentStatus)")
         wake.target = awake ? 1 : 0
         if content == .idle && !expanded {
@@ -703,7 +762,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             stopFrames()
             wakeRegion = .zero
             wake.jump(to: 0); tether.attached = false; pointerOnIsland = false; liquid.reset()
-            if pointerOnGlue { pointerOnGlue = false }
         }
         updateSignal(content: content, layout: layout)
         if updateFrame {
@@ -724,6 +782,97 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
         return layout
     }
+    private static let loadingCycle: CFTimeInterval = 1.7
+    /// When in each sweep the light's front reaches the end of the path.
+    private static let loadingArrival = 0.75
+    // A white light sweeps around the camera until the server has answered.
+    private func updateLoadingLine(layout: IslandLayout?) {
+        guard let layout else {
+            if !loadingFinishing {
+                loadingLine.removeAllAnimations()
+                loadingLine.opacity = 0
+            }
+            return
+        }
+        let points = layout.loadingPath, path = CGMutablePath()
+        path.move(to: points[0])
+        if points.count > 2 {
+            for i in 1..<points.count - 1 { path.addArc(tangent1End: points[i], tangent2End: points[i + 1], radius: 8) }
+        }
+        path.addLine(to: points[points.count - 1])
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        loadingLine.frame = layout.bounds
+        loadingLine.path = path
+        loadingLine.opacity = 1
+        CATransaction.commit()
+        guard !loadingFinishing, loadingLine.animation(forKey: "sweep") == nil else { return }
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
+        func keyframes(_ keyPath: String, _ values: [CGFloat]) -> CAKeyframeAnimation {
+            let animation = CAKeyframeAnimation(keyPath: keyPath)
+            animation.values = values
+            animation.keyTimes = [0, NSNumber(value: AppDelegate.loadingArrival), 1]
+            animation.calculationMode = .linear
+            return animation
+        }
+        let sweep = CAAnimationGroup()
+        sweep.animations = [keyframes("strokeEnd", [0, 1, 1]), keyframes("strokeStart", [0, 0.72, 1])]
+        sweep.duration = AppDelegate.loadingCycle
+        sweep.repeatCount = .infinity
+        sweep.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        loadingStarted = CACurrentMediaTime()
+        loadingLine.add(sweep, forKey: "sweep")
+    }
+    // Waits for the light to reach the right side, so even an instant start shows one full sweep.
+    private func finishLoadingWhenConnected() {
+        guard startupLoading, !loadingFinishing, connectionProblem != "Starting…" else { return }
+        loadingFinishing = true
+        var delay: CFTimeInterval = 0
+        if !expanded, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion, loadingLine.animation(forKey: "sweep") != nil {
+            let arrival = AppDelegate.loadingCycle * AppDelegate.loadingArrival
+            let elapsed = (CACurrentMediaTime() - loadingStarted).truncatingRemainder(dividingBy: AppDelegate.loadingCycle)
+            delay = elapsed <= arrival ? arrival - elapsed : AppDelegate.loadingCycle - elapsed + arrival
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in self?.settleLoadingLine() }
+    }
+    // The light gathers into the resting line's spot, then becomes that line and takes its color.
+    private func settleLoadingLine() {
+        let screen = island.screen ?? NSScreen.main ?? NSScreen.screens[0]
+        let layout = IslandLayout(screen: screen.frame, safeTop: screen.safeAreaInsets.top,
+                                  leftArea: screen.auxiliaryTopLeftArea, rightArea: screen.auxiliaryTopRightArea,
+                                  expanded: false, content: .loading)
+        let tail = loadingLine.presentation()?.strokeStart ?? 0
+        loadingLine.removeAllAnimations()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        loadingLine.strokeStart = tail
+        loadingLine.strokeEnd = 1
+        CATransaction.commit()
+        CATransaction.begin()
+        CATransaction.setAnimationDuration(0.22)
+        CATransaction.setCompletionBlock { [weak self] in
+            guard let self else { return }
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            self.loadingLine.opacity = 0
+            self.statusLine.frame = layout.lineFrame
+            self.statusLine.cornerRadius = 1.5
+            self.statusLine.opacity = 1
+            CATransaction.commit()
+            for keyPath in ["backgroundColor", "shadowColor"] {
+                let color = CABasicAnimation(keyPath: keyPath)
+                color.fromValue = NSColor.white.cgColor
+                color.duration = 0.7
+                color.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                self.statusLine.add(color, forKey: "arrive-\(keyPath)")
+            }
+            self.startupLoading = false
+            self.loadingFinishing = false
+            self.layoutIsland()
+        }
+        loadingLine.strokeStart = 1 - layout.loadingLineFraction
+        CATransaction.commit()
+    }
     // The resting line, breathing while idle. The spring takes over from here while awake.
     private func updateSignal(content: IslandContent, layout: IslandLayout) {
         let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
@@ -731,11 +880,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         CATransaction.setDisableActions(reduceMotion)
         CATransaction.setAnimationDuration(expanded ? 0.18 : 0.26)
         CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(controlPoints: 0.2, 0.8, 0.2, 1))
-        signalHost.frame = layout.bounds
+        // It autoresizes with the window, so match the size now rather than the target,
+        // or the coming resize is applied twice and clips the line.
+        signalHost.frame = islandView.bounds
         signalHost.layer?.cornerRadius = layout.cornerRadius
         statusLine.frame = layout.lineFrame
         statusLine.cornerRadius = min(layout.lineFrame.width, layout.lineFrame.height) / 2
-        statusLine.opacity = content == .audio || (expanded && content == .idle) ? 0 : 1
+        statusLine.opacity = content == .audio || content == .loading || (expanded && content == .idle) ? 0 : 1
         sensingLine.opacity = 0
         sensingEye.opacity = 0
         CATransaction.commit()
@@ -772,7 +923,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         stepGoo(dt)
         if wake.isSettled, wake.value == 0, liquid.isSettled {
             stopFrames()
-            if pointerOnGlue { pointerOnGlue = false }
             layoutIsland()
         }
     }
@@ -811,8 +961,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let outline = IslandOutline(rect: island.frame)
         let pointer = NSEvent.mouseLocation
         liquid.step(dt, outline: outline, pointer: pointerOnIsland ? pointer : nil)
-        let onGlue = pointerOnIsland && liquid.touches(pointer, outline: outline)
-        if onGlue != pointerOnGlue { pointerOnGlue = onGlue }
         drawGoo(outline: outline)
     }
     private func drawGoo(outline: IslandOutline) {
@@ -863,6 +1011,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let resting = connectionProblem ?? "Ready"
         connectionProblem = problem
         if currentStatus == resting { setStatus("Ready") }
+        finishLoadingWhenConnected()
     }
     private func showError(_ text: String) {
         setStatus(text)
@@ -1236,7 +1385,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         if attachedImage != nil { attachedImage = nil; captureButton.title = "Screen"; setStatus("Screen removed"); return }
         guard CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess() else { showError("Allow Screen Recording in System Settings, then reopen Clippy to attach a screenshot."); return }
         let overlayVisible = overlay.isVisible, captionsVisible = captions.isVisible
-        island.orderOut(nil); notchBridge.orderOut(nil); gooPanel.orderOut(nil); overlay.orderOut(nil); captions.orderOut(nil)
+        island.orderOut(nil); notchBridge.orderOut(nil); gooPanel.orderOut(nil); hideDwellRing(); overlay.orderOut(nil); captions.orderOut(nil)
         let target = FileManager.default.temporaryDirectory.appendingPathComponent("clippy-\(UUID().uuidString).png")
         DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 0.2) { [weak self] in
             let process = Process()

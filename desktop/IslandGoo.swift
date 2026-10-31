@@ -61,6 +61,25 @@ struct SignalBar {
     }
 }
 
+/// Opens the composer once the pointer has stayed on the island long enough. Opening
+/// uses up the hold, so the pointer has to leave and come back to open it again.
+struct DwellTimer {
+    static let duration: CGFloat = 1
+    private(set) var elapsed: CGFloat = 0
+    private var armed = true
+    var progress: CGFloat { min(elapsed / DwellTimer.duration, 1) }
+    /// Returns true on the update where the hold completes.
+    mutating func update(inside: Bool, dt: CGFloat) -> Bool {
+        guard inside else { elapsed = 0; armed = true; return false }
+        guard armed else { return false }
+        elapsed += dt
+        guard elapsed >= DwellTimer.duration else { return false }
+        disarm()
+        return true
+    }
+    mutating func disarm() { elapsed = 0; armed = false }
+}
+
 /// Holds on to the pointer after it leaves the island, until it goes too far, takes too long or clicks elsewhere.
 struct GooTether {
     static let reach: CGFloat = 46
