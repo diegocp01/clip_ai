@@ -1,6 +1,6 @@
 # Clippy island for macOS
 
-The primary app lives in a small black island at the top of the screen. It has no normal app window or Dock icon. Click it, or press **Control-Option-Space**, to open its compact composer. The resting bar is 192 × 28 points; the composer is 400 × 144. Click the top-right chevron, press Escape while focused, or click outside to make it small again. Hovering never opens it. Your unsent text stays in the composer. Screen areas obscured by the physical notch are avoided.
+The primary app lives in a small black island at the top of the screen. It has no normal app window or Dock icon. Click it, or press **Control-Option-Space**, to open its compact composer. On notched MacBooks, a pure black, click-through background joins the island to the camera housing; every control stays below the safe area. The resting bar fits the notch width plus 24 points, with a minimum width of 192; it remains 28 points tall. The composer is 400 × 144. Displays without a notch retain the 192 × 28 floating pill. Click the top-right chevron, press Escape while focused, or click outside to make it small again. Hovering never opens it. Your unsent text stays in the composer.
 
 Build with `npm run desktop:build`, then open `build/Clippy.app`. The app reuses a healthy local server at `127.0.0.1:4317`. If none is available, it starts this project's server as its own child process, and stops only that child when you quit. No installation, login item or background service is registered. The build saves this checkout's Node/Codex paths in the app's `runtime.json`; rebuild after moving the checkout or changing those paths.
 
@@ -28,3 +28,5 @@ This is an independent implementation, not a modified HeyClicky app. The native 
 The build uses native Swift/AppKit, WKWebView, Carbon hotkeys, Speech and AVFoundation. It is ad-hoc signed for this Mac, not notarized for distribution. Microphone and speech availability depend on the Mac, language and permissions. Screen Recording permission can require restarting the app after authorization. Empty transparent drawing areas pass clicks through; objects and controls receive clicks. Command-D focuses the last drawing while Clippy is active, and Command-Q quits.
 
 Compilation, plist syntax and signature checks are performed by the build script. Actual native rendering, microphone, screen capture and hotkey behavior require interactive verification separately.
+
+Run `bash scripts/test-island-layout.sh` on macOS to check notch clearance, camera-width alignment, external-display coordinates and the safe-area fallback. The notch background never receives mouse events or covers the menu items on either side of the camera.
