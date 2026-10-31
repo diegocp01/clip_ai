@@ -389,10 +389,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         island.setFrame(layout.frame, display: true)
         islandView.frame = NSRect(origin: .zero, size: size)
         islandView.layer?.cornerRadius = layout.cornerRadius
-        islandView.layer?.backgroundColor = (layout.notchBridge == nil ? NSColor(white: 0.025, alpha: 1) : .black).cgColor
-        islandView.layer?.borderWidth = layout.notchBridge == nil ? 0.5 : 0
-        statusLabel.frame = value ? NSRect(x: 46, y: 110, width: 294, height: 20) : NSRect(x: 14, y: 5, width: size.width - 54, height: 18)
-        activityMark.frame = value ? NSRect(x: 16, y: 110, width: 24, height: 20) : NSRect(x: size.width - 34, y: 4, width: 24, height: 20)
+        islandView.layer?.maskedCorners = layout.isNotched && !value
+            ? [.layerMinXMinYCorner, .layerMaxXMinYCorner]
+            : [.layerMinXMinYCorner, .layerMaxXMinYCorner, .layerMinXMaxYCorner, .layerMaxXMaxYCorner]
+        islandView.layer?.backgroundColor = (layout.isNotched ? .black : NSColor(white: 0.025, alpha: 1)).cgColor
+        islandView.layer?.borderWidth = layout.isNotched ? 0 : 0.5
+        statusLabel.frame = layout.statusFrame
+        activityMark.frame = layout.activityFrame
         if let bridge = layout.notchBridge {
             notchBridge.setFrame(bridge, display: true)
             notchBridge.orderFrontRegardless()

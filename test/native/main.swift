@@ -11,13 +11,23 @@ for origin in [NSPoint.zero, NSPoint(x: -1710, y: 250)] {
     let right = NSRect(x: screen.minX + 947.5, y: left.minY, width: 762.5, height: 33.5)
     for expanded in [false, true] {
         let layout = IslandLayout(screen: screen, safeTop: 33.5, leftArea: left, rightArea: right, expanded: expanded)
-        let bridge = layout.notchBridge!
-        expect(layout.frame.maxY == left.minY, "Controls must stay below the camera area")
         expect(layout.frame.midX == screen.midX, "Island must follow display coordinates")
-        expect(layout.frame.width == (expanded ? 400 : 209), "Collapsed width must fit the notch")
-        expect(bridge.minX == left.maxX && bridge.maxX == right.minX, "Bridge must not cover menu items beside the notch")
-        expect(bridge.maxY == screen.maxY && bridge.minY < layout.frame.maxY, "Bridge must join the top edge and body without a seam")
-        expect(bridge.minY >= layout.frame.minY, "Bridge must end inside the body")
+        expect(layout.isNotched, "Hardware notch must be detected")
+        if expanded {
+            let bridge = layout.notchBridge!
+            expect(layout.frame.maxY == left.minY, "Expanded controls must stay below the camera")
+            expect(bridge.minX == left.maxX && bridge.maxX == right.minX, "Expanded bridge must not cover adjacent menu items")
+            expect(bridge.maxY == screen.maxY && bridge.minY < layout.frame.maxY, "Bridge must overlap expanded body")
+            expect(bridge.minY >= layout.frame.minY, "Bridge must end inside the body")
+        } else {
+            expect(layout.frame.maxY == screen.maxY && layout.frame.minY == left.minY, "Collapsed island must occupy the notch row, never hang below it")
+            expect(layout.notchBridge == nil, "Collapsed island must not leave a connector below the notch")
+            let status = layout.statusFrame.offsetBy(dx: layout.frame.minX, dy: layout.frame.minY)
+            let activity = layout.activityFrame.offsetBy(dx: layout.frame.minX, dy: layout.frame.minY)
+            expect(left.contains(status), "Status text must be visible entirely left of the physical camera")
+            expect(right.contains(activity), "Activity indicator must be visible entirely right of the physical camera")
+            expect(layout.frame.contains(status) && layout.frame.contains(activity), "Controls must remain inside the island")
+        }
     }
 }
 let external = NSRect(x: 1710, y: -400, width: 2560, height: 1440)
