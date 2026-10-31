@@ -45,6 +45,7 @@ final class ActivityMark: NSView {
 
 final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler, URLSessionDataDelegate, AVSpeechSynthesizerDelegate {
     private var island: FloatingPanel!
+    private var notchBridge: FloatingPanel!
     private var islandView: IslandView!
     private var overlay: FloatingPanel!
     private var webView: WKWebView!
@@ -170,6 +171,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
     private func buildIsland() {
         island = panel(.zero, level: NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1))
+        notchBridge = panel(.zero, level: island.level)
+        notchBridge.title = "Clippy notch background"
+        notchBridge.backgroundColor = .black
+        notchBridge.ignoresMouseEvents = true
+        notchBridge.setAccessibilityElement(false)
         island.title = "Clippy island"
         island.appearance = NSAppearance(named: .darkAqua)
         islandView = IslandView(frame: .zero)
@@ -376,13 +382,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private func setExpanded(_ value: Bool, focus: Bool = false) {
         expanded = value
         let screen = island?.screen ?? NSScreen.main ?? NSScreen.screens[0]
-        let size = value ? NSSize(width: 400, height: 144) : NSSize(width: 192, height: 28)
-        let top = screen.frame.maxY - max(screen.safeAreaInsets.top, 4)
-        island.setFrame(NSRect(x: screen.frame.midX - size.width / 2, y: top - size.height, width: size.width, height: size.height), display: true)
+        let layout = IslandLayout(screen: screen.frame, safeTop: screen.safeAreaInsets.top,
+                                  leftArea: screen.auxiliaryTopLeftArea, rightArea: screen.auxiliaryTopRightArea,
+                                  expanded: value)
+        let size = layout.frame.size
+        island.setFrame(layout.frame, display: true)
         islandView.frame = NSRect(origin: .zero, size: size)
-        islandView.layer?.cornerRadius = value ? 18 : 14
-        statusLabel.frame = value ? NSRect(x: 46, y: 110, width: 294, height: 20) : NSRect(x: 14, y: 5, width: 138, height: 18)
-        activityMark.frame = value ? NSRect(x: 16, y: 110, width: 24, height: 20) : NSRect(x: 158, y: 4, width: 24, height: 20)
+        islandView.layer?.cornerRadius = layout.cornerRadius
+        islandView.layer?.backgroundColor = (layout.notchBridge == nil ? NSColor(white: 0.025, alpha: 1) : .black).cgColor
+        islandView.layer?.borderWidth = layout.notchBridge == nil ? 0.5 : 0
+        statusLabel.frame = value ? NSRect(x: 46, y: 110, width: 294, height: 20) : NSRect(x: 14, y: 5, width: size.width - 54, height: 18)
+        activityMark.frame = value ? NSRect(x: 16, y: 110, width: 24, height: 20) : NSRect(x: size.width - 34, y: 4, width: 24, height: 20)
+        if let bridge = layout.notchBridge {
+            notchBridge.setFrame(bridge, display: true)
+            notchBridge.orderFrontRegardless()
+            notchBridge.order(.below, relativeTo: island.windowNumber)
+        } else {
+            notchBridge.orderOut(nil)
+        }
         islandView.toolTip = value ? nil : "Click to open · ⌃⌥Space"
         for control in expandedControls { control.isHidden = !value }
         island.orderFrontRegardless()
@@ -504,9 +521,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         stopDictation(sendTranscript: false)
         speech.stopSpeaking(at: .immediate)
         busy = true
-        sendButton.title = "Cancel"
+        sendButton.title = ""
         sendButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Cancel request")
         sendButton.setAccessibilityLabel("Cancel request")
+        sendButton.toolTip = "Cancel request"
         requestGeneration += 1
         let generation = requestGeneration
         pendingMessage = message
@@ -594,8 +612,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         else if !received { showError("Codex ended without a visual. Try again.") }
     }
     private func finishRequest() {
-        busy = false; requestTask = nil; sendButton.title = "Send"
+        busy = false; requestTask = nil; sendButton.title = ""
         sendButton.image = NSImage(systemSymbolName: "arrow.up", accessibilityDescription: "Send")
+        sendButton.toolTip = "Send · Return"
         sendButton.setAccessibilityLabel("Send")
     }
     private func cancelRequest() {
@@ -715,7 +734,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         if attachedImage != nil { attachedImage = nil; captureButton.title = "Screen"; setStatus("Screen removed"); return }
         guard CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess() else { showError("Allow Screen Recording in System Settings, then reopen Clippy to attach a screenshot."); return }
         let overlayVisible = overlay.isVisible, captionsVisible = captions.isVisible
-        island.orderOut(nil); overlay.orderOut(nil); captions.orderOut(nil)
+        island.orderOut(nil); notchBridge.orderOut(nil); overlay.orderOut(nil); captions.orderOut(nil)
         let target = FileManager.default.temporaryDirectory.appendingPathComponent("clippy-\(UUID().uuidString).png")
         DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 0.2) { [weak self] in
             let process = Process()
