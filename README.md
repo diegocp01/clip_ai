@@ -2,6 +2,8 @@
 
 A local Mac assistant that lives at the top of the screen and places interactive visuals over your desktop. Text editing uses the Codex SDK; streaming visuals use the bundled Codex app-server with your existing ChatGPT login.
 
+![Clippy's expanded desktop island with a question field, Screen and Talk buttons, and Fast mode selected.](docs/images/clippy-island.jpg)
+
 This is a separately implemented app inspired by the HeyClicky demo. It does not install HeyClicky, call its backend, reuse its credentials, or ship its drawing code.
 
 ## Open the app
