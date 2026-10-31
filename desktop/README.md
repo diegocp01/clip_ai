@@ -79,3 +79,34 @@ Realtime captions follow audio transcript delta/done events and the completed au
 Each fresh opening briefly replaces the idle model caption with a short greeting (at most five words). A shuffled local set avoids repeats until its 24 lines are used, remembers the last line across launches, and works offline without sending any user context. It holds for 3.2 seconds, fades out over 1.2 seconds, then fades the current model selector back in over 0.5 seconds. Reduced Motion uses a simple timed replacement. Clicking opens model settings immediately; automatic hover menus wait until the greeting is gone. Closing cancels the timer, and reopening starts a fresh line. Repositioning an already-open composer does not restart it. Work and voice status retain their existing priority.
 
 The vertical-to-horizontal wake transition uses a gentler, more damped spring and an overlapping crossfade. The gradient travels with the shrinking vertical light before widening, so it does not appear separately at the destination. Leaving mid-transition reverses the same geometry; the one-second opening dwell and Reduce Motion behavior are unchanged.
+### Point & Share during Talk
+
+Start Talk, then click the custom comet-pointer circle in the bottom-center slot (the chat-provider selector returns when Talk ends). Its red state and the “Point sharing” notice confirm sharing is active. Move around or circle what you mean while asking your question: a click-through red comet and a three-second trail follow the normal system pointer, which remains available for normal app interaction. Click the same circle again or End Talk to stop. Point & Share never starts automatically.
+
+Motion samples stay in memory, at up to 30 Hz and 90 recent points. After movement, Clip captures a region up to 760×520 points on the display under the pointer, adds the red trail, and shares it with the current OpenAI Realtime session. Captures wait at least 2.5 seconds apart, prefer a brief pause, and have a 120-frame limit per Talk session. No stationary repeats, permanent recordings, or queue of pending uploads are created. Temporary capture files are removed after reading. Crop pixels can include nearby content within that region. The current screenshot notice confirms each sent frame. Only the latest three pointer-image items remain in the voice conversation; deletion is conversation-context management, not a claim about provider data retention. Frames alone do not trigger speech. A full-screen capture tool request while this mode is enabled reuses the latest available crop instead.
+
+Stopping, ending Talk, connection failure, lock/session-inactive notification, display sleep, or display reconfiguration cancels the mode and prevents late uploads. Existing Screen Recording permission is required. Leaving the notch open is optional; its sharing notice is visible when expanded and the red marker identifies active sharing elsewhere. The model receives bounded snapshots and trail coordinates, not a continuous video or access to control the cursor. Drawing can use the latest shared crop as context.
+
+Validation: verify with a disposable page containing several labeled objects, enable Talk → Point & Share, circle one label and ask which one is circled. Check the red tail, screenshot-sent notice, normal click-through, second-monitor crop, and immediate stop when toggled off or Talk ends. Physical pointer/microphone and screen-lock behavior require an unlocked Mac; compilation and synthetic image checks alone do not verify those paths.
+
+### Live HTML explanations during Talk
+
+With Talk connected, enable the comet-pointer circle and circle the relevant area.
+Ask “Explain this with an example and a question I can answer.” Realtime can now
+call `show_explanation` for a floating HTML panel, or `draw_visual` for a 3D/diagram
+explanation. HTML uses the selected drawing provider/model, the latest shared crop,
+and the previous HTML panel for follow-up edits. The renderer displays completed
+sections as they stream, rather than waiting for the full answer.
+
+HTML supports semantic text, tables, CSS, checkbox/radio controls and expandable
+answers (`details`/`summary`). It does **not** execute generated JavaScript, load
+remote content, submit forms, navigate, or expose the native bridge. A tag/attribute
+allowlist, an empty iframe sandbox and a restrictive CSP enforce that boundary.
+There is one panel, at most eight 8,000-character sections, and a 300ms preview
+coalescer. No new WebView or local AI model is created. This is bounded resource
+usage by design, not a measured RAM guarantee. Dismiss cancels the in-flight visual;
+ending Talk cancels the request and pointer sharing. The API retains the existing
+120-second timeout, local-session authentication and two-request concurrency limit.
+
+`/overlay.html?demo=html` is an offline illustrative fixture for layout and answer
+expansion checks; it does not start the microphone or an AI request.

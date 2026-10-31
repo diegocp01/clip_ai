@@ -42,7 +42,7 @@ export function generateWithClaude(request,options={}) {
   const {model,reasoningEffort,name}=(request.mode==='chat'?chatSettings:drawingSettings)({...request,provider:'claude'});
   return runClaudeStructured(claudeMessage(request),{model,effort:reasoningEffort,...options,onPreview:request.mode==='chat'?undefined:options.onPreview,instructions:request.mode==='chat'?CHAT_INSTRUCTIONS:VISUAL_INSTRUCTIONS,schema:resultSchema,validate:assertResult,status:`Thinking with ${name}…`,tier:request.tier??'fast'});
 }
-export async function runClaudeStructured(message,{signal,onStatus=()=>{},onPreview,env=claudeEnvironment(),spawnImpl=spawn,model=CLAUDE_MODEL,effort=CLAUDE_EFFORT,instructions,schema,validate=x=>x,status,tier=null}={}) {
+export async function runClaudeStructured(message,{signal,onStatus=()=>{},onPreview,onText:customOnText,env=claudeEnvironment(),spawnImpl=spawn,model=CLAUDE_MODEL,effort=CLAUDE_EFFORT,instructions,schema,validate=x=>x,status,tier=null}={}) {
   const started=Date.now();
   signal?.throwIfAborted();
   // Outside the project, so the CLI finds no project instructions to load.
@@ -53,7 +53,7 @@ export async function runClaudeStructured(message,{signal,onStatus=()=>{},onPrev
     child=spawnImpl(claudeBinary(env),claudeArguments({model,effort,schema,instructions}),{cwd:work,env,stdio:['pipe','pipe','pipe']});
     // Do not log stderr: upstream diagnostic output may contain private context.
     child.stderr.resume();
-    const onText=onPreview?previewEmitter(onPreview):()=>{};
+    const onText=customOnText||(onPreview?previewEmitter(onPreview):()=>{});
     let raw='',abort;
     const output=await new Promise((resolve,reject)=>{
       abort=()=>reject(signal.reason||new Error('Drawing cancelled.'));
