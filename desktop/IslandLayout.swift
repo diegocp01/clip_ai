@@ -7,6 +7,7 @@ enum ComposerGeometry {
     static let modelCaption = NSRect(x: 110, y: 176, width: 260, height: 14)
     static let prompt = NSRect(x: 90, y: 112, width: 300, height: 56)
     static let selectionIndicator = NSRect(x: 106, y: 112, width: 226, height: 16)
+    static let screenshotIndicator = NSRect(x: 128, y: 99, width: 204, height: 12)
     static let input = NSRect(x: 106, y: 134, width: 226, height: 22)
     static let send = NSRect(x: 342, y: 127, width: 36, height: 36)
     static let screen = NSRect(x: 36, y: 116, width: 36, height: 36)
@@ -46,7 +47,7 @@ enum ComposerGeometry {
         return path
     }
     static func option(at point: NSPoint) -> Int? {
-        guard !prompt.contains(point), !modelCaption.contains(point),
+        guard !prompt.contains(point), !screenshotIndicator.contains(point), !modelCaption.contains(point),
               shellPath(in: NSRect(origin: .zero, size: size)).contains(point),
               !NSBezierPath(ovalIn: innerRing).contains(point) else { return nil }
         let angle = atan2(point.x - optionCenter.x, optionCenter.y - point.y)

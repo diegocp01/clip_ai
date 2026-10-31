@@ -24,7 +24,7 @@ Use the paperclip menu → Enable text editing… to open the permission prompt.
 
 ## Boundaries and verification
 
-This is an independent implementation, not a modified HeyClicky app. The native bridge and drawing navigation accept only the local server origin. Model results are validated by the backend before being drawn. Local screen capture and on-device voice are explicitly activated by you.
+This is an independent implementation, not a modified HeyClicky app. The native bridge and drawing navigation accept only the local server origin. Model results are validated by the backend before being drawn. Screen context is captured only after a submitted prompt or a voice tool request, or with the manual Screen button; there is no continuous screen watching. On-device dictation is explicitly activated by you.
 
 The build uses native Swift/AppKit, WKWebView, Carbon hotkeys, Speech and AVFoundation. It is ad-hoc signed for this Mac, not notarized for distribution. Microphone and speech availability depend on the Mac, language and permissions. Screen Recording permission can require restarting the app after authorization. Empty transparent drawing areas pass clicks through; objects and controls receive clicks. Command-D focuses the last drawing while Clip is active, and Command-Q quits.
 
@@ -53,3 +53,12 @@ The app is branded Clip and builds as `build/Clip.app`. Its bundle identifier re
 ### Visual explanations during Talk
 
 Ask “How do molecules work?” in Talk: the Realtime voice can call Draw without a separate drawing command, using the current Draw provider/model/effort. The existing desktop overlay receives the progressive visual and the voice explains it after the tool confirms it is shown. Ask for “voice only” to avoid a drawing. Greetings/simple facts stay verbal, drawing failures get a verbal fallback, and interrupted responses cannot start a stale drawing call. End stops microphone/audio and pending drawing work.
+
+
+### Automatic screenshots
+
+Send/Draw first asks Decisions whether the submitted prompt needs the visible screen. An attached image bypasses that check; missing/failed/uncertain decisions continue without capturing. Screen-specific requests capture the main display once after hiding Clip’s panels. The small **Screenshot captured** line sits below the input and selected-text badge. **Screenshot unavailable** indicates missing access or a failed capture; automatic requests never open a permission prompt. Click Screen to request Screen Recording access manually.
+
+Talk can call `capture_screen` for screen-dependent questions (one per spoken turn, eight per session), then discuss the image or pass it to Draw. It waits for capture before drawing if both tools are requested together. End prevents late image delivery and clears local voice image state. Typed Stop cancels preflight and prevents late delivery; closing the composer does not reopen it after capture. Temporary image files are removed. Ordinary typed chat/Draw models receive preflight context but do not gain general computer-control tools.
+
+Verify with a disposable page: send “What does this error on my screen mean?” and confirm the screenshot line appears before the answer. Ask “How do molecules work?” and confirm there is no capture. Repeat in Talk, then End during capture; no late image should be shared. Screen Recording permission and actual voice playback need native verification separately from the automated tests.

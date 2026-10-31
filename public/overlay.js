@@ -44,7 +44,22 @@ function render(result, preview = false) {
 window.clippyRender = render;
 window.clippyRollback = result => { streaming = false; if(result)render(result);else $('overlay').hidden=true; };
 let voiceGeneration = 0;
+const pendingScreens = new Map();
+let screenRequestID = 0;
+function captureScreen({signal}) {
+  if(!window.webkit?.messageHandlers?.clippy) return Promise.reject(new Error('Automatic screen capture requires the native Clip app.'));
+  return new Promise((resolve,reject)=>{
+    const id = String(++screenRequestID);
+    const finish=(image,error)=>{clearTimeout(timer);signal.removeEventListener('abort',abort);pendingScreens.delete(id);error?reject(new Error(error)):resolve(image);};
+    const abort=()=>finish(null,'Voice ended before the screenshot was shared.');
+    const timer=setTimeout(()=>finish(null,'Screen capture timed out.'),10000);
+    if(signal.aborted){abort();return;}
+    signal.addEventListener('abort',abort,{once:true});pendingScreens.set(id,finish);
+    post('voiceCaptureScreen',{id,generation:voiceGeneration});
+  });
+}
 const voice = new VoiceConversation({
+  captureScreen,
   notify: event => post('voiceState',{...event,generation:voiceGeneration}),
   render: result => { render(result); post('voiceVisual',{result,generation:voiceGeneration}); },
   preview: result => { render(result,true); post('voicePreview',{generation:voiceGeneration}); },
@@ -53,6 +68,7 @@ const voice = new VoiceConversation({
 window.clippyVoice = {
   start: generation => {voiceGeneration=generation;return voice.start();}, stop: () => voice.stop(),
   shareScreen: image => voice.shareScreen(image),
+  finishScreenCapture: (id,image,error) => pendingScreens.get(id)?.(image,error),
   setVisual: result => { voice.previous=result; },
   setMuted: value => voice.setMuted(value),
   setProvider: value => voice.setProvider(value),

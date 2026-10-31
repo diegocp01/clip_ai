@@ -1,4 +1,5 @@
 import http from 'node:http';
+import {chooseScreenContext,normalizeScreenRequest} from './screen-context.mjs';
 import { chooseEditAction } from './edit-decision.mjs';
 import { choosePresentation } from './presentation.mjs';
 import { createSignalDirector,SIGNAL_STATES } from './signal-pattern.mjs';
@@ -17,7 +18,7 @@ import { RealtimeService,VOICE_MODEL } from './realtime.mjs';
 const root=fileURLToPath(new URL('../',import.meta.url));
 const MAX_BODY=8*1024*1024;
 const mime={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml','.png':'image/png'};
-export function createServer({run=generate,runClaude=generateWithClaude,runEdit=editText,checkAuth=authStatus,checkClaude=claudeAuthStatus,voice=new RealtimeService(),chooseStatus=chooseLoadingStatus,routeChat=chooseChatRoute,routePresentation=choosePresentation,routeEdit=chooseEditAction,directSignal=createSignalDirector()}={}){
+export function createServer({run=generate,runClaude=generateWithClaude,runEdit=editText,checkAuth=authStatus,checkClaude=claudeAuthStatus,voice=new RealtimeService(),chooseStatus=chooseLoadingStatus,routeChat=chooseChatRoute,routePresentation=choosePresentation,routeEdit=chooseEditAction,routeScreen=chooseScreenContext,directSignal=createSignalDirector()}={}){
   const token=randomBytes(32).toString('hex');
   let active=0;
   const server=http.createServer(async(req,res)=>{
@@ -44,6 +45,24 @@ export function createServer({run=generate,runClaude=generateWithClaude,runEdit=
         const result=await directSignal(body.state);
         if(!res.destroyed)return json(200,result);
       } catch { if(!res.destroyed)return json(400,{error:'Invalid signal request.'}); }
+      return;
+    }
+    if(req.method==='POST'&&pathname==='/api/screen-context') {
+      const supplied=Buffer.from(String(req.headers['x-clippy-session']||''));
+      if(supplied.length!==token.length||!timingSafeEqual(supplied,Buffer.from(token)))return json(403,{error:'Refresh your local session.'});
+      if(!req.headers['content-type']?.startsWith('application/json'))return json(415,{error:'Expected application/json.'});
+      if(active>=2)return json(429,{error:'Two requests are already running.'});
+      active++;
+      const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),3500);
+      const disconnect=()=>{if(!res.writableEnded)controller.abort();};res.on('close',disconnect);
+      try {
+        let size=0;const chunks=[];
+        for await(const chunk of req){size+=chunk.length;if(size>25000)return json(413,{error:'Context request too large.'});chunks.push(chunk);}
+        const body=normalizeScreenRequest(JSON.parse(Buffer.concat(chunks).toString('utf8')));
+        const capture=!body.hasImage&&await routeScreen(body,{signal:controller.signal})===true;
+        if(!res.destroyed)json(200,{capture:!controller.signal.aborted&&capture});
+      }catch {if(!res.destroyed)json(200,{capture:false});}
+      finally{active--;clearTimeout(timer);res.off('close',disconnect);}
       return;
     }
     if(req.method==='GET'&&pathname==='/api/realtime/status')return json(200,{configured:await voice.ready().catch(()=>false),model:VOICE_MODEL});
