@@ -22,6 +22,22 @@ const shapes = {
   torus: () => new THREE.TorusGeometry(1, .22, 20, 64),
 };
 
+// Fit the physical object from above at a three-quarter angle, rather than
+// looking straight down its length (which hides an airplane's silhouette).
+export function sceneCameraPose(box, aspect, fov = 35) {
+  const center = box.getCenter(new THREE.Vector3());
+  const direction = new THREE.Vector3(1, .75, -1.4).normalize();
+  const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), direction).normalize();
+  const up = new THREE.Vector3().crossVectors(direction, right).normalize();
+  const tan = Math.tan(THREE.MathUtils.degToRad(fov) / 2);
+  let distance = 1;
+  for (const x of [box.min.x, box.max.x]) for (const y of [box.min.y, box.max.y]) for (const z of [box.min.z, box.max.z]) {
+    const corner = new THREE.Vector3(x, y, z).sub(center), depth = corner.dot(direction);
+    distance = Math.max(distance, depth + Math.abs(corner.dot(up)) / tan, depth + Math.abs(corner.dot(right)) / (tan * Math.max(aspect, .1)));
+  }
+  return { target: center, position: center.clone().addScaledVector(direction, distance * 1.18) };
+}
+
 export function createScene(host, onSelect) {
   let renderer;
   try { renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true }); }
@@ -83,12 +99,9 @@ export function createScene(host, onSelect) {
   function reset() {
     if (!meshes.length) return;
     const box = new THREE.Box3().setFromObject(group);
-    const center = box.getCenter(new THREE.Vector3());
-    const size = box.getSize(new THREE.Vector3());
-    const fov = THREE.MathUtils.degToRad(camera.fov);
-    const distance = Math.max(size.y, size.x / camera.aspect, size.z) / (2 * Math.tan(fov / 2)) * 1.35 + size.z / 2;
-    camera.position.copy(center).add(new THREE.Vector3(distance * .18, distance * .16, distance));
-    controls.target.copy(center); controls.update();
+    const pose = sceneCameraPose(box, camera.aspect, camera.fov);
+    camera.position.copy(pose.position);
+    controls.target.copy(pose.target); controls.update();
   }
   // Where a part sits on screen right now, and about how big it looks.
   function locate(id) {
@@ -135,7 +148,9 @@ export function createScene(host, onSelect) {
       if (!part.label || (isSample && part.id.startsWith('bond'))) continue;
       const badge = document.createElement('button'); badge.className = 'scene-label'; badge.textContent = part.label;
       badge.setAttribute('aria-label', `Inspect ${part.label}`); badge.addEventListener('click', () => select(mesh));
-      labels.append(badge); badges.push({ element: badge, mesh });
+      const bounds = new THREE.Box3().setFromObject(mesh);
+      const anchor = bounds.getCenter(new THREE.Vector3()); anchor.y = bounds.max.y + .22;
+      labels.append(badge); badges.push({ element: badge, mesh, anchor });
     }
     resize();
     if(!preserveCamera){
@@ -147,13 +162,19 @@ export function createScene(host, onSelect) {
     requestAnimationFrame(frame);
     if (!host.clientWidth || !host.clientHeight || document.hidden) return;
     controls.update();
+    const occupied = [];
     for (const badge of badges) {
-      projected.copy(badge.mesh.position);
-      projected.y += Math.max(.2, badge.mesh.scale.y) * .85 + .25;
+      projected.copy(badge.anchor);
       projected.project(camera);
-      badge.element.style.left = `${(projected.x * .5 + .5) * host.clientWidth}px`;
-      badge.element.style.top = `${(-projected.y * .5 + .5) * host.clientHeight}px`;
-      badge.element.hidden = projected.z > 1 || projected.z < -1;
+      const x = (projected.x * .5 + .5) * host.clientWidth, y = (-projected.y * .5 + .5) * host.clientHeight;
+      const width = badge.element.textContent.length * 7 + 24, height = 30;
+      const rect = {left:x-width/2,right:x+width/2,top:y-height,bottom:y+6};
+      const hidden = projected.z > 1 || projected.z < -1 || x < 0 || x > host.clientWidth || y < 0 || y > host.clientHeight
+        || occupied.some(other => rect.left < other.right && rect.right > other.left && rect.top < other.bottom && rect.bottom > other.top);
+      badge.element.hidden = hidden;
+      if(!hidden)occupied.push(rect);
+      badge.element.style.left = `${x}px`;
+      badge.element.style.top = `${y}px`;
     }
     renderer.render(scene, camera);
   }

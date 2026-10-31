@@ -37,8 +37,8 @@ function fixture(fetchImpl){
 }
 test('voice HTML tool uses latest pointer crop, streams, remembers panel, and reports actual summary',async()=>{
  const f=fixture(async(path,options)=>{
-  assert.equal(path,'/api/explanation');const request=JSON.parse(options.body);assert.equal(request.image,'shared crop');assert.equal(request.previous,null);
-  return new Response([JSON.stringify({type:'preview',result:{...example,sections:example.sections.slice(0,1)}}),JSON.stringify({type:'result',result:example})].join('\n'));
+  assert.equal(path,'/api/ask');const request=JSON.parse(options.body);assert.equal(request.image,'shared crop');assert.equal(request.previous,null);
+  return new Response([JSON.stringify({type:'preview',format:'html',result:{...example,sections:example.sections.slice(0,1)}}),JSON.stringify({type:'result',format:'html',result:example})].join('\n'));
  });
  const item={name:'show_explanation',call_id:'1',arguments:JSON.stringify({prompt:'Explain the circled tensor'})};
  await f.voice.draw(f.session,item);await f.voice.draw(f.session,item);
@@ -47,7 +47,7 @@ test('voice HTML tool uses latest pointer crop, streams, remembers panel, and re
 });
 test('dismissal aborts generation and never renders a late result',async()=>{
  let release;
- const f=fixture(async()=>{await new Promise(r=>release=r);return new Response(JSON.stringify({type:'result',result:example})+'\n');});
+ const f=fixture(async()=>{await new Promise(r=>release=r);return new Response(JSON.stringify({type:'result',format:'html',result:example})+'\n');});
  const pending=f.voice.draw(f.session,{name:'show_explanation',call_id:'2',arguments:'{"prompt":"Explain"}'});
  f.voice.cancelVisual();release();await pending;
  assert.equal(f.rendered.length,0);assert.equal(JSON.parse(f.sent[0].item.output).shown,false);

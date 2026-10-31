@@ -56,7 +56,7 @@ function clientFixture(mediaOverride, overrides = {}) {
   if(path==='/api/session')return Response.json({token:'local-token'});
   if(path.endsWith('/call'))return Response.json({id:'session',sdp,limitMs:600000});
   if(path.endsWith('/stop'))return Response.json({stopped:true});
-  if(path==='/api/chat')return new Response(JSON.stringify({type:'result',result:{title:'Water',reply:'Water schematic',scene:{objects:[]},diagram:{nodes:[],links:[]},cards:[]}})+'\n');
+  if(path==='/api/ask')return new Response(JSON.stringify({type:'result',result:{title:'Water',reply:'Water schematic',scene:{objects:[]},diagram:{nodes:[],links:[]},cards:[]}})+'\n');
   throw new Error('Unexpected route');
  };
  const voice=new VoiceConversation({notify:event=>events.push(event),render:result=>events.push({result}),fetchImpl,Peer,media:mediaOverride||{getUserMedia:async()=>tracks},makeAudio:()=>({play:async()=>{},pause(){}}),...overrides});
@@ -69,6 +69,25 @@ test('ending voice stops microphone, playback, connection, pending work and requ
  assert.equal(f.voice.session,null);assert.equal(f.stopped(),1);assert.equal(f.closed(),1);assert.equal(s.controller.signal.aborted,true);
  assert.ok(f.requests.some(r=>r.path==='/api/realtime/stop'));assert.equal(s.audio.srcObject,null);
 });
+test('Continue seeds the existing visual and question, starts one spoken response and enables the guide cursor',async()=>{
+ for(const kind of ['3d','html']) {
+  const played=[];const cursor={parts:()=>[{id:'wing',label:'Wing'}],canOrbit:()=>kind==='3d',play:steps=>played.push(steps),reset(){}};
+  const f=clientFixture(null,{cursor});
+  if(kind==='3d')f.voice.previous={title:'Airplane',reply:'Wings create lift.'};
+  else f.voice.previousHTML={title:'Tokens',summary:'Predict the next token.',sections:[{html:'<p>Tokens</p>'}]};
+  await f.voice.start({question:'How does it work?',answer:'The first answer.'});const s=f.voice.session;
+  f.voice.handle(s,{type:'session.created'});
+  const messages=f.sent.filter(e=>e.type==='conversation.item.create').map(e=>e.item.content?.[0]?.text||'');
+  assert.match(messages.join('\n'),/How does it work/);assert.match(messages.join('\n'),/The first answer/);assert.match(messages.join('\n'),/clicked Continue/);
+  assert.match(messages.join('\n'),new RegExp(kind));assert.match(messages.join('\n'),/wing/);
+  assert.deepEqual(played,[[{action:'point',target:'wing'}]]);
+  assert.equal(f.sent.filter(e=>e.type==='response.create').length,1);
+  assert.equal(f.requests.some(r=>['/api/ask','/api/explanation'].includes(r.path)),false,'Continue must keep the current visual');
+  assert.equal(s.pointSharing,false,'Guiding an existing visual must not capture the screen');
+  f.voice.handle(s,{type:'session.created'});assert.equal(f.sent.filter(e=>e.type==='response.create').length,1);
+  f.voice.stop();
+ }
+});
 test('ending while microphone permission is pending cannot start a late session',async()=>{
  let grant;const pending=new Promise(r=>grant=r);const f=clientFixture({getUserMedia:()=>pending});
  const starting=f.voice.start();await new Promise(r=>setImmediate(r));f.voice.stop();grant(f.tracks);await starting;
@@ -80,7 +99,7 @@ test('voice drawings follow the selected provider while the voice itself stays o
  await f.voice.start();const s=f.voice.session;
  f.voice.handle(s,{type:'session.created'});
  await f.voice.draw(s,{name:'draw_visual',call_id:'one',arguments:JSON.stringify({prompt:'Draw water'})});
- const drawing=JSON.parse(f.requests.find(r=>r.path==='/api/chat').opts.body);
+ const drawing=JSON.parse(f.requests.find(r=>r.path==='/api/ask').opts.body);
  assert.equal(drawing.provider,'claude');assert.equal(drawing.model,'claude-opus-5-5');assert.equal(drawing.reasoningEffort,'high');
  assert.ok(f.requests.some(r=>r.path==='/api/realtime/call'));
  f.voice.setProvider('anything else');assert.equal(f.voice.provider,'gpt');
@@ -91,9 +110,9 @@ test('voice drawings use Terra Fast route, reject other tools, and deduplicate c
  f.voice.handle(s,{type:'session.created'});
  const call={name:'draw_visual',call_id:'one',arguments:JSON.stringify({prompt:'Draw water'})};
  await f.voice.draw(s,call);await f.voice.draw(s,call);
- const drawings=f.requests.filter(r=>r.path==='/api/chat');assert.equal(drawings.length,1);assert.equal(JSON.parse(drawings[0].opts.body).tier,'fast');
+ const drawings=f.requests.filter(r=>r.path==='/api/ask');assert.equal(drawings.length,1);assert.equal(JSON.parse(drawings[0].opts.body).tier,'fast');
  await f.voice.draw(s,{name:'execute_shell',call_id:'two',arguments:'{}'});
- assert.equal(f.requests.filter(r=>r.path==='/api/chat').length,1);
+ assert.equal(f.requests.filter(r=>r.path==='/api/ask').length,1);
  assert.ok(f.sent.some(e=>e.item?.type==='function_call_output'&&JSON.parse(e.item.output).shown));
  f.voice.stop();
 });
@@ -103,7 +122,7 @@ test('completed voice explanation calls stream a visual before confirming it is 
  const result={title:'Molecules',reply:'Atoms bond to form molecules.',scene:{objects:[]},diagram:{nodes:[{id:'o',label:'Oxygen',x:50,y:50,color:'#7298CF'}],links:[]},cards:[]};
  let finish;const pending=new Promise(r=>finish=r);const requests=[];
  f.voice.fetch=async(path,options)=>{
-  if(path==='/api/chat'){
+  if(path==='/api/ask'){
    requests.push(JSON.parse(options.body));
    return new Response(new ReadableStream({start(controller){
     controller.enqueue(new TextEncoder().encode(JSON.stringify({type:'preview',result})+'\n'));
@@ -128,11 +147,11 @@ test('completed voice explanation calls stream a visual before confirming it is 
 test('cancelled voice responses cannot dispatch stale drawing calls',async()=>{
  const f=clientFixture();await f.voice.start();const s=f.voice.session;
  f.voice.handle(s,{type:'response.done',response:{status:'cancelled',output:[{type:'function_call',name:'draw_visual',call_id:'cancelled',arguments:JSON.stringify({prompt:'Old question'})}]}});
- await new Promise(r=>setImmediate(r));assert.equal(f.requests.some(r=>r.path==='/api/chat'),false);assert.equal(s.seen.size,0);f.voice.stop();
+ await new Promise(r=>setImmediate(r));assert.equal(f.requests.some(r=>r.path==='/api/ask'),false);assert.equal(s.seen.size,0);f.voice.stop();
 });
 test('voice drawing failures report shown:false so the voice can continue verbally',async()=>{
  const f=clientFixture();await f.voice.start();const s=f.voice.session;
- f.voice.fetch=async path=>path==='/api/chat'?new Response(JSON.stringify({type:'error',message:'Drawing model unavailable'})+'\n'):Response.json({stopped:true});
+ f.voice.fetch=async path=>path==='/api/ask'?new Response(JSON.stringify({type:'error',message:'Drawing model unavailable'})+'\n'):Response.json({stopped:true});
  await f.voice.draw(s,{name:'draw_visual',call_id:'failed',arguments:JSON.stringify({prompt:'Explain molecule structure'})});
  const output=f.sent.find(e=>e.item?.type==='function_call_output');assert.equal(JSON.parse(output.item.output).shown,false);assert.equal(f.sent.at(-1).type,'response.create');f.voice.stop();
 });
@@ -179,9 +198,9 @@ test('a combined voice tool response waits for screenshot before drawing and res
   {type:'function_call',name:'draw_visual',call_id:'drawing',arguments:JSON.stringify({prompt:'Explain the visible chart'})},
   {type:'function_call',name:'capture_screen',call_id:'screen',arguments:JSON.stringify({reason:'User asks about their visible chart'})}
  ]}});
- assert.equal(f.requests.some(r=>r.path==='/api/chat'),false);
+ assert.equal(f.requests.some(r=>r.path==='/api/ask'),false);
  release();await new Promise(r=>setImmediate(r));
- assert.equal(JSON.parse(f.requests.find(r=>r.path==='/api/chat').opts.body).image,image);
+ assert.equal(JSON.parse(f.requests.find(r=>r.path==='/api/ask').opts.body).image,image);
  assert.equal(f.sent.filter(e=>e.type==='response.create').length,1);
  f.voice.stop();
 });

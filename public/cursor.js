@@ -26,7 +26,7 @@ export function normalizeCursorSteps(args, { targets = [], canOrbit = false } = 
   return args.steps.map(step => {
     if (!step || typeof step !== 'object') throw new Error('Invalid cursor step.');
     switch (step.action) {
-      case 'point': case 'circle': return { action: step.action, target: target(step) };
+      case 'point': case 'circle': case 'reveal': return { action: step.action, target: target(step) };
       case 'write': {
         const text = typeof step.text === 'string' ? step.text.trim() : '';
         if (!text || text.length > 60) throw new Error('Write 1 to 60 characters.');
@@ -50,7 +50,7 @@ export function normalizeCursorSteps(args, { targets = [], canOrbit = false } = 
 
 export function stepDuration(step) {
   switch (step.action) {
-    case 'point': return 700;
+    case 'point': case 'reveal': return 700;
     case 'circle': return 1200;
     case 'write': return 450 + Math.min(step.text.length, 60) * 55;
     case 'rotate': return clamp(700 + Math.max(Math.abs(step.yaw), Math.abs(step.pitch)) * 9, 900, 2400);
@@ -86,7 +86,7 @@ export class CursorPlayer {
     const step = this.queue.shift();
     const start = this.position || (() => { const middle = this.center(); return { x: middle.x + 60, y: middle.y + 60 }; })();
     this.step = { ...step, began: now, duration: this.reducedMotion ? 1 : stepDuration(step), from: { ...start }, progress: 0 };
-    if (step.target) this.reveal(step.target);
+    if (step.target) this.reveal(step.target, step.action === 'reveal');
     if (step.action === 'clear') this.clearInk();
     if (step.action === 'circle') { this.step.ink = { id: this.nextInk++, kind: 'circle', target: step.target, progress: 0 }; this.ink.push(this.step.ink); }
     if (step.action === 'write') {
@@ -111,7 +111,7 @@ export class CursorPlayer {
   }
   place(step, progress) {
     const eased = ease(progress);
-    if (step.action === 'point') {
+    if (step.action === 'point' || step.action === 'reveal') {
       const place = this.anchor(step);
       return { x: lerp(step.from.x, place.x, eased), y: lerp(step.from.y, place.y, eased) };
     }

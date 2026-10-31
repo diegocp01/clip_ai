@@ -747,6 +747,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         captions.ignoresMouseEvents = false
         captions.hasShadow = true
         replyCard = ReplyCard(frame: .zero)
+        replyCard.onContinue = { [weak self] in self?.continueDrawingInVoice() }
         captions.contentView = replyCard
         buildDismissButton()
     }
@@ -1284,7 +1285,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let text = text == "Ready" ? connectionProblem ?? text : text
         currentStatus = text
         statusLabel.stringValue = text
-        let working = ["Checking screen", "Capturing screen", "Choosing edit", "Choosing response", "Choosing model", "Thinking", "Drawing", "Replying", "Explaining", "Summarizing", "Translating", "Solving", "Exploring", "Preparing voice", "Speaking", "Listening", "Proofreading", "Rewriting"].contains { text.contains($0) }
+        let working = ["Checking screen", "Capturing screen", "Choosing edit", "Choosing response", "Choosing 3D", "Choosing model", "Thinking", "Drawing", "Replying", "Explaining", "Summarizing", "Translating", "Solving", "Exploring", "Preparing voice", "Speaking", "Listening", "Proofreading", "Rewriting"].contains { text.contains($0) }
         let problem = text == connectionProblem || text.contains("failed") || text.contains("unavailable")
         refreshComposerSignal()
         activityMark.active = talking
@@ -1346,14 +1347,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         setExpanded(true)
         showCaption(text)
     }
-    private func showCaption(_ text: String, live: Bool = false) {
+    private func showCaption(_ text: String, live: Bool = false, canContinue: Bool = false) {
         if live && captionDismissed { return }
         if !live { captionDismissed = false }
         guard !text.isEmpty else { captions.orderOut(nil); return }
         let screen = island.screen ?? NSScreen.main ?? NSScreen.screens[0]
-        captionSize = ReplyCardLayout.size(text: text, available: screen.visibleFrame.size)
+        captionSize = ReplyCardLayout.size(text: text, available: screen.visibleFrame.size, canContinue: canContinue)
         captions.setFrame(ReplyCardLayout.frame(size: captionSize, under: island.frame, visibleFrame: screen.visibleFrame), display: true)
-        replyCard.show(text, live: live)
+        replyCard.show(text, live: live, canContinue: canContinue)
         captions.orderFrontRegardless()
     }
     private func positionCaption() {
@@ -1724,7 +1725,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 }
                 self.prepareScreenContext(message: message, token: token, generation: generation) { [weak self] image in
                     guard let self, self.requestGeneration == generation else { return }
-                    var request = URLRequest(url: baseURL.appendingPathComponent(comparing ? "api/compare" : "api/chat"), timeoutInterval: 135)
+                    var request = URLRequest(url: baseURL.appendingPathComponent(comparing ? "api/compare" : "api/ask"), timeoutInterval: 135)
                     request.httpMethod = "POST"
                     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
                     request.setValue(token, forHTTPHeaderField: "X-Clippy-Session")
@@ -1804,7 +1805,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             resultReceived = true
             showError(event["message"] as? String ?? "Codex could not finish. Try again.")
         case "result":
-            guard let result = event["result"] as? [String: Any], let reply = result["reply"] as? String else { showError("Invalid visual response."); return }
+            guard let result = event["result"] as? [String: Any], let reply = (result["reply"] ?? result["summary"]) as? String else { showError("Invalid visual response."); return }
             resultReceived = true
             previewVisible = false
             previous = result
@@ -1855,20 +1856,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private func rollbackPreview() {
         guard previewVisible else { return }
         previewVisible = false
-        let json = previous.flatMap { try? JSONSerialization.data(withJSONObject: $0) }.flatMap { String(data: $0, encoding: .utf8) } ?? "null"
-        webView.evaluateJavaScript("window.clippyRollback(\(json)); void 0;")
-        if let previous { render(previous) } else if !voiceRequested { overlay.orderOut(nil) }
+        if let previous { render(previous) }
+        else {
+            webView.evaluateJavaScript("window.clippyRollback(null); void 0;")
+            if !voiceRequested { overlay.orderOut(nil) }
+        }
     }
     private func render(_ result: [String: Any], preview: Bool = false) {
         drawingOnScreen = ReplyCardLayout.hasVisual(result)
+        let html = result["sections"] != nil
         if overlayReady, let data = try? JSONSerialization.data(withJSONObject: result), let json = String(data: data, encoding: .utf8) {
-            webView.evaluateJavaScript("window.clippyRender(\(json), \(preview)); \(preview ? "" : "window.clippyVoice?.setVisual(\(json));") void 0;") { [weak self] _, error in
+            let renderer = html ? "clippyRenderHTML" : "clippyRender"
+            let remember = html ? "setHTML" : "setVisual"
+            webView.evaluateJavaScript("window.\(renderer)(\(json), \(preview)); \(preview ? "" : "window.clippyVoice?.\(remember)(\(json));") void 0;") { [weak self] _, error in
                 if error != nil { self?.showError("Drawing renderer unavailable. Reopen Clip after starting the server.") }
             }
         }
         if drawingOnScreen || voiceRequested { overlay.orderFrontRegardless() }
         else { overlay.orderOut(nil) }
-        if !preview, !voiceRequested, let reply = result["reply"] as? String { showCaption(reply) }
+        if !preview, !voiceRequested, let reply = (result["reply"] ?? result["summary"]) as? String { showCaption(reply, canContinue: drawingOnScreen) }
     }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { /* The module sends ready after clippyRender exists. */ }
     func webView(_ webView: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin, initiatedByFrame frame: WKFrameInfo, type: WKMediaCaptureType, decisionHandler: @escaping (WKPermissionDecision) -> Void) {
@@ -1939,8 +1945,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             }
         case "voicePreview":
             if voiceRequested, data["generation"] as? Int == voiceGeneration { drawingOnScreen = true; overlay.orderFrontRegardless() }
-        case "voiceVisual":
-            if voiceRequested, data["generation"] as? Int == voiceGeneration, let result = data["result"] as? [String: Any], result["scene"] != nil, result["diagram"] != nil {
+        case "voiceVisual", "voiceHTML":
+            if voiceRequested, data["generation"] as? Int == voiceGeneration, let result = data["result"] as? [String: Any], ReplyCardLayout.hasVisual(result) {
                 previous = result; lastRequestMode = "draw"; render(result)
             }
         default: break
@@ -1948,6 +1954,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
     @objc private func toggleRealtimeVoice() {
         if voiceRequested { stopRealtimeVoice(); return }
+        startRealtimeVoice()
+    }
+    private func continueDrawingInVoice() {
+        guard !busy, !voiceRequested, drawingOnScreen, let previous else { return }
+        render(previous)
+        setExpanded(true)
+        startRealtimeVoice(continuation: ["question": String(pendingMessage.prefix(6000)), "answer": String(replyCard.text.prefix(3500))])
+    }
+    private func startRealtimeVoice(continuation: [String: String]? = nil) {
         guard overlayReady else { showError("Wait for the drawing view to finish loading, then try Talk."); return }
         cancelRequest(); selectionEditor.cancel(); stopDictation(sendTranscript: false); replySpeech.stop()
         pointShare.resetSession(); voiceConnected = false
@@ -1964,9 +1979,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                     self.voiceRequested = false; self.updateTalkButton()
                     self.showError("Allow Clip microphone access in Privacy & Security to use Talk."); return
                 }
-                self.webView.evaluateJavaScript("window.clippyVoice.setMuted(\(!self.voiceEnabled)); window.clippyVoice.setProvider('\(self.provider.rawValue)'); window.clippyVoice.start(\(generation)); void 0;") { [weak self] _, error in
+                self.webView.callAsyncJavaScript("window.clippyVoice.setMuted(muted); window.clippyVoice.setProvider(provider); await window.clippyVoice.start(generation, continuation);", arguments: ["muted": !self.voiceEnabled, "provider": self.provider.rawValue, "generation": generation, "continuation": continuation as Any? ?? NSNull()], in: nil, in: .page) { [weak self] result in
                     guard let self, self.voiceGeneration == generation else { return }
-                    if error != nil { self.stopRealtimeVoice(); self.showError("Live voice could not start. Reopen Clip and try again.") }
+                    if case .failure = result { self.stopRealtimeVoice(); self.showError("Live voice could not start. Reopen Clip and try again.") }
                 }
             }
         }
