@@ -72,6 +72,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var signalHost: NSView!
     private let statusLine = CALayer()
     private let loadingLine = CAShapeLayer()
+    private let loadingFinish = CAGradientLayer()
+    private let loadingGlow = CALayer()
     private var startupLoading = true
     private var loadingFinishing = false
     private var loadingStarted: CFTimeInterval = 0
@@ -305,15 +307,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         signalHost.autoresizingMask = [.width, .height]
         // Two bars lying on top of each other read as one line until they split apart.
         for bar in [sensingLine, sensingEye] {
-            bar.startPoint = CGPoint(x: 0, y: 0.5)
-            bar.endPoint = CGPoint(x: 1, y: 0.5)
-            bar.colors = [signalGreen.withAlphaComponent(0), signalGreen.withAlphaComponent(0.6), NSColor(calibratedRed: 0.8, green: 1, blue: 0.86, alpha: 1), signalGreen.withAlphaComponent(0.6), signalGreen.withAlphaComponent(0)].map(\.cgColor)
-            bar.locations = [0, 0.3, 0.5, 0.7, 1]
+            SignalFinish.apply(to: bar, tint: signalGreen,
+                               core: NSColor(calibratedRed: 0.8, green: 1, blue: 0.86, alpha: 1))
             bar.cornerRadius = 1
-            bar.shadowColor = signalGreen.cgColor
-            bar.shadowOffset = .zero
-            bar.shadowRadius = 5
-            bar.shadowOpacity = 1
             bar.opacity = 0
         }
         statusLine.backgroundColor = coral.cgColor
@@ -326,12 +322,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         loadingLine.lineWidth = 2.5
         loadingLine.lineCap = .round
         loadingLine.lineJoin = .round
-        loadingLine.shadowColor = NSColor.white.cgColor
-        loadingLine.shadowOffset = .zero
-        loadingLine.shadowRadius = 5
-        loadingLine.shadowOpacity = 0.9
         loadingLine.opacity = 0
-        for layer in [sensingLine, sensingEye, statusLine, loadingLine] { signalHost.layer?.addSublayer(layer) }
+        // Keep the original animated stroke as a mask; only its finish changes.
+        SignalFinish.apply(to: loadingFinish, tint: .white, core: .white)
+        loadingFinish.mask = loadingLine
+        // Put the halo outside the masked layer so the stroke does not clip its glow.
+        loadingGlow.shadowColor = loadingFinish.shadowColor
+        loadingGlow.shadowRadius = loadingFinish.shadowRadius
+        loadingGlow.shadowOpacity = loadingFinish.shadowOpacity
+        loadingGlow.shadowOffset = .zero
+        loadingFinish.shadowOpacity = 0
+        loadingGlow.addSublayer(loadingFinish)
+        for layer in [sensingLine, sensingEye, statusLine, loadingGlow] { signalHost.layer?.addSublayer(layer) }
         islandView.addSubview(signalHost, positioned: .below, relativeTo: statusLabel)
         islandView.addSubview(composerSignal)
         expandedControls.append(composerSignal)
@@ -953,7 +955,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         path.addLine(to: points[points.count - 1])
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        loadingLine.frame = layout.bounds
+        loadingGlow.frame = layout.bounds
+        loadingFinish.frame = loadingGlow.bounds
+        loadingLine.frame = loadingFinish.bounds
         loadingLine.path = path
         loadingLine.opacity = 1
         CATransaction.commit()

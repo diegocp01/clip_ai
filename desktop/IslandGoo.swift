@@ -9,6 +9,23 @@ func smoothstep(_ from: CGFloat, _ to: CGFloat, _ x: CGFloat) -> CGFloat {
     return t * t * (3 - 2 * t)
 }
 
+/// Shared luminous finish: a bright core, translucent shoulders and fading tips.
+/// Geometry and animation belong to the caller.
+enum SignalFinish {
+    static func apply(to layer: CAGradientLayer, tint: NSColor, core: NSColor,
+                      glowRadius: CGFloat = 5, glowOpacity: Float = 1) {
+        layer.startPoint = CGPoint(x: 0, y: 0.5)
+        layer.endPoint = CGPoint(x: 1, y: 0.5)
+        layer.colors = [tint.withAlphaComponent(0), tint.withAlphaComponent(0.6), core,
+                        tint.withAlphaComponent(0.6), tint.withAlphaComponent(0)].map(\.cgColor)
+        layer.locations = [0, 0.3, 0.5, 0.7, 1]
+        layer.shadowColor = tint.cgColor
+        layer.shadowOffset = .zero
+        layer.shadowRadius = glowRadius
+        layer.shadowOpacity = glowOpacity
+    }
+}
+
 /// A damped spring stepped once per display frame.
 struct Spring {
     var value: CGFloat = 0

@@ -18,11 +18,9 @@ final class ComposerSignal: NSView {
         layer = CALayer(); wantsLayer = true
         let green = NSColor(calibratedRed: 0.24, green: 0.95, blue: 0.52, alpha: 1)
         for bar in bars {
-            bar.startPoint = CGPoint(x: 0, y: 0.5); bar.endPoint = CGPoint(x: 1, y: 0.5)
-            bar.colors = [green.withAlphaComponent(0), green.withAlphaComponent(0.6), NSColor(calibratedRed: 0.8, green: 1, blue: 0.86, alpha: 1), green.withAlphaComponent(0.6), green.withAlphaComponent(0)].map(\.cgColor)
-            bar.locations = [0, 0.3, 0.5, 0.7, 1]
-            bar.shadowColor = green.cgColor; bar.shadowOffset = .zero
-            bar.shadowRadius = 3; bar.shadowOpacity = 0.6
+            SignalFinish.apply(to: bar, tint: green,
+                               core: NSColor(calibratedRed: 0.8, green: 1, blue: 0.86, alpha: 1),
+                               glowRadius: 3, glowOpacity: 0.6)
             layer?.addSublayer(bar)
         }
         wave.strokeColor = green.withAlphaComponent(0.85).cgColor
