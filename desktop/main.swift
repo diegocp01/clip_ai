@@ -270,12 +270,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let promptSurface = NSView(frame: ComposerGeometry.prompt)
         promptSurface.wantsLayer = true
         promptSurface.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.045).cgColor
-        promptSurface.layer?.cornerRadius = 14
+        promptSurface.layer?.cornerRadius = ComposerGeometry.cornerRadius
         promptSurface.layer?.borderWidth = 0.5
         promptSurface.layer?.borderColor = NSColor.white.withAlphaComponent(0.12).cgColor
         islandView.addSubview(promptSurface)
         expandedControls.append(promptSurface)
-        let promptField = ComposerPrompt(frame: ComposerGeometry.prompt.insetBy(dx: 12, dy: 13))
+        let promptField = ComposerPrompt(frame: ComposerGeometry.input)
         promptField.focusSurface = promptSurface
         prompt = promptField
         prompt.placeholderString = "Ask me anything…"
@@ -293,10 +293,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         collapseButton.toolTip = "Make smaller · Esc or ⌃⌥Space"
         collapseButton.layer?.backgroundColor = NSColor.clear.cgColor
         collapseButton.layer?.borderWidth = 0
-        captureButton = button("Screen", frame: ComposerGeometry.screen, action: #selector(captureScreen), symbol: "rectangle.dashed")
+        captureButton = button("Screen", frame: ComposerGeometry.screen, action: #selector(captureScreen), symbol: "rectangle.dashed", iconOnly: true)
         captureButton.toolTip = "Attach one screenshot to your next question"
         micButton = NSButton(title: "Dictate", target: self, action: #selector(toggleDictation))
-        talkButton = button("Talk", frame: ComposerGeometry.talk, action: #selector(toggleRealtimeVoice), symbol: "waveform")
+        talkButton = button("Talk", frame: ComposerGeometry.talk, action: #selector(toggleRealtimeVoice), symbol: "waveform", iconOnly: true)
         talkButton.toolTip = "Live AI voice · separately billed API usage · click End to stop the microphone"
         voiceButton = button("Voice on", frame: ComposerGeometry.voice, action: #selector(toggleVoice), symbol: "speaker.wave.2", iconOnly: true)
         voiceButton.contentTintColor = .systemBlue
@@ -308,12 +308,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         tierPicker = NSPopUpButton(frame: ComposerGeometry.tier)
         tierPicker.addItems(withTitles: ["Standard", "Fast"])
         tierPicker.selectItem(at: 1)
+        tierPicker.item(at: 0)?.image = NSImage(systemSymbolName: "leaf", accessibilityDescription: "Standard")
+        tierPicker.item(at: 1)?.image = NSImage(systemSymbolName: "bolt.fill", accessibilityDescription: "Fast")
+        tierPicker.imagePosition = .imageOnly
+        (tierPicker.cell as? NSPopUpButtonCell)?.arrowPosition = .noArrow
+        tierPicker.setAccessibilityLabel("Reasoning mode")
+        tierPicker.contentTintColor = .white
         tierPicker.font = .systemFont(ofSize: 11)
         tierPicker.bezelStyle = .accessoryBarAction
         tierPicker.isBordered = false
         tierPicker.wantsLayer = true
         tierPicker.layer?.cornerRadius = ComposerGeometry.tier.height / 2
         tierPicker.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.055).cgColor
+        tierPicker.layer?.borderWidth = 0.5
+        tierPicker.layer?.borderColor = NSColor.white.withAlphaComponent(0.15).cgColor
         tierPicker.toolTip = "GPT-6.1 Terra · Low reasoning. Fast uses more Codex allowance."
         islandView.addSubview(tierPicker)
         expandedControls.append(tierPicker)

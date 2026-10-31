@@ -229,18 +229,23 @@ print("Native island layout checks passed (notched, shifted, external, and missi
 
 // Opening/closing shares the final top edge, and every composer control stays visible.
 let composerBounds = NSRect(origin: .zero, size: ComposerGeometry.size)
-let controls = [ComposerGeometry.prompt, ComposerGeometry.send, ComposerGeometry.collapse,
+let controls = [ComposerGeometry.input, ComposerGeometry.send, ComposerGeometry.collapse,
                 ComposerGeometry.screen, ComposerGeometry.talk, ComposerGeometry.voice,
                 ComposerGeometry.tier, ComposerGeometry.more]
 for (i, control) in controls.enumerated() {
     expect(composerBounds.contains(control), "Composer control must fit inside the surface")
+    let shell = ComposerGeometry.shellPath(in: composerBounds)
+    for point in [NSPoint(x: control.minX, y: control.minY), NSPoint(x: control.maxX, y: control.minY),
+                  NSPoint(x: control.minX, y: control.maxY), NSPoint(x: control.maxX, y: control.maxY)] {
+        expect(shell.contains(point), "Every control must remain inside the curved petroleum shell")
+    }
     for other in controls.dropFirst(i + 1) { expect(!control.intersects(other), "Composer controls must not overlap") }
 }
 let morphSources = [NSRect(x: 762.5, y: 1073.5, width: 209, height: 33.5),
                     NSRect(x: -800, y: 250, width: 233, height: 43.5),
                     NSRect(x: 400, y: 900, width: 30, height: 22)]
 for source in morphSources {
-    let target = NSRect(x: source.midX - 220, y: source.maxY - 209.5, width: 440, height: 176)
+    let target = NSRect(x: source.midX - ComposerGeometry.size.width / 2, y: source.maxY - ComposerGeometry.size.height - 33.5, width: ComposerGeometry.size.width, height: ComposerGeometry.size.height)
     expect(ComposerGeometry.morphFrame(from: source, to: target, progress: 0) == source, "Morph must begin at the actual visible island")
     expect(ComposerGeometry.morphFrame(from: source, to: target, progress: 1) == target, "Morph must end at composer bounds")
     for step in 0...60 {

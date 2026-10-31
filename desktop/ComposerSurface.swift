@@ -6,6 +6,7 @@ import AppKit
 final class ComposerSurface: NSView {
     private let content: NSView
     private let material: NSView
+    private let shell = PetroleumCradle(frame: .zero)
     private var expanded = false
     private(set) var currentRadius = ComposerGeometry.cornerRadius
     private let oil = CALayer()
@@ -39,7 +40,7 @@ final class ComposerSurface: NSView {
         clearing.endPoint = CGPoint(x: 0.5, y: 1)
         oil.mask = clearing
         content.autoresizingMask = [.width, .height]
-        material.autoresizingMask = [.width, .height]
+        shell.autoresizingMask = [.width, .height]
         addSubview(content)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -68,6 +69,8 @@ final class ComposerSurface: NSView {
         if #available(macOS 26.0, *), let glass = material as? NSGlassEffectView {
             glass.cornerRadius = radius
         } else { material.layer?.cornerRadius = radius }
+        shell.alphaValue = smoothstep(0.2, 0.8, p)
+        material.alphaValue = smoothstep(0.35, 0.9, p)
         content.alphaValue = smoothstep(0.82, 1, p)
         CATransaction.commit()
     }
@@ -75,22 +78,59 @@ final class ComposerSurface: NSView {
     func endMorph() {
         oil.removeFromSuperlayer()
         oil.contents = nil
+        shell.alphaValue = 1
+        material.alphaValue = 1
         content.alphaValue = 1
         if #available(macOS 26.0, *), let glass = material as? NSGlassEffectView {
             glass.cornerRadius = ComposerGeometry.cornerRadius
         } else { material.layer?.cornerRadius = ComposerGeometry.cornerRadius }
     }
 
+    override func layout() {
+        super.layout()
+        // The glass is the central water pocket, not the entire black shell.
+        material.frame = ComposerGeometry.prompt
+        shell.needsDisplay = true
+    }
+
     func showComposer(_ value: Bool) {
         guard expanded != value else { return }
         expanded = value
         if value {
-            material.frame = bounds
-            addSubview(material, positioned: .below, relativeTo: content)
+            shell.frame = bounds
+            addSubview(shell, positioned: .below, relativeTo: content)
+            material.frame = ComposerGeometry.prompt
+            addSubview(material, positioned: .above, relativeTo: shell)
         } else {
             material.removeFromSuperview()
+            shell.removeFromSuperview()
         }
         content.frame = bounds
+    }
+}
+
+/// The notch remains the parent material: an opaque black rim cups the water
+/// pocket and its radial controls. Fine concentric seams echo the reference
+/// without introducing decorative labels or extra actions.
+private final class PetroleumCradle: NSView {
+    override var isOpaque: Bool { false }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    override func draw(_ dirtyRect: NSRect) {
+        NSGraphicsContext.saveGraphicsState()
+        let outline = ComposerGeometry.shellPath(in: bounds.insetBy(dx: 0.5, dy: 0.5))
+        outline.addClip()
+        NSGradient(colors: [NSColor(white: 0.055, alpha: 1), .black])?.draw(in: bounds, angle: 90)
+        // Broad, very low contrast sheen; the outer rim stays petroleum black.
+        let inner = NSBezierPath(ovalIn: NSRect(x: bounds.width * 0.16, y: bounds.height * 0.28,
+                                               width: bounds.width * 0.68, height: bounds.height * 1.02))
+        NSGradient(colors: [NSColor(white: 0.10, alpha: 1), NSColor(white: 0.025, alpha: 1)])?.draw(in: inner, angle: 90)
+        NSColor.white.withAlphaComponent(0.09).setStroke()
+        inner.lineWidth = 0.5
+        inner.stroke()
+        NSColor.white.withAlphaComponent(0.14).setStroke()
+        outline.lineWidth = 0.7
+        outline.stroke()
+        NSGraphicsContext.restoreGraphicsState()
     }
 }
 
