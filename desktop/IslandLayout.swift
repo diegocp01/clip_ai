@@ -47,6 +47,7 @@ enum ComposerGeometry {
 
 /// What the collapsed island shows, which decides how much room it takes.
 enum IslandContent: Equatable {
+    case loading
     case idle
     case audio
     case status(textWidth: CGFloat)
@@ -66,6 +67,19 @@ struct IslandLayout {
     /// The part of the idle island that reacts to the pointer.
     let wakeArea: NSRect
     var bounds: NSRect { NSRect(origin: .zero, size: frame.size) }
+    /// Where the startup light travels: down the left of the camera, under it, and up the right.
+    /// It ends on the resting line. Without a camera it just crosses the pill.
+    var loadingPath: [CGPoint] {
+        guard notchFrame != nil else { return [CGPoint(x: 8, y: frame.height / 2), CGPoint(x: frame.width - 8, y: frame.height / 2)] }
+        let side = frame.width - lineFrame.midX
+        return [CGPoint(x: side, y: lineFrame.maxY), CGPoint(x: side, y: 5), CGPoint(x: lineFrame.midX, y: 5), CGPoint(x: lineFrame.midX, y: lineFrame.maxY)]
+    }
+    /// How much of that path the resting line takes up.
+    var loadingLineFraction: CGFloat {
+        let points = loadingPath
+        let length = zip(points, points.dropFirst()).reduce(CGFloat(0)) { $0 + hypot($1.1.x - $1.0.x, $1.1.y - $1.0.y) }
+        return min(lineFrame.height / max(length, 1), 1)
+    }
 
     init(screen: NSRect, safeTop: CGFloat, leftArea: NSRect?, rightArea: NSRect?, expanded: Bool, content: IslandContent = .idle, hovered: Bool = false) {
         let notch: NSRect?
@@ -87,23 +101,24 @@ struct IslandLayout {
         if let notch, !expanded {
             let leftWing: CGFloat, rightWing: CGFloat
             switch content {
+            case .loading: leftWing = 24; rightWing = 24
             case .idle: leftWing = hovered ? 24 : 0; rightWing = 24
             case .audio: leftWing = 0; rightWing = 36
             case .status(let textWidth): leftWing = min(textWidth + 20, 130); rightWing = 24
             }
             // Only while awake does it hang below the camera, which is what makes
             // room for a line along its bottom edge: the camera itself has no pixels.
-            let drop: CGFloat = awake ? 10 : 0
+            let drop: CGFloat = awake || content == .loading ? 10 : 0
             frame = NSRect(x: notch.minX - leftWing, y: notch.minY - drop,
                            width: notch.width + leftWing + rightWing, height: notch.height + drop)
-            cornerRadius = awake ? 18 : 10
+            cornerRadius = awake || content == .loading ? 18 : 10
             notchBridge = nil
             statusFrame = NSRect(x: 12, y: (notch.height - 18) / 2, width: max(leftWing - 20, 0), height: 18)
             activityFrame = NSRect(x: leftWing + notch.width + (rightWing - 24) / 2,
                                    y: (notch.height - 20) / 2, width: 24, height: 20)
             lineFrame = awake ? NSRect(x: leftWing + (notch.width - 130) / 2, y: 4, width: 130, height: 2)
                               : NSRect(x: leftWing + notch.width + (rightWing - 3) / 2,
-                                       y: (notch.height - 14) / 2, width: 3, height: 14)
+                                       y: drop + (notch.height - 14) / 2, width: 3, height: 14)
             // At rest only the line's side reacts. Once awake, the whole island keeps it awake.
             wakeArea = awake ? NSRect(origin: .zero, size: frame.size)
                              : NSRect(x: leftWing + notch.width, y: 0, width: rightWing, height: notch.height)
@@ -113,6 +128,7 @@ struct IslandLayout {
         let textWidth: CGFloat
         let compactWidth: CGFloat
         switch content {
+        case .loading: textWidth = 0; compactWidth = 64
         case .idle: textWidth = 0; compactWidth = hovered ? 64 : 30
         case .audio: textWidth = 0; compactWidth = 40
         case .status(let width): textWidth = min(width, 240); compactWidth = 38 + textWidth
@@ -128,7 +144,7 @@ struct IslandLayout {
                                  : NSRect(x: 8, y: 1, width: 24, height: 20)
         if expanded { lineFrame = NSRect(x: 193, y: 202, width: 3, height: 14) }
         else if awake { lineFrame = NSRect(x: 10, y: 3, width: width - 20, height: 2) }
-        else { lineFrame = NSRect(x: content == .idle ? (width - 3) / 2 : 12, y: (height - 14) / 2, width: 3, height: 14) }
+        else { lineFrame = NSRect(x: content == .idle || content == .loading ? (width - 3) / 2 : 12, y: (height - 14) / 2, width: 3, height: 14) }
         wakeArea = NSRect(x: 0, y: 0, width: width, height: height)
         // Cover only the physical camera area. Extending this black rectangle
         // into a translucent composer leaves a visible dark block inside the glass.
