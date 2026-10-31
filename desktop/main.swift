@@ -16,6 +16,7 @@ final class FloatingPanel: NSPanel {
 }
 final class IslandView: NSView {
     var onExpand: (() -> Void)?
+    var hoverArea = NSRect.zero
     override func mouseDown(with event: NSEvent) { onExpand?() }
     override func accessibilityPerformPress() -> Bool { onExpand?(); return true }
 }
@@ -59,6 +60,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var statusLabel: NSTextField!
     private var activityMark: ActivityMark!
     private var statusDot: NSView!
+    private var dotEffects: NSView!
+    private let dotPing = CALayer()
+    private var dotHovered = false
     private var collapseButton: NSButton!
     private var outsideClickMonitor: Any?
     private var prompt: NSTextField!
@@ -207,6 +211,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         statusDot.wantsLayer = true
         statusDot.layer?.cornerRadius = 4
         statusDot.layer?.backgroundColor = coral.cgColor
+        // A layer-hosting view: AppKit resets shadows and sublayers on layers it backs itself.
+        dotEffects = NSView(frame: NSRect(x: 0, y: 0, width: 44, height: 44))
+        dotEffects.layer = CALayer()
+        dotEffects.wantsLayer = true
+        dotEffects.isHidden = true
+        let dotCircle = CGRect(x: 16, y: 16, width: 12, height: 12)
+        let dotGlow = CALayer()
+        dotGlow.frame = dotCircle
+        dotGlow.cornerRadius = 6
+        dotGlow.backgroundColor = NSColor.systemGreen.cgColor
+        dotGlow.shadowColor = NSColor.systemGreen.cgColor
+        dotGlow.shadowOffset = .zero
+        dotGlow.shadowRadius = 7
+        dotGlow.shadowOpacity = 1
+        dotPing.frame = dotCircle
+        dotPing.cornerRadius = 6
+        dotPing.backgroundColor = NSColor.systemGreen.cgColor
+        dotPing.opacity = 0
+        dotEffects.layer?.addSublayer(dotPing)
+        dotEffects.layer?.addSublayer(dotGlow)
+        islandView.addSubview(dotEffects)
         islandView.addSubview(statusDot)
         prompt = NSTextField(frame: NSRect(x: 16, y: 54, width: 320, height: 42))
         prompt.placeholderString = "Ask me anything…"
@@ -279,9 +304,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private func startOverlayHitTesting() {
         // The transparent WebView has a rectangular native surface. Test its
         // actual drawn objects so the empty area behaves like the desktop.
-        let timer = Timer(timeInterval: 0.05, repeats: true) { [weak self] _ in self?.updateOverlayHitTesting() }
+        let timer = Timer(timeInterval: 0.05, repeats: true) { [weak self] _ in self?.updateOverlayHitTesting(); self?.updateDotHover() }
         hitTestTimer = timer
         RunLoop.main.add(timer, forMode: .common)
+    }
+    private func updateDotHover() {
+        // The pointer can rest on the screen's top edge, which a rect excludes.
+        let area = islandView.hoverArea.offsetBy(dx: island.frame.minX, dy: island.frame.minY).insetBy(dx: 0, dy: -1)
+        let hovering = island.isVisible && area.contains(NSEvent.mouseLocation)
+        guard hovering != dotHovered else { return }
+        dotHovered = hovering
+        layoutIsland()
     }
     private func updateOverlayHitTesting() {
         guard overlay.isVisible, overlayReady else {
@@ -414,10 +447,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     // Resting: a green dot. Audio live: the waveform. Anything else to say: text and dot.
     @discardableResult private func layoutIsland() -> IslandLayout {
         let content: IslandContent = talking ? .audio : currentStatus == "Ready" ? .dot : .status(textWidth: ceil(statusLabel.cell?.cellSize.width ?? 52))
+        let alive = dotHovered && content == .dot && !expanded
         let screen = island?.screen ?? NSScreen.main ?? NSScreen.screens[0]
         let layout = IslandLayout(screen: screen.frame, safeTop: screen.safeAreaInsets.top,
                                   leftArea: screen.auxiliaryTopLeftArea, rightArea: screen.auxiliaryTopRightArea,
-                                  expanded: expanded, content: content)
+                                  expanded: expanded, content: content, hovered: alive)
         islandView.layer?.cornerRadius = layout.cornerRadius
         islandView.layer?.maskedCorners = layout.isNotched && !expanded
             ? [.layerMinXMinYCorner, .layerMaxXMinYCorner]
@@ -426,7 +460,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         islandView.layer?.borderWidth = layout.isNotched ? 0 : 0.5
         statusLabel.frame = layout.statusFrame
         activityMark.frame = layout.activityFrame
-        statusDot.frame = layout.dotFrame
+        islandView.hoverArea = content == .dot && !expanded ? layout.dotArea : .zero
+        animateDot(alive, frame: layout.dotFrame)
         if case .status = content { statusLabel.isHidden = false } else { statusLabel.isHidden = !expanded }
         activityMark.isHidden = content != .audio
         statusDot.isHidden = content == .audio
@@ -434,13 +469,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         islandView.setAccessibilityLabel("Clippy: \(currentStatus)")
         if island.frame.isEmpty || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             island.setFrame(layout.frame, display: true)
-        } else if island.frame != layout.frame {
+            statusDot.frame = layout.dotFrame
+        } else if island.frame != layout.frame || statusDot.frame != layout.dotFrame {
             NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.18
+                // Overshoots slightly at rest so the dot feels springy; the composer just opens.
+                context.duration = expanded ? 0.18 : 0.26
+                if !expanded { context.timingFunction = CAMediaTimingFunction(controlPoints: 0.3, 1.5, 0.5, 1) }
                 island.animator().setFrame(layout.frame, display: true)
+                statusDot.animator().frame = layout.dotFrame
             }
         }
         return layout
+    }
+    // While hovered the dot glows and sends out a repeating ping.
+    private func animateDot(_ alive: Bool, frame: NSRect) {
+        statusDot.layer?.cornerRadius = frame.width / 2
+        dotEffects.frame = NSRect(x: frame.midX - 22, y: frame.midY - 22, width: 44, height: 44)
+        dotEffects.isHidden = !alive
+        guard alive, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { dotPing.removeAllAnimations(); return }
+        guard dotPing.animation(forKey: "ping") == nil else { return }
+        let scale = CABasicAnimation(keyPath: "transform.scale")
+        scale.fromValue = 1; scale.toValue = 2.6
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = 0.6; fade.toValue = 0
+        let ping = CAAnimationGroup()
+        ping.animations = [scale, fade]
+        ping.duration = 1.1
+        ping.repeatCount = .infinity
+        ping.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        dotPing.add(ping, forKey: "ping")
     }
     @objc private func reposition() { setExpanded(expanded); positionOverlay() }
     private func positionOverlay() {
