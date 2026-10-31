@@ -46,7 +46,7 @@ test('the CLI runs with no tools, MCP, settings or saved sessions',()=>{
   assert.equal(value('--model'),CLAUDE_MODEL);
   assert.equal(value('--effort'),'low');
   assert.equal(JSON.parse(value('--json-schema')).properties.scene.type,'object');
-  assert.match(value('--system-prompt'),/You are Clippy/);
+  assert.match(value('--system-prompt'),/You are Clip/);
   assert.match(value('--system-prompt'),/normalized 0\.\.1/);
 });
 test('the environment keeps the login but drops API keys and the parent session',()=>{

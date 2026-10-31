@@ -18,7 +18,7 @@ export async function chooseSignalPattern(state,{fetchImpl=fetch,getKey=voiceKey
       method:'POST',headers:{Authorization:`Bearer ${key}`,'Content-Type':'application/json'},signal,
       body:JSON.stringify({model:'gpt-6-luna',input:JSON.stringify({state}),questions:[{
         type:'choice',name:'signal_pattern',
-        instructions:'Choose a restrained living green signal for Clippy, a macOS assistant. Ready means open and waiting; working means answering; speaking means talking; attention means an issue. Prefer friendly eyes when ready, a wave for activity and a calm line for attention. This is decorative, never an emotion or a claim about the user.',
+        instructions:'Choose a restrained living green signal for Clip, a macOS assistant. Ready means open and waiting; working means answering; speaking means talking; attention means an issue. Prefer friendly eyes when ready, a wave for activity and a calm line for attention. This is decorative, never an emotion or a claim about the user.',
         choices:Object.entries(SIGNAL_PATTERNS).map(([value,description])=>({value,description})),
       }]}),
     });

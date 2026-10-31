@@ -1,8 +1,8 @@
-# Clippy Island
+# Clip
 
 A local Mac assistant that lives at the top of the screen and places interactive visuals over your desktop. Text editing uses the Codex SDK; streaming visuals use the bundled Codex app-server with your existing ChatGPT login.
 
-![Clippy's expanded desktop island with a question field, Screen and Talk buttons, and Fast mode selected.](docs/images/clippy-island.jpg)
+![Clip's expanded desktop island with a question field, Screen and Talk buttons, and Fast mode selected.](docs/images/clippy-island.jpg)
 
 This is a separately implemented app inspired by the HeyClicky demo. It does not install HeyClicky, call its backend, reuse its credentials, or ship its drawing code.
 
@@ -20,7 +20,7 @@ Requires macOS 14.2+, Node.js 22 or later, and Xcode Command Line Tools (for Swi
 npm ci
 npx codex login
 npm run desktop:build
-open build/Clippy.app
+open build/Clip.app
 ```
 
 The primary interface is the black island at the top of your display. Rest the pointer on it for 1 second to open it; click the top-right chevron or press Escape to collapse it. The earlier browser interface at `http://127.0.0.1:4317/` remains only a development harness.
@@ -55,7 +55,7 @@ Save `OPENAI_API_KEY` in a local `.env.local` file (ignored by Git). Never commi
 
 Click **Talk**, grant macOS microphone access, then speak naturally. Click **End** to stop. Say “Draw a water molecule” to delegate a visual to the selected model: Codex using Terra low/Fast, or the Claude CLI. The voice itself always uses OpenAI's Realtime API. Click **Screen** during Talk to explicitly share one screenshot as voice context. Voice does not continuously watch your screen. The speaker button mutes spoken replies without ending microphone capture; use End to stop listening. Sessions end after 10 minutes and can be restarted. The … menu keeps optional on-device dictation separate.
 
-API credential, session configuration and native connection to the Listening state have been verified. Spoken playback, interruption and voice-to-drawing behavior still need a user conversation test. Microphone access is under System Settings → Privacy & Security → Microphone → Clippy. Screenshot access is under Screen & System Audio Recording in the same settings section.
+API credential, session configuration and native connection to the Listening state have been verified. Spoken playback, interruption and voice-to-drawing behavior still need a user conversation test. Microphone access is under System Settings → Privacy & Security → Microphone → Clip. Screenshot access is under Screen & System Audio Recording in the same settings section.
 
 ## Speed and cost
 
@@ -75,7 +75,7 @@ Official references: [Codex app-server](https://learn.chatgpt.com/docs/app-serve
 
 The original demo's arbitrary generated programs, detailed bespoke 3D meshes, computer control and connected services are not reproduced. Live audio is implemented separately from visual generation. This version uses bounded primitive scenes and diagrams. Visual parts now appear while Codex generates them; the initial wait still depends on Codex. Voice and visual generation are not frame-synchronized, and demo-equivalent latency is not guaranteed. Dictation and screen capture require your OS permissions on first use. No routine, login item or background installation is created.
 
-Clippy uses the Codex CLI bundled with its SDK (0.166.0) for current model support, reusing your existing ChatGPT login. It does not update the globally installed CLI.
+Clip uses the Codex CLI bundled with its SDK (0.166.0) for current model support, reusing your existing ChatGPT login. It does not update the globally installed CLI.
 
 ## Contributing
 
