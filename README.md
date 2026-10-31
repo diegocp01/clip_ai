@@ -6,6 +6,12 @@ A local Mac assistant that lives at the top of the screen and places interactive
 
 This is a separately implemented app inspired by the HeyClicky demo. It does not install HeyClicky, call its backend, reuse its credentials, or ship its drawing code.
 
+## Quick guide and web UI
+
+Open `/guide.html` on the running local server for a short visual introduction and three manual tests. The browser workspace and floating visual overlay use a dark glass style inspired by [AI Battle Tic-Tac-Toe](https://github.com/diegocp01/ai_battle_tic_tac_toe): translucent surfaces, bright edges, system typography, and blue controls. Reduced transparency, increased contrast, and unsupported backdrop filters use more opaque surfaces. The overlay background remains transparent; glass blur inside WebKit is not a guarantee of native macOS desktop refraction.
+
+The native notch, composer, and captions are separate and are not styled by these web stylesheets.
+
 ## Open the app
 
 Requires macOS 14.2+, Node.js 22 or later, and Xcode Command Line Tools (for Swift).

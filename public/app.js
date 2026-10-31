@@ -47,7 +47,7 @@ function renderResult(result, metadata = {}) {
   $('visual-label').textContent = 'A NEW WAY TO LOOK AT IT';
   $('answer-cards').replaceChildren();
   result.cards.forEach((card, i) => {
-    const article = document.createElement('article'); article.className = 'answer-card';
+    const article = document.createElement('article'); article.className = 'answer-card glass-surface';
     const title = document.createElement('h3'); const number = document.createElement('span'); number.className = 'number'; number.textContent = String(i + 1).padStart(2, '0');
     title.append(number, document.createTextNode(card.title)); const body = document.createElement('p'); body.textContent = card.body; article.append(title, body); $('answer-cards').append(article);
   });

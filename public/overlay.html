@@ -4,23 +4,24 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Clippy visual overlay</title>
+  <link rel="stylesheet" href="/glass.css">
   <link rel="stylesheet" href="/overlay.css">
   <script type="importmap">{"imports":{"three":"/vendor/three/build/three.module.js","three/addons/":"/vendor/three/examples/jsm/"}}</script>
   <script type="module" src="/overlay.js"></script>
 </head>
 <body>
   <main id="overlay" hidden>
-    <div class="overlay-tools">
+    <div class="overlay-tools glass-surface">
       <button id="drag-handle" title="Drag this visual" aria-label="Drag this visual"><span aria-hidden="true">⠿</span><span id="visual-title">Clippy</span></button>
       <div id="view-tabs" role="group" aria-label="Visual view" hidden><button id="scene-tab" class="active" aria-pressed="true">3D</button><button id="diagram-tab" aria-pressed="false">Diagram</button></div>
       <button id="fit" class="round-control" title="Reset 3D view" aria-label="Reset 3D view"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M7 3H3v4m10-4h4v4M3 13v4h4m10-4v4h-4"/></svg></button>
       <button id="close" class="round-control" title="Dismiss visual" aria-label="Dismiss visual">×</button>
     </div>
     <div id="scene-host" aria-label="Interactive floating 3D visual"></div>
-    <div id="diagram-frame" hidden><div id="diagram-host"></div></div>
+    <div id="diagram-frame" class="glass-surface" hidden><div id="diagram-host"></div></div>
     <div id="cards" aria-label="Explanation cards"></div>
-    <div id="part" hidden><button id="part-close" class="part-close" aria-label="Close part details">×</button><span class="small-label">A CLOSER LOOK</span><h2 id="part-name"></h2><p id="part-description"></p><button id="part-ask">Tell me more <span>↗</span></button></div>
-    <div id="caption" role="status" hidden><span class="caption-star" aria-hidden="true">✳</span><p id="caption-text"></p></div>
+    <div id="part" class="glass-surface" hidden><button id="part-close" class="part-close" aria-label="Close part details">×</button><span class="small-label">A CLOSER LOOK</span><h2 id="part-name"></h2><p id="part-description"></p><button id="part-ask">Tell me more <span>↗</span></button></div>
+    <div id="caption" class="glass-surface" role="status" hidden><span class="caption-star" aria-hidden="true">✳</span><p id="caption-text"></p></div>
     <div id="scene-hint" hidden>Drag to orbit <span>·</span> Scroll to zoom <span>·</span> Click a part</div>
     <div id="demo-label" hidden>DEVELOPMENT SAMPLE · H₂O</div>
   </main>
