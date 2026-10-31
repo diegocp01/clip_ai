@@ -1740,16 +1740,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         case "stopDictation": stopDictation(sendTranscript: true)
         case "speak": if let text = data["text"] as? String, text.count < 12000 { speak(text) }
         case "stopSpeaking": speech.stopSpeaking(at: .immediate)
+        case "voiceLevel":
+            guard voiceRequested, data["generation"] as? Int == voiceGeneration,
+                  let value = data["level"] as? Double, value.isFinite else { return }
+            voiceMeterLevel = CGFloat(min(1, max(0, value)))
+            voiceMeterUpdated = CACurrentMediaTime()
         case "voiceState":
             guard data["generation"] as? Int == voiceGeneration else { return }
             guard let state = data["state"] as? String else { return }
-            if state == "level" {
-                if voiceRequested, let value = data["level"] as? Double, value.isFinite {
-                    voiceMeterLevel = CGFloat(min(1, max(0, value)))
-                    voiceMeterUpdated = CACurrentMediaTime()
-                }
-                return
-            }
             let text = data["message"] as? String ?? ""
             guard text.utf16.count <= 64000 else { return }
             if state == "ended" || state == "error" {
