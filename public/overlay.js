@@ -135,6 +135,7 @@ const voice = new VoiceConversation({
   previewHTML:result=>{renderHTML(result,true);post('voicePreview',{generation:voiceGeneration});},
   rollbackHTML:result=>{if(result)renderHTML(result);else{clearHTML();$('overlay').hidden=true;post('visualCleared');}},
   notify: event => {
+    if(event.state==='level'){post('voiceLevel',{...event,generation:voiceGeneration});return;}
     if(event.state==='connecting')liveVoice=true;
     if(['ended','error'].includes(event.state))liveVoice=false;
     if(event.state==='transcript') {

@@ -79,12 +79,20 @@ Realtime captions follow audio transcript delta/done events and the completed au
 
 Each fresh opening briefly replaces the idle model caption with a short greeting (at most five words). A shuffled local set avoids repeats until its 24 lines are used, remembers the last line across launches, and works offline without sending any user context. It holds for 3.2 seconds, fades out over 1.2 seconds, then fades the current model selector back in over 0.5 seconds. Reduced Motion uses a simple timed replacement. Clicking opens model settings immediately; automatic hover menus wait until the greeting is gone. Closing cancels the timer, and reopening starts a fresh line. Repositioning an already-open composer does not restart it. Work and voice status retain their existing priority.
 
+### Voice-reactive compact notch
+
+During Realtime Talk, your microphone makes the green line/eyes shimmer; Clip’s audible replies use the white waveform. Separate input/output levels keep the speakers distinct, and detected user speech takes priority when interrupting a reply. The compact black shell follows the stronger of the two measured levels. In the expanded composer, microphone energy also gently brightens the green signal at the top. The shell grows up to 20 points wider and 4 points deeper, keeps its top pinned, and eases back during silence. Expanded composer controls stay still. Reduce Motion keeps the shell and voice bars static. Muted reply audio does not drive the effect; microphone input still can. Missing or stale levels settle to zero.
+
+Metering reuses the existing voice streams, requests no extra microphone access, and sends only normalized input/output levels and the existing speech-detected flag to the native UI at 30 Hz. Raw samples stay local and are not retained. Ending Talk closes the meter, audio graph and native timer. Verify on a Mac by speaking softly/loudly, listening to a reply, muting replies, expanding/collapsing, enabling Reduce Motion and ending Talk; check the physical camera clearance as well as a non-notched display.
+
 
 ### Provider-scoped Auto
 
 Use the bottom selector to choose Codex, Claude, Auto, or Both. Codex and Claude keep their mascots even when the top model selector is Auto; their top menus contain only that provider’s models plus Auto. Codex Auto chooses between Astra and Terra with all six supported reasoning levels. Claude Auto chooses between Opus and Sonnet with all five supported levels. Bottom Auto chooses across all four models and shows an Auto/sparkles icon. Explicit models still expose manual effort selection. Per-provider Auto/manual choices persist; legacy global Auto remains global. Both retains independent explicit models for comparisons.
 
 The request includes a validated `autoScope` only for Auto chat. Decisions receives only permitted model/effort choices, and the HTTP handler revalidates the returned provider before starting inference. Draw, Talk, and automatic selection editing keep their independent behavior. Check the mascot remains Codex after choosing top Auto, the request routes only to Codex, switching to Claude lists only Claude models, and bottom Auto restores the four-model pool.
+
+### Wake transition
 
 The vertical-to-horizontal wake transition uses a gentler, more damped spring and an overlapping crossfade. The gradient travels with the shrinking vertical light before widening, so it does not appear separately at the destination. Leaving mid-transition reverses the same geometry; the one-second opening dwell and Reduce Motion behavior are unchanged.
 ### Point & Share during Talk

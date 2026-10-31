@@ -353,6 +353,43 @@ expect(OpeningCaptionFrame.at(5, reducedMotion: false).finished, "Always finish 
 expect(OpeningCaptionFrame.at(3.3, reducedMotion: true).finished && OpeningCaptionFrame.at(3.3, reducedMotion: true).opacity == 1, "Reduced motion restores the selector without fading")
 print("Opening greeting variety, five-word limit and fade timing passed.")
 
+// Voice energy only changes the compact audio shell, with its top pinned and camera covered.
+for origin in [NSPoint.zero, NSPoint(x: -1900, y: 300)] {
+    let screen = NSRect(origin: origin, size: NSSize(width: 1710, height: 1107))
+    let left = NSRect(x: screen.minX, y: screen.maxY - 33.5, width: 762.5, height: 33.5)
+    let right = NSRect(x: screen.minX + 947.5, y: left.minY, width: 762.5, height: 33.5)
+    for notched in [true, false] {
+        func voiceLayout(_ level: CGFloat, expanded: Bool = false, content: IslandContent = .audio) -> IslandLayout {
+            IslandLayout(screen: screen, safeTop: notched ? 33.5 : 0, leftArea: notched ? left : nil,
+                         rightArea: notched ? right : nil, expanded: expanded, content: content, audioLevel: level)
+        }
+        let quiet = voiceLayout(0), loud = voiceLayout(1)
+        expect(loud.frame.maxY == quiet.frame.maxY, "Voice shell stays attached to the top")
+        expect(loud.frame.width == quiet.frame.width + 20 && loud.frame.height == quiet.frame.height + 4, "Voice movement stays subtle and bounded")
+        expect(loud.bounds.contains(loud.activityFrame), "Voice waveform remains inside the growing shell")
+        if let notch = loud.notchFrame {
+            expect(loud.frame.contains(notch), "Voice motion never uncovers the camera")
+            expect(loud.activityFrame.minX + loud.frame.minX >= notch.maxX, "Voice waveform stays outside the physical camera")
+        }
+        expect(voiceLayout(-10).frame == quiet.frame && voiceLayout(.nan).frame == quiet.frame, "Invalid levels settle quietly")
+        expect(voiceLayout(10).frame == loud.frame, "Extreme peaks cannot overgrow")
+        expect(voiceLayout(0, expanded: true).frame == voiceLayout(1, expanded: true).frame, "Expanded controls stay still during voice")
+        expect(voiceLayout(0, content: .idle).frame == voiceLayout(1, content: .idle).frame, "Idle signal ignores voice levels")
+    }
+}
+print("Voice shell geometry passed: bounded energy, pinned top, camera clearance, external displays and stable composer.")
+
+var voiceIdentity = VoiceEnergy()
+for _ in 0..<30 { voiceIdentity.step(input: 0.7, output: 0, userSpeaking: true, fresh: true, dt: 1.0 / 30) }
+expect(voiceIdentity.listening && voiceIdentity.input > 0.6 && voiceIdentity.output == 0, "Microphone drives the green listening signal")
+for _ in 0..<30 { voiceIdentity.step(input: 0.01, output: 0.8, userSpeaking: false, fresh: true, dt: 1.0 / 30) }
+expect(!voiceIdentity.listening && voiceIdentity.output > 0.7, "Playback drives the white reply waveform")
+voiceIdentity.step(input: 0.5, output: 0.8, userSpeaking: true, fresh: true, dt: 1.0 / 30)
+expect(voiceIdentity.listening, "User interruption takes priority over reply audio")
+for _ in 0..<90 { voiceIdentity.step(input: 1, output: 1, userSpeaking: true, fresh: false, dt: 1.0 / 30) }
+expect(voiceIdentity.listening && voiceIdentity.level == 0, "Stale audio cannot leave a speaking indicator stuck on")
+print("Voice identity passed: input, playback, interruption and stale-level recovery.")
+
 chat.selectGlobalAuto()
 expect(chat.isGlobalAuto && chat.request(for: "gpt")["autoScope"] == "all", "Bottom Auto must cover all four models")
 chat.selectProvider("gpt")

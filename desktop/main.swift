@@ -49,23 +49,47 @@ final class DismissButton: NSButton {
 final class ActivityMark: NSView {
     private var timer: Timer?
     private var phase: CGFloat = 0
+    var audioLevel: CGFloat? { didSet { needsDisplay = true } }
+    var listening = false { didSet { needsDisplay = true } }
+    private var listeningSignal = SignalBar()
     var active = false {
         didSet {
             guard active != oldValue else { return }
             timer?.invalidate(); timer = nil
             if active {
                 timer = Timer.scheduledTimer(withTimeInterval: 0.12, repeats: true) { [weak self] _ in
-                    self?.phase += 0.5; self?.needsDisplay = true
+                    self?.phase += 0.5; self?.listeningSignal.step(0.12, pointer: 0); self?.needsDisplay = true
                 }
             }
             needsDisplay = true
         }
     }
     override func draw(_ dirtyRect: NSRect) {
+        if listening {
+            let reduced = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+            let energy = reduced ? 0 : min(1, max(0, audioLevel ?? 0))
+            let line = NSRect(x: bounds.midX - 9, y: bounds.midY - 1 - energy * 0.4,
+                              width: 18, height: 2 + energy * 0.8)
+            let pair = reduced ? (left: line, right: line) : listeningSignal.bars(line: line, room: 1)
+            let gradient = NSGradient(colorsAndLocations:
+                (signalGreen.withAlphaComponent(0), 0), (signalGreen.withAlphaComponent(0.6), 0.3),
+                (NSColor(calibratedRed: 0.8, green: 1, blue: 0.86, alpha: 1), 0.5),
+                (signalGreen.withAlphaComponent(0.6), 0.7), (signalGreen.withAlphaComponent(0), 1))
+            NSGraphicsContext.saveGraphicsState()
+            let glow = NSShadow(); glow.shadowColor = signalGreen.withAlphaComponent(0.35 + energy * 0.65)
+            glow.shadowBlurRadius = 2 + energy * 2; glow.shadowOffset = .zero; glow.set()
+            for rect in [pair.left, pair.right] {
+                gradient?.draw(in: NSBezierPath(roundedRect: rect, xRadius: rect.height / 2, yRadius: rect.height / 2), angle: 0)
+            }
+            NSGraphicsContext.restoreGraphicsState()
+            return
+        }
         NSColor.white.withAlphaComponent(0.12).setFill()
         NSBezierPath(ovalIn: bounds.insetBy(dx: 1, dy: 0)).fill()
         for i in 0..<4 {
-            let height: CGFloat = active ? 4 + abs(sin(phase + CGFloat(i) * 0.85)) * 10 : [5, 10, 13, 7][i]
+            let moving = active && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+            let height: CGFloat = audioLevel.map { moving ? 3 + $0 * [7, 13, 10, 6][i] : 5 }
+                ?? (moving ? 4 + abs(sin(phase + CGFloat(i) * 0.85)) * 10 : [5, 10, 13, 7][i])
             NSColor.white.withAlphaComponent(active ? 1 : 0.8).setFill()
             NSBezierPath(roundedRect: NSRect(x: 4 + CGFloat(i) * 4, y: (bounds.height - height) / 2, width: 2, height: height), xRadius: 1, yRadius: 1).fill()
         }
@@ -95,6 +119,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var signalHost: NSView!
     private let statusLine = CALayer()
     private let loadingLine = CAShapeLayer()
+    private var voiceMeterTimer: Timer?
+    private var voiceInputLevel: CGFloat = 0
+    private var voiceOutputLevel: CGFloat = 0
+    private var voiceUserSpeaking = false
+    private var voiceEnergy = VoiceEnergy()
+    private var voiceMeterUpdated: CFTimeInterval = 0
+    private var voiceEnvelope: CGFloat = 0
+    private var voiceMeterTick = CACurrentMediaTime()
     private let loadingFinish = CAGradientLayer()
     private let loadingGlow = CALayer()
     private var startupLoading = true
@@ -954,7 +986,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let makeLayout = { [expanded] (hovered: Bool) in
             IslandLayout(screen: screen.frame, safeTop: screen.safeAreaInsets.top,
                          leftArea: screen.auxiliaryTopLeftArea, rightArea: screen.auxiliaryTopRightArea,
-                         expanded: expanded, content: content, hovered: hovered)
+                         expanded: expanded, content: content, hovered: hovered, audioLevel: self.voiceEnvelope)
         }
         let layout = makeLayout(awake)
         updateLoadingLine(layout: content == .loading ? layout : nil)
@@ -995,7 +1027,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
         updateSignal(content: content, layout: layout)
         if updateFrame {
-            if island.frame.isEmpty || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            if island.frame.isEmpty || (content == .audio && voiceRequested) || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
                 island.setFrame(layout.frame, display: true)
             } else if island.frame != layout.frame {
                 NSAnimationContext.runAnimationGroup { context in
@@ -1830,6 +1862,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         case "stopDictation": stopDictation(sendTranscript: true)
         case "speak": if let text = data["text"] as? String, text.count < 12000 { speak(text) }
         case "stopSpeaking": speech.stopSpeaking(at: .immediate)
+        case "voiceLevel":
+            guard voiceRequested, data["generation"] as? Int == voiceGeneration,
+                  let input = data["input"] as? Double, input.isFinite,
+                  let output = data["output"] as? Double, output.isFinite else { return }
+            voiceInputLevel = CGFloat(min(1, max(0, input)))
+            voiceOutputLevel = CGFloat(min(1, max(0, output)))
+            voiceUserSpeaking = data["userSpeaking"] as? Bool ?? false
+            voiceMeterUpdated = CACurrentMediaTime()
         case "voiceState":
             guard data["generation"] as? Int == voiceGeneration else { return }
             guard let state = data["state"] as? String else { return }
@@ -1889,6 +1929,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             }
         }
     }
+    private func updateVoiceMeter() {
+        if !voiceRequested {
+            voiceMeterTimer?.invalidate(); voiceMeterTimer = nil
+            voiceInputLevel = 0; voiceOutputLevel = 0; voiceUserSpeaking = false
+            voiceEnergy = VoiceEnergy(); voiceEnvelope = 0; voiceMeterUpdated = 0
+            activityMark.listening = false
+            composerSignal.microphoneLevel = 0
+            activityMark.audioLevel = nil
+            return
+        }
+        activityMark.listening = voiceEnergy.listening
+        activityMark.audioLevel = voiceEnergy.listening ? voiceEnergy.input : voiceEnergy.output
+        guard voiceMeterTimer == nil else { return }
+        voiceMeterTick = CACurrentMediaTime()
+        let timer = Timer(timeInterval: 1.0 / 30, repeats: true) { [weak self] _ in self?.stepVoiceMeter() }
+        voiceMeterTimer = timer; RunLoop.main.add(timer, forMode: .common)
+    }
+    private func stepVoiceMeter() {
+        guard voiceRequested else { return }
+        let now = CACurrentMediaTime(), dt = min(now - voiceMeterTick, 0.1)
+        voiceMeterTick = now
+        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        voiceEnergy.step(input: voiceInputLevel, output: voiceOutputLevel, userSpeaking: voiceUserSpeaking,
+                         fresh: now - voiceMeterUpdated < 0.25, dt: dt)
+        voiceEnvelope = reduceMotion ? 0 : voiceEnergy.level
+        activityMark.listening = voiceEnergy.listening
+        activityMark.audioLevel = voiceEnergy.listening ? voiceEnergy.input : voiceEnergy.output
+        activityMark.setAccessibilityLabel(voiceEnergy.listening ? "Listening to you" : "Clip speaking")
+        composerSignal.microphoneLevel = voiceEnergy.listening && !reduceMotion ? voiceEnergy.input : 0
+        if !composerTransitioning { activityMark.isHidden = expanded && voiceEnergy.listening }
+        guard !expanded, !composerTransitioning, !startupLoading else { return }
+        let screen = island.screen ?? NSScreen.main ?? NSScreen.screens[0]
+        let layout = IslandLayout(screen: screen.frame, safeTop: screen.safeAreaInsets.top,
+                                  leftArea: screen.auxiliaryTopLeftArea, rightArea: screen.auxiliaryTopRightArea,
+                                  expanded: false, content: .audio, audioLevel: voiceEnvelope)
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        if island.frame != layout.frame { island.setFrame(layout.frame, display: true) }
+        activityMark.frame = layout.activityFrame
+        signalHost.frame = islandView.bounds
+        CATransaction.commit()
+        if layout.isNotched {
+            shoulderPanel.setFrame(layout.frame.insetBy(dx: -20, dy: 0), display: false)
+            drawShoulders(rect: layout.frame)
+        }
+    }
     @objc private func togglePointSharing() {
         if pointShareRequested { stopPointSharing("Point sharing off"); return }
         guard voiceRequested, voiceConnected else { screenshotIndicator.stringValue = "Wait for Talk to connect"; return }
@@ -1921,6 +2006,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         screenshotIndicator?.setAccessibilityLabel(reason)
     }
     private func updateTalkButton() {
+        updateVoiceMeter()
         talkButton.title = voiceRequested ? "End" : "Talk"
         talkButton.image = NSImage(systemSymbolName: voiceRequested ? "stop.circle" : "waveform", accessibilityDescription: talkButton.title)
         talkButton.contentTintColor = voiceRequested ? coral : NSColor(white: 0.76, alpha: 1)

@@ -1,11 +1,12 @@
+import { VoiceMeter } from './voice-meter.js';
 import { VoiceTranscript } from './voice-transcript.js';
 import { readEvents } from './stream.js';
 import { normalizeCursorSteps,stepDuration } from './cursor.js';
 // WebRTC transports live audio directly to OpenAI. The long-lived API key
 // stays on the localhost server; this module never receives it.
 export class VoiceConversation {
-  constructor({notify=()=>{},render=()=>{},preview=()=>{},rollback=()=>{},renderHTML=()=>{},previewHTML=()=>{},rollbackHTML=()=>{},fetchImpl=globalThis.fetch.bind(globalThis),media=globalThis.navigator?.mediaDevices,Peer=globalThis.RTCPeerConnection,makeAudio=()=>new Audio(),captureScreen=null,prepareScreen=screenPreview,cursor=null}={}) {
-    Object.assign(this,{notify,render,preview,rollback,renderHTML,previewHTML,rollbackHTML,fetch:fetchImpl,media,Peer,makeAudio,captureScreen,prepareScreen,cursor});
+  constructor({notify=()=>{},render=()=>{},preview=()=>{},rollback=()=>{},renderHTML=()=>{},previewHTML=()=>{},rollbackHTML=()=>{},fetchImpl=globalThis.fetch.bind(globalThis),media=globalThis.navigator?.mediaDevices,Peer=globalThis.RTCPeerConnection,makeAudio=()=>new Audio(),captureScreen=null,prepareScreen=screenPreview,cursor=null,makeMeter=notify=>new VoiceMeter(notify)}={}) {
+    Object.assign(this,{notify,render,preview,rollback,renderHTML,previewHTML,rollbackHTML,makeMeter,fetch:fetchImpl,media,Peer,makeAudio,captureScreen,prepareScreen,cursor});
     this.session=null;this.previous=null;this.previousHTML=null;this.muted=false;this.provider='gpt';this.drawingSettings={};
   }
   emit(state,message='') {this.notify({state,message});}
@@ -29,10 +30,14 @@ export class VoiceConversation {
       if(!this.media?.getUserMedia||!this.Peer)throw new Error('Live audio is unavailable in this WebKit version.');
       const tracks=await this.media.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true},video:false});
       if(this.session!==s){tracks.getTracks().forEach(t=>t.stop());return;}
-      s.tracks=tracks;s.peer=new this.Peer();s.audio=this.makeAudio();s.audio.autoplay=true;s.audio.muted=this.muted;
+      s.tracks=tracks;
+      s.meter=this.makeMeter(({input,output})=>{if(this.session===s)this.notify({state:'level',input,output,userSpeaking:s.userSpeaking});});
+      s.meter.muted=this.muted;s.meter.attach('input',tracks);
+      s.peer=new this.Peer();s.audio=this.makeAudio();s.audio.autoplay=true;s.audio.muted=this.muted;
       s.peer.ontrack=event=>{
         if(this.session!==s)return;
         s.audio.srcObject=event.streams[0]||new MediaStream([event.track]);
+        s.meter.attach('output',s.audio.srcObject);
         s.audio.play().catch(()=>this.fail(s,new Error('Audio playback was blocked. End Talk and start again.')));
       };
       for(const track of tracks.getAudioTracks()){
@@ -214,7 +219,7 @@ export class VoiceConversation {
   }
   setDrawingSettings(value) {if(value && ['gpt','claude'].includes(value.provider))this.drawingSettings[value.provider]={model:value.model,reasoningEffort:value.reasoningEffort};}
   setProvider(value) {this.provider=value==='claude'?'claude':'gpt';}
-  setMuted(value) {this.muted=Boolean(value);if(this.session?.audio)this.session.audio.muted=this.muted;}
+  setMuted(value) {this.muted=Boolean(value);if(this.session?.audio)this.session.audio.muted=this.muted;if(this.session?.meter)this.session.meter.muted=this.muted;}
   async hangup(s) {
     if(!s.id||!s.token)return;
     const id=s.id;s.id=null;
@@ -223,7 +228,7 @@ export class VoiceConversation {
   }
   stop() {
     const s=this.session;if(!s)return;
-    this.session=null;clearTimeout(s.startTimer);clearTimeout(s.limitTimer);this.cursor?.reset();
+    this.session=null;s.meter?.stop();clearTimeout(s.startTimer);clearTimeout(s.limitTimer);this.cursor?.reset();
     s.controller.abort();s.tracks?.getTracks().forEach(track=>track.stop());
     s.channel?.close();s.peer?.close();
     if(s.audio){s.audio.pause();s.audio.srcObject=null;}
