@@ -25,27 +25,36 @@ struct Spring {
     mutating func jump(to position: CGFloat) { value = position; velocity = 0 }
 }
 
-/// The awake line's behavior: it wanders side to side, then splits into two eyes that
-/// look toward the pointer and blink, then flows back together.
+/// The awake line's behavior: it moves side to side, then splits into two eyes that look
+/// toward the pointer and blink, then flows back together. The first round is quick, so it
+/// all shows within the hold that opens the composer.
 struct SignalBar {
-    static let sweepTime: CGFloat = 3.6
-    static let eyesTime: CGFloat = 3.2
+    static let firstSweep: CGFloat = 0.55
+    static let firstRound: CGFloat = 2.6
+    static let sweepTime: CGFloat = 2.4
+    static let eyesTime: CGFloat = 2
     private(set) var time: CGFloat = 0
-    private var sway = Spring(stiffness: 40, damping: 9)
-    private var split = Spring(stiffness: 60, damping: 10)
+    private var sway = Spring(stiffness: 120, damping: 14)
+    private var split = Spring(stiffness: 200, damping: 20)
     private var look = Spring(stiffness: 70, damping: 11)
-    private var phase: CGFloat { time.truncatingRemainder(dividingBy: SignalBar.sweepTime + SignalBar.eyesTime) }
-    var isEyes: Bool { phase > SignalBar.sweepTime }
+    /// How long the eyes have been open, if they are.
+    private var eyesOpen: CGFloat? {
+        if time < SignalBar.firstRound { return time > SignalBar.firstSweep ? time - SignalBar.firstSweep : nil }
+        let phase = (time - SignalBar.firstRound).truncatingRemainder(dividingBy: SignalBar.sweepTime + SignalBar.eyesTime)
+        return phase > SignalBar.sweepTime ? phase - SignalBar.sweepTime : nil
+    }
+    var isEyes: Bool { eyesOpen != nil }
     /// Two quick closes while the eyes are open: 1 is shut.
     var blink: CGFloat {
-        let first = (phase - SignalBar.sweepTime - 1.3) / 0.07, second = (phase - SignalBar.sweepTime - 2.4) / 0.07
+        guard let open = eyesOpen else { return 0 }
+        let first = (open - 0.28) / 0.05, second = (open - 1.3) / 0.07
         return min(exp(-first * first) + exp(-second * second), 1)
     }
     /// `pointer` runs from -1 at the island's left edge to 1 at its right.
     mutating func step(_ dt: CGFloat, pointer: CGFloat) {
         time += dt
         split.target = isEyes ? 1 : 0
-        sway.target = isEyes ? 0 : sin(time * 2 * .pi / 2.4)
+        sway.target = isEyes ? 0 : sin(time * 2 * .pi / 0.8)
         look.target = min(max(pointer, -1), 1)
         split.step(dt); sway.step(dt); look.step(dt)
     }
@@ -80,54 +89,7 @@ struct DwellTimer {
     mutating func disarm() { elapsed = 0; armed = false }
 }
 
-/// Holds on to the pointer after it leaves the island, until it goes too far, takes too long or clicks elsewhere.
-struct GooTether {
-    static let reach: CGFloat = 46
-    static let patience: CGFloat = 1
-    var attached = false
-    private var elapsed: CGFloat = 0
-    /// Returns true on the update where the tether separates.
-    mutating func update(inside: Bool, distance: CGFloat, pressed: Bool, dt: CGFloat) -> Bool {
-        if inside { attached = true; elapsed = 0; return false }
-        guard attached else { return false }
-        elapsed += dt
-        guard distance > GooTether.reach || elapsed > GooTether.patience || pressed else { return false }
-        attached = false
-        return true
-    }
-}
-
-/// The island's left, bottom and right edges as one line, so a blob's base can wrap around a corner.
-struct IslandOutline {
-    let rect: CGRect
-    var length: CGFloat { rect.height * 2 + rect.width }
-    func point(at position: CGFloat) -> CGPoint {
-        let s = min(max(position, 0), length)
-        if s < rect.height { return CGPoint(x: rect.minX, y: rect.maxY - s) }
-        if s < rect.height + rect.width { return CGPoint(x: rect.minX + s - rect.height, y: rect.minY) }
-        return CGPoint(x: rect.maxX, y: rect.minY + s - rect.height - rect.width)
-    }
-    /// The direction of increasing position.
-    func tangent(at position: CGFloat) -> CGPoint {
-        if position < rect.height { return CGPoint(x: 0, y: -1) }
-        if position < rect.height + rect.width { return CGPoint(x: 1, y: 0) }
-        return CGPoint(x: 0, y: 1)
-    }
-    func nearest(to p: CGPoint) -> CGFloat {
-        let y = min(max(p.y, rect.minY), rect.maxY)
-        let candidates: [(position: CGFloat, distance: CGFloat)] = [
-            (rect.maxY - y, hypot(p.x - rect.minX, p.y - y)),
-            (rect.height + min(max(p.x, rect.minX), rect.maxX) - rect.minX, hypot(p.x - min(max(p.x, rect.minX), rect.maxX), p.y - rect.minY)),
-            (rect.height + rect.width + y - rect.minY, hypot(p.x - rect.maxX, p.y - y)),
-        ]
-        return candidates.min { $0.distance < $1.distance }!.position
-    }
-    func distance(to p: CGPoint) -> CGFloat {
-        hypot(max(rect.minX - p.x, 0, p.x - rect.maxX), max(rect.minY - p.y, 0, p.y - rect.maxY))
-    }
-}
-
-enum GooShape {
+enum IslandShape {
     /// Concave corners that melt the island's top edge into the menu bar.
     static func shoulders(rect: CGRect, radius: CGFloat = 8) -> CGPath {
         let path = CGMutablePath()
