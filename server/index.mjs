@@ -1,3 +1,4 @@
+import {normalizeComparison,runComparison} from './comparison.mjs';
 import http from 'node:http';
 import {chooseScreenContext,normalizeScreenRequest} from './screen-context.mjs';
 import { chooseEditAction } from './edit-decision.mjs';
@@ -90,9 +91,32 @@ export function createServer({run=generate,runClaude=generateWithClaude,runEdit=
       finally{clearTimeout(timeout);res.off('close',disconnect);}
       return;
     }
+    if(req.method==='GET'&&pathname==='/api/status'&&query.get('provider')==='both'){const signedIn=await Promise.all([checkAuth(),checkClaude()]);return json(200,{provider:'both',model:'both',authenticated:signedIn.some(Boolean),providers:{gpt:signedIn[0],claude:signedIn[1]}});}
     if(req.method==='GET'&&pathname==='/api/status'&&query.get('provider')==='auto'){const signedIn=await Promise.all([checkAuth(),checkClaude()]);return json(200,{provider:'auto',model:'auto',authenticated:signedIn.some(Boolean)});}
     if(req.method==='GET'&&pathname==='/api/status'&&query.get('provider')==='claude')return json(200,{provider:'claude',model:CLAUDE_MODEL,reasoningEffort:CLAUDE_EFFORT,authenticated:await checkClaude(),auth:'Claude',note:'Uses your Claude plan through the Claude CLI.'});
     if(req.method==='GET'&&pathname==='/api/status')return json(200,{provider:'gpt',model:MODEL,reasoningEffort:REASONING_EFFORT,defaultTier:'fast',authenticated:await checkAuth(),auth:'ChatGPT',tiers:['standard','fast'],note:'Uses your Codex allowance. Fast mode requires account access and consumes more usage.'});
+    if(req.method==='POST'&&pathname==='/api/compare') {
+      const supplied=Buffer.from(String(req.headers['x-clippy-session']||''));
+      if(supplied.length!==token.length||!timingSafeEqual(supplied,Buffer.from(token)))return json(403,{error:'Refresh your local session.'});
+      if(!req.headers['content-type']?.startsWith('application/json'))return json(415,{error:'Expected application/json.'});
+      if(active)return json(429,{error:'Both needs two available request slots. Wait or cancel the active request.'});
+      active+=2;
+      const controller=new AbortController(),timer=setTimeout(()=>controller.abort(Error('Comparison timed out.')),120000);
+      const disconnect=()=>{if(!res.writableEnded)controller.abort();};res.on('close',disconnect);
+      const send=event=>{if(!res.destroyed&&!res.writableEnded)res.write(JSON.stringify(event)+'\n');};
+      try {
+        let size=0;const chunks=[];
+        for await(const chunk of req){size+=chunk.length;if(size>MAX_BODY)return json(413,{error:'Comparison request too large.'});chunks.push(chunk);}
+        const request=normalizeComparison(JSON.parse(Buffer.concat(chunks).toString('utf8')));
+        controller.signal.throwIfAborted();
+        res.writeHead(200,{'Content-Type':'application/x-ndjson; charset=utf-8'});
+        await runComparison(request,{run,runClaude,runEdit,checkAuth,checkClaude,routeEdit,signal:controller.signal,send});
+      }catch(error){
+        const message=controller.signal.aborted?'Comparison cancelled or timed out.':String(error.message||error).slice(0,1600);
+        if(!res.headersSent&&!res.destroyed)json(400,{error:message});else send({type:'error',message});
+      }finally{clearTimeout(timer);res.off('close',disconnect);active-=2;res.end();}
+      return;
+    }
     if(req.method==='POST'&&['/api/chat','/api/edit'].includes(pathname)){
       const editing=pathname==='/api/edit';
       const supplied=Buffer.from(String(req.headers['x-clippy-session']||''));
