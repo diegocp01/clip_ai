@@ -243,3 +243,19 @@ for source in morphSources {
 let composerLayout = IslandLayout(screen: external, safeTop: 0, leftArea: nil, rightArea: nil, expanded: true)
 expect(!composerLayout.statusFrame.intersects(ComposerGeometry.provider), "Status text must not run under the model toggle")
 print("Composer bounds, clean camera boundary, continuous morph and reversal checks passed.")
+
+// Hover sectors belong to one option and never cover the typing controls.
+for (index, frame) in ComposerGeometry.optionFrames.enumerated() {
+    expect(ComposerGeometry.option(at: NSPoint(x: frame.midX, y: frame.midY)) == index,
+           "Each circular option must highlight its own wedge")
+}
+for frame in [ComposerGeometry.input, ComposerGeometry.send, ComposerGeometry.collapse] {
+    for point in [NSPoint(x: frame.minX, y: frame.minY), NSPoint(x: frame.midX, y: frame.midY),
+                  NSPoint(x: frame.maxX - 0.1, y: frame.maxY - 0.1)] {
+        expect(ComposerGeometry.option(at: point) == nil, "Typing and Send must not highlight an option")
+    }
+}
+for point in [NSPoint(x: -1, y: 100), NSPoint(x: 480, y: 0), NSPoint(x: 240, y: -1)] {
+    expect(ComposerGeometry.option(at: point) == nil, "Leaving the shell clears the option")
+}
+print("Composer hover sectors and central input exclusion passed.")

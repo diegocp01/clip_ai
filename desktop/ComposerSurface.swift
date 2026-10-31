@@ -5,6 +5,10 @@ import AppKit
 final class ComposerSurface: NSView {
     private let content: NSView
     private let shell = PetroleumCradle(frame: .zero)
+    private let wedges = ComposerWedges(frame: NSRect(origin: .zero, size: ComposerGeometry.size))
+    private let hoverTitle = NSTextField(labelWithString: "")
+    private let hoverDetail = NSTextField(labelWithString: "")
+    private var hoveredOption: Int?
     private var expanded = false
     private(set) var currentRadius = ComposerGeometry.cornerRadius
     private let oil = CALayer()
@@ -21,6 +25,18 @@ final class ComposerSurface: NSView {
         oil.mask = clearing
         content.autoresizingMask = [.width, .height]
         shell.autoresizingMask = [.width, .height]
+        hoverTitle.frame = ComposerGeometry.hoverTitle
+        hoverTitle.font = .systemFont(ofSize: 11, weight: .semibold)
+        hoverTitle.textColor = NSColor(calibratedRed: 0.62, green: 1, blue: 0.76, alpha: 1)
+        hoverDetail.frame = ComposerGeometry.hoverDetail
+        hoverDetail.font = .systemFont(ofSize: 10.5)
+        hoverDetail.textColor = NSColor.white.withAlphaComponent(0.85)
+        for label in [hoverTitle, hoverDetail] {
+            label.alignment = .center
+            label.lineBreakMode = .byTruncatingTail
+            label.alphaValue = 0
+            content.addSubview(label)
+        }
         addSubview(content)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -28,6 +44,7 @@ final class ComposerSurface: NSView {
     /// Start from the notch's pure black, then clear it from bottom to top.
     /// The translucent shell underneath stays mounted in both directions.
     func beginMorph() {
+        updateHover(at: nil, details: [])
         showComposer(true)
         layer?.addSublayer(oil)
     }
@@ -46,6 +63,7 @@ final class ComposerSurface: NSView {
         clearing.colors = [NSColor.white.withAlphaComponent(1 - smoothstep(0.12, 0.72, p)).cgColor,
                            NSColor.white.withAlphaComponent(1 - smoothstep(0.32, 1, p)).cgColor]
         shell.alphaValue = 0.7 * smoothstep(0.2, 0.8, p)
+        wedges.alphaValue = smoothstep(0.82, 1, p)
         content.alphaValue = smoothstep(0.82, 1, p)
         CATransaction.commit()
     }
@@ -54,6 +72,7 @@ final class ComposerSurface: NSView {
         oil.removeFromSuperlayer()
         oil.contents = nil
         shell.alphaValue = 0.7
+        wedges.alphaValue = 1
         content.alphaValue = 1
     }
 
@@ -68,11 +87,29 @@ final class ComposerSurface: NSView {
         if value {
             shell.frame = bounds
             addSubview(shell, positioned: .below, relativeTo: content)
+            addSubview(wedges, positioned: .above, relativeTo: shell)
         } else {
+            updateHover(at: nil, details: [])
+            wedges.removeFromSuperview()
             shell.removeFromSuperview()
         }
         content.frame = bounds
     }
+    func updateHover(at point: NSPoint?, details: [String]) {
+        let index = expanded ? point.flatMap { ComposerGeometry.option(at: $0) } : nil
+        let detail = index.flatMap { details.indices.contains($0) ? details[$0] : nil } ?? ""
+        guard index != hoveredOption || detail != hoverDetail.stringValue else { return }
+        hoveredOption = index
+        hoverTitle.stringValue = index.map { ComposerGeometry.optionNames[$0] } ?? ""
+        hoverDetail.stringValue = detail
+        wedges.select(index)
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.16
+            hoverTitle.animator().alphaValue = index == nil ? 0 : 1
+            hoverDetail.animator().alphaValue = index == nil ? 0 : 1
+        }
+    }
+
 }
 
 /// A sandblasted material across the whole shell; the input itself has no box.
@@ -125,5 +162,52 @@ private final class FrostedFinish: NSView {
         bounds.fill()
         NSColor(patternImage: Self.grain).setFill()
         bounds.fill()
+    }
+}
+
+/// Decorative layers do not intercept button clicks or text selection.
+private final class ComposerWedges: NSView {
+    private var highlights: [CAShapeLayer] = []
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        let clip = CAShapeLayer()
+        clip.frame = bounds
+        clip.path = ComposerGeometry.optionRing().cgPath
+        clip.fillRule = .evenOdd
+        layer?.mask = clip
+        let green = NSColor(calibratedRed: 0.29, green: 0.93, blue: 0.47, alpha: 1)
+        for index in ComposerGeometry.optionFrames.indices {
+            let path = ComposerGeometry.optionSector(index).cgPath
+            let separator = CAShapeLayer()
+            separator.frame = bounds
+            separator.path = path
+            separator.fillColor = NSColor.clear.cgColor
+            separator.strokeColor = NSColor.white.withAlphaComponent(0.10).cgColor
+            separator.lineWidth = 0.5
+            layer?.addSublayer(separator)
+            let glow = CAShapeLayer()
+            glow.frame = bounds
+            glow.path = path
+            glow.fillColor = green.withAlphaComponent(0.12).cgColor
+            glow.strokeColor = green.withAlphaComponent(0.5).cgColor
+            glow.lineWidth = 1
+            glow.shadowColor = green.cgColor
+            glow.shadowOpacity = 0.45
+            glow.shadowRadius = 10
+            glow.shadowOffset = .zero
+            glow.opacity = 0
+            layer?.addSublayer(glow)
+            highlights.append(glow)
+        }
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    func select(_ selected: Int?) {
+        CATransaction.begin()
+        CATransaction.setAnimationDuration(NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.18)
+        CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(name: .easeInEaseOut))
+        for (index, glow) in highlights.enumerated() { glow.opacity = index == selected ? 1 : 0 }
+        CATransaction.commit()
     }
 }

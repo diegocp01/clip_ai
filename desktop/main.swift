@@ -422,6 +422,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let dt = CGFloat(min(now - lastPointerCheck, 0.1))
         lastPointerCheck = now
         let pointer = NSEvent.mouseLocation
+        if expanded {
+            let point = island.isVisible && menuTrackingDepth == 0
+                ? NSPoint(x: pointer.x - island.frame.minX, y: pointer.y - island.frame.minY) : nil
+            composerSurface.updateHover(at: point, details: [
+                attachedImage == nil ? "Attach a screenshot to your next question." : "Remove the attached screenshot.",
+                voiceRequested ? "End the live voice conversation." : "Start a live voice conversation.",
+                voiceEnabled ? "Mute spoken replies." : "Turn spoken replies on.",
+                "Choose GPT or Claude.",
+                tierPicker.isEnabled ? "Choose Standard or Fast reasoning." : "Reasoning modes are available with GPT.",
+                "Open settings and additional actions."
+            ])
+            return
+        }
         // The pointer can rest on the screen's top edge, which a rect excludes.
         let region = (pointerOnIsland ? island.frame : wakeRegion).insetBy(dx: 0, dy: -1)
         let inside = island.isVisible && region.contains(pointer)
