@@ -1,6 +1,22 @@
 import AppKit
 
 enum ReplyCardLayout {
+    static let gap: CGFloat = 12
+    static func frame(size: NSSize, under composer: NSRect, visibleFrame: NSRect) -> NSRect {
+        let width = min(size.width, visibleFrame.width - 32)
+        let height = min(size.height, max(64, composer.minY - gap - visibleFrame.minY - 16))
+        let x = min(max(composer.midX - width / 2, visibleFrame.minX + 16), visibleFrame.maxX - width - 16)
+        return NSRect(x: x, y: max(visibleFrame.minY + 16, composer.minY - gap - height), width: width, height: height)
+    }
+
+    /// A response title is metadata, not a second answer or a drawing.
+    static func hasVisual(_ result: [String: Any]) -> Bool {
+        let scene = result["scene"] as? [String: Any]
+        let diagram = result["diagram"] as? [String: Any]
+        return [scene?["objects"], diagram?["nodes"], result["cards"], result["annotations"]]
+            .contains { ($0 as? [Any])?.isEmpty == false }
+    }
+
     static func size(text: String, available: NSSize) -> NSSize {
         let font = NSFont.systemFont(ofSize: 15)
         let naturalWidth = (text as NSString).size(withAttributes: [.font: font]).width + 92

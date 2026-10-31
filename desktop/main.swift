@@ -110,6 +110,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var webView: WKWebView!
     private var captions: FloatingPanel!
     private var replyCard: ReplyCard!
+    private var captionSize = NSSize.zero
     private var dismissPanel: FloatingPanel!
     private var drawingOnScreen = false
     private var captionDismissed = false
@@ -269,7 +270,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         keyboardMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .leftMouseDown, .rightMouseDown]) { [weak self] event in
             guard let self, self.menuTrackingDepth == 0 else { return event }
             if event.type != .keyDown {
-                if self.expanded, let window = event.window, window !== self.island, window !== self.dismissPanel,
+                if self.expanded, let window = event.window, window !== self.island, window !== self.dismissPanel, window !== self.captions,
                    window.level.rawValue < NSWindow.Level.popUpMenu.rawValue,
                    !self.island.frame.contains(window.convertPoint(toScreen: event.locationInWindow)) {
                     self.setExpanded(false)
@@ -749,7 +750,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         captions.contentView = replyCard
         buildDismissButton()
     }
-    // One X under the notch closes whatever is on screen, instead of one on each output.
+    // One X below the reply (or the notch) closes whatever is on screen.
     private func buildDismissButton() {
         let size = DismissGeometry.size
         dismissPanel = panel(NSRect(x: 0, y: 0, width: size, height: size), level: island.level)
@@ -767,12 +768,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         updateDismissButton()
     }
     private func updateDismissButton() {
+        positionCaption()
         let showing = captions.isVisible || comparisonPanel.isVisible || (overlay.isVisible && drawingOnScreen)
         guard showing, island.isVisible, !captureInProgress, !composerTransitioning else {
             if dismissPanel.isVisible { dismissPanel.orderOut(nil) }
             return
         }
-        dismissPanel.setFrame(DismissGeometry.frame(under: island.frame, centeredOn: wakeEnds?.rest.notchFrame?.midX), display: false)
+        let anchor = captions.isVisible ? captions.frame : island.frame
+        dismissPanel.setFrame(DismissGeometry.frame(under: anchor, centeredOn: captions.isVisible ? captions.frame.midX : wakeEnds?.rest.notchFrame?.midX), display: false)
         if !dismissPanel.isVisible { dismissPanel.orderFrontRegardless() }
     }
     private func buildMenu() {
@@ -913,6 +916,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             CATransaction.begin()
             CATransaction.setDisableActions(true)
             self.island.setFrame(ComposerGeometry.morphFrame(from: sourceFrame, to: target.frame, progress: progress), display: true)
+            self.positionCaption()
             self.composerSurface.setMorph(reveal: self.composerReveal,
                                           radius: mix(sourceRadius, target.cornerRadius, eased), notched: target.isNotched)
             CATransaction.commit()
@@ -994,6 +998,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         for control in expandedControls { control.isHidden = !expanded }
         let layout = layoutIsland(updateFrame: false)
         island.setFrame(layout.frame, display: true)
+        positionCaption()
         signalHost.frame = layout.bounds
         updateNotchBridge(layout)
         island.hasShadow = expanded
@@ -1346,10 +1351,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         if !live { captionDismissed = false }
         guard !text.isEmpty else { captions.orderOut(nil); return }
         let screen = island.screen ?? NSScreen.main ?? NSScreen.screens[0]
-        let size = ReplyCardLayout.size(text: text, available: screen.visibleFrame.size)
-        captions.setFrame(NSRect(x: screen.visibleFrame.midX - size.width / 2, y: screen.visibleFrame.minY + 24, width: size.width, height: size.height), display: true)
+        captionSize = ReplyCardLayout.size(text: text, available: screen.visibleFrame.size)
+        captions.setFrame(ReplyCardLayout.frame(size: captionSize, under: island.frame, visibleFrame: screen.visibleFrame), display: true)
         replyCard.show(text, live: live)
         captions.orderFrontRegardless()
+    }
+    private func positionCaption() {
+        guard captions?.isVisible == true, let island else { return }
+        let screen = island.screen ?? NSScreen.main ?? NSScreen.screens[0]
+        let frame = ReplyCardLayout.frame(size: captionSize, under: island.frame, visibleFrame: screen.visibleFrame)
+        if captions.frame != frame { captions.setFrame(frame, display: true) }
     }
     @objc private func toggleVoice() {
         voiceEnabled.toggle()
@@ -1374,7 +1385,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         if let previous {
             render(previous)
             // Only this explicit user action moves keyboard focus to a drawing.
-            overlay.makeKeyAndOrderFront(nil)
+            if drawingOnScreen { overlay.makeKeyAndOrderFront(nil) }
         }
     }
     @objc private func newConversation() {
@@ -1805,9 +1816,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             updateCaptureButton()
             prompt.stringValue = ""
             render(result)
-            setExpanded(false)
             setStatus("Ready")
-            if voiceEnabled { speak(reply) }
+            speakDisplayedReply()
         default: break
         }
     }
@@ -1850,13 +1860,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         if let previous { render(previous) } else if !voiceRequested { overlay.orderOut(nil) }
     }
     private func render(_ result: [String: Any], preview: Bool = false) {
-        drawingOnScreen = true
+        drawingOnScreen = ReplyCardLayout.hasVisual(result)
         if overlayReady, let data = try? JSONSerialization.data(withJSONObject: result), let json = String(data: data, encoding: .utf8) {
             webView.evaluateJavaScript("window.clippyRender(\(json), \(preview)); \(preview ? "" : "window.clippyVoice?.setVisual(\(json));") void 0;") { [weak self] _, error in
                 if error != nil { self?.showError("Drawing renderer unavailable. Reopen Clip after starting the server.") }
             }
         }
-        overlay.orderFrontRegardless()
+        if drawingOnScreen || voiceRequested { overlay.orderFrontRegardless() }
+        else { overlay.orderOut(nil) }
         if !preview, !voiceRequested, let reply = result["reply"] as? String { showCaption(reply) }
     }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { /* The module sends ready after clippyRender exists. */ }
@@ -2052,6 +2063,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private func speak(_ text: String) {
         guard voiceEnabled, !voiceRequested, !compareBoth else { return }
         showCaption(text)
+        speakDisplayedReply()
+    }
+    private func speakDisplayedReply() {
+        guard voiceEnabled, !voiceRequested, !compareBoth, !replyCard.text.isEmpty else { return }
         replySpeech.speak(replyCard.text, voice: ReplyVoice.selected(), baseURL: baseURL)
     }
 
