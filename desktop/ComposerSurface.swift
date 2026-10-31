@@ -62,7 +62,7 @@ final class ComposerSurface: NSView {
             : [.layerMinXMinYCorner, .layerMaxXMinYCorner, .layerMinXMaxYCorner, .layerMaxXMaxYCorner]
         clearing.colors = [NSColor.white.withAlphaComponent(1 - smoothstep(0.12, 0.72, p)).cgColor,
                            NSColor.white.withAlphaComponent(1 - smoothstep(0.32, 1, p)).cgColor]
-        shell.alphaValue = 0.7 * smoothstep(0.2, 0.8, p)
+        shell.alphaValue = smoothstep(0.2, 0.8, p)
         wedges.alphaValue = smoothstep(0.82, 1, p)
         content.alphaValue = smoothstep(0.82, 1, p)
         CATransaction.commit()
@@ -71,7 +71,7 @@ final class ComposerSurface: NSView {
     func endMorph() {
         oil.removeFromSuperlayer()
         oil.contents = nil
-        shell.alphaValue = 0.7
+        shell.alphaValue = 1
         wedges.alphaValue = 1
         content.alphaValue = 1
     }
@@ -113,23 +113,26 @@ final class ComposerSurface: NSView {
 }
 
 /// A sandblasted material across the whole shell; the input itself has no box.
-/// The backdrop composites at 70% opacity while controls remain fully opaque.
+/// Keep the native backdrop at full strength: translucency comes from the
+/// material itself, rather than leaking an unblurred desktop through view alpha.
 private final class PetroleumCradle: NSVisualEffectView {
-    private let silhouette = CAShapeLayer()
+    private let finishMask = CAShapeLayer()
+    private var maskedSize = NSSize.zero
     private let finish = FrostedFinish(frame: .zero)
 
     override init(frame: NSRect) {
         super.init(frame: frame)
-        material = .hudWindow
+        material = .popover
         blendingMode = .behindWindow
         state = .active
         appearance = NSAppearance(named: .darkAqua)
         wantsLayer = true
-        layer?.mask = silhouette
+        finish.wantsLayer = true
+        finish.layer?.mask = finishMask
         finish.autoresizingMask = [.width, .height]
         finish.frame = bounds
         addSubview(finish)
-        alphaValue = 0.7
+        alphaValue = 1
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
@@ -137,8 +140,19 @@ private final class PetroleumCradle: NSVisualEffectView {
         super.layout()
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        silhouette.frame = bounds
-        silhouette.path = ComposerGeometry.shellPath(in: bounds.insetBy(dx: 0.5, dy: 0.5)).cgPath
+        let path = ComposerGeometry.shellPath(in: bounds.insetBy(dx: 0.5, dy: 0.5))
+        finishMask.frame = bounds
+        finishMask.path = path.cgPath
+        // AppKit must mask the backdrop material itself, not just its CALayer.
+        // Reuse the raster mask until the morph changes the view size.
+        if maskedSize != bounds.size, bounds.width > 1, bounds.height > 1 {
+            maskedSize = bounds.size
+            maskImage = NSImage(size: bounds.size, flipped: false) { _ in
+                NSColor.white.setFill()
+                path.fill()
+                return true
+            }
+        }
         CATransaction.commit()
     }
 }
@@ -147,18 +161,18 @@ private final class PetroleumCradle: NSVisualEffectView {
 private final class FrostedFinish: NSView {
     private static let grain = NSImage(size: NSSize(width: 96, height: 96), flipped: false) { _ in
         var seed: UInt64 = 73
-        for _ in 0..<1800 {
+        for _ in 0..<4200 {
             seed = seed &* 6364136223846793005 &+ 1
             let x = CGFloat((seed >> 16) % 192) / 2
             seed = seed &* 6364136223846793005 &+ 1
             let y = CGFloat((seed >> 16) % 192) / 2
-            NSColor(white: (seed >> 8) & 1 == 0 ? 1 : 0, alpha: 0.045).setFill()
+            NSColor(white: (seed >> 8) & 1 == 0 ? 1 : 0, alpha: 0.065).setFill()
             NSRect(x: x, y: y, width: 0.5, height: 0.5).fill()
         }
         return true
     }
     override func draw(_ dirtyRect: NSRect) {
-        NSColor.black.withAlphaComponent(0.12).setFill()
+        NSColor.black.withAlphaComponent(0.16).setFill()
         bounds.fill()
         NSColor(patternImage: Self.grain).setFill()
         bounds.fill()
