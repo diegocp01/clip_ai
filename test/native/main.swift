@@ -330,7 +330,17 @@ expect(!ComposerGeometry.selectionIndicator.intersects(ComposerGeometry.input), 
 for frame in ComposerGeometry.optionFrames + [ComposerGeometry.send] {
     expect(!ComposerGeometry.selectionIndicator.intersects(frame), "Selection badge must not overlap controls")
 }
-print("Selected-text word counting and badge geometry passed.")
+let sourceElement = AXUIElementCreateApplication(123)
+let selection = SelectionSummary.Snapshot(pid: 123, element: sourceElement, range: CFRange(location: 0, length: 5), text: "hello")
+let duplicate = SelectionSummary.Snapshot(pid: 123, element: sourceElement, range: CFRange(location: 0, length: 5), text: "hello")
+let moved = SelectionSummary.Snapshot(pid: 123, element: sourceElement, range: CFRange(location: 9, length: 5), text: "hello")
+let changed = SelectionSummary.Snapshot(pid: 123, element: sourceElement, range: CFRange(location: 0, length: 5), text: "Hallo")
+expect(selection.fingerprint == duplicate.fingerprint, "Reopening the same selection has a stable duplicate identity")
+expect(selection.fingerprint != moved.fingerprint, "The same words elsewhere are a new selection")
+expect(selection.fingerprint != changed.fingerprint, "Changed selected text is eligible for another edit")
+expect(!selection.fingerprint.contains("hello"), "Duplicate identity retains no plaintext selection")
+expect(SelectionSummary.readSelection(pid: ProcessInfo.processInfo.processIdentifier) == nil, "Never capture Clip's own prompt")
+print("Selected-text word counting, badge geometry and selection identity passed.")
 
 let chatModels = try JSONDecoder().decode([DrawingModel].self, from: Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[2])))
 let chat = ChatPreferences(models: chatModels, defaults: preferences)

@@ -104,6 +104,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var prompt: NSTextField!
     private var selectionIndicator: NSTextField!
     private var selectionReadGeneration = 0
+    private var selectionReadPending = false
+    private var selectionOwnsOpening = false
     private let selectionReadQueue = DispatchQueue(label: "clippy.selection-summary", qos: .userInitiated)
     private var expandedControls = [NSView]()
     private var sendButton: NSButton!
@@ -173,6 +175,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         buildCaptions()
         buildMenu()
         registerShortcut()
+        selectionEditor.onAutomaticActivity = { [weak self] active in
+            guard let self, !self.busy else { return }
+            self.sendButton.image = NSImage(systemSymbolName: active ? "xmark" : "arrow.up", accessibilityDescription: active ? "Cancel text edit" : "Send")
+            self.sendButton.setAccessibilityLabel(active ? "Cancel text edit" : "Send")
+            self.sendButton.toolTip = active ? "Cancel text edit" : "Send · Return · automatically choose a visual or text answer"
+        }
         NotificationCenter.default.addObserver(self, selector: #selector(menuBeganTracking), name: NSMenu.didBeginTrackingNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(menuEndedTracking), name: NSMenu.didEndTrackingNotification, object: nil)
         keyboardMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .leftMouseDown, .rightMouseDown]) { [weak self] event in
@@ -338,7 +346,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         selectionIndicator.textColor = NSColor.white.withAlphaComponent(0.55)
         selectionIndicator.lineBreakMode = .byTruncatingTail
         selectionIndicator.isHidden = true
-        selectionIndicator.toolTip = "Selection detected in another app. This indicator does not attach or send its text."
+        selectionIndicator.toolTip = "Selected text is automatically proofread or rewritten when you open Clip."
         islandView.addSubview(selectionIndicator)
         collapseButton = button("Collapse island", frame: ComposerGeometry.collapse, action: #selector(collapseIsland), symbol: "chevron.up", iconOnly: true)
         collapseButton.toolTip = "Make smaller · Esc or ⌃⌥Space"
@@ -679,7 +687,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             selectionReadGeneration += 1
             selectionIndicator.isHidden = true
             selectionIndicator.stringValue = ""
-            if value { refreshSelectionIndicator() }
+            selectionReadPending = false
+            selectionOwnsOpening = false
+            if value { refreshSelectionIndicator(automatic: focus) }
+            else { selectionEditor.cancelAutomatic() }
         }
         let sourceFrame = island.frame
         let sourceRadius = composerTransitioning ? composerSurface.currentRadius : (islandView.layer?.cornerRadius ?? 10)
@@ -751,19 +762,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         composerTimer = timer
         RunLoop.main.add(timer, forMode: .common)
     }
-    private func refreshSelectionIndicator() {
+    private func refreshSelectionIndicator(automatic: Bool) {
         guard let source = NSWorkspace.shared.frontmostApplication,
-              source.processIdentifier != ProcessInfo.processInfo.processIdentifier else { return }
+              source.processIdentifier != ProcessInfo.processInfo.processIdentifier else {
+            prompt.toolTip = "Selection check · Clip has focus"
+            return
+        }
         let pid = source.processIdentifier
         let generation = selectionReadGeneration
+        selectionReadPending = automatic
         // The request begins before the composer takes keyboard focus.
         selectionReadQueue.async { [weak self] in
-            let count = SelectionSummary.readWordCount(pid: pid)
+            var diagnostic = "No selection"
+            let snapshot = SelectionSummary.readSelection(pid: pid) { diagnostic = $0 }
             DispatchQueue.main.async {
-                guard let self, self.expanded, self.selectionReadGeneration == generation,
-                      let count, let label = SelectionSummary.label(for: count) else { return }
+                guard let self, self.expanded, self.selectionReadGeneration == generation else { return }
+                self.selectionReadPending = false
+                self.prompt.toolTip = snapshot == nil ? "Selection check · \(source.localizedName ?? "Source app") · \(diagnostic)" : "Type a prompt"
+                if snapshot == nil && diagnostic == "Accessibility access unavailable" {
+                    let help = "Enable selected-text access · More → Enable text editing"
+                    self.selectionIndicator.stringValue = "Enable selected-text access"
+                    self.selectionIndicator.setAccessibilityLabel(help)
+                    self.selectionIndicator.isHidden = false
+                }
                 let foreground = NSWorkspace.shared.frontmostApplication?.processIdentifier
-                guard foreground == pid || foreground == ProcessInfo.processInfo.processIdentifier else { return }
+                guard foreground == pid || foreground == ProcessInfo.processInfo.processIdentifier else {
+                    self.selectionOwnsOpening = true // Never steal focus after the user switches apps.
+                    return
+                }
+                if let snapshot, automatic, !self.busy, !self.talking {
+                    self.selectionOwnsOpening = true
+                    self.selectionEditor.startAutomatic(snapshot)
+                } else if automatic && !self.composerTransitioning {
+                    self.island.makeKey(); self.island.makeFirstResponder(self.prompt)
+                }
+                guard let snapshot, let label = SelectionSummary.label(for: SelectionSummary.wordCount(snapshot.text)) else { return }
                 let text = NSMutableAttributedString()
                 if let image = NSImage(systemSymbolName: "text.badge.checkmark", accessibilityDescription: nil) {
                     let attachment = NSTextAttachment()
@@ -805,7 +838,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             gooPanel.orderFrontRegardless()
             gooPanel.order(.below, relativeTo: island.windowNumber)
         } else { gooPanel.orderOut(nil) }
-        if expanded && focus { island.makeKey(); island.makeFirstResponder(prompt) }
+        if expanded && focus && !selectionReadPending && !selectionOwnsOpening { island.makeKey(); island.makeFirstResponder(prompt) }
         if !expanded { island.resignKey() }
 
     }
@@ -1080,7 +1113,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let text = text == "Ready" ? connectionProblem ?? text : text
         currentStatus = text
         statusLabel.stringValue = text
-        let working = ["Choosing response", "Choosing model", "Thinking", "Drawing", "Replying", "Explaining", "Summarizing", "Translating", "Solving", "Exploring", "Speaking", "Listening", "Proofreading", "Rewriting"].contains { text.contains($0) }
+        let working = ["Choosing edit", "Choosing response", "Choosing model", "Thinking", "Drawing", "Replying", "Explaining", "Summarizing", "Translating", "Solving", "Exploring", "Speaking", "Listening", "Proofreading", "Rewriting"].contains { text.contains($0) }
         let problem = text == connectionProblem || text.contains("failed") || text.contains("unavailable")
         refreshComposerSignal()
         activityMark.active = talking
@@ -1391,8 +1424,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         do { try process.run(); ownedServer = process; setStatus("Starting…") }
         catch { showError("Could not start the local server. Run npm start in Terminal.") }
     }
-    @objc private func sendOrCancel() { if busy { cancelRequest() } else { sendPrompt() } }
+    @objc private func sendOrCancel() { if selectionEditor.automaticRunning { cancelTextEdit() } else if busy { cancelRequest() } else { sendPrompt() } }
     @objc private func sendPrompt() {
+        if selectionEditor.automaticRunning { cancelTextEdit(); return }
         let message = prompt.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !message.isEmpty else { island.makeKey(); island.makeFirstResponder(prompt); return }
         guard message.count <= 6000 else { showError("Keep the question under 6,000 characters."); return }
@@ -1406,6 +1440,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
     private func generate(_ message: String, mode: String = "chat") {
         guard !busy else { return }
+        selectionEditor.cancelAutomatic()
         if voiceRequested { stopRealtimeVoice() }
         stopDictation(sendTranscript: false)
         speech.stopSpeaking(at: .immediate)
