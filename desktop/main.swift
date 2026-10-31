@@ -610,6 +610,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         } else { gooPanel.orderOut(nil) }
         if expanded && focus { island.makeKey(); island.makeFirstResponder(prompt) }
         if !expanded { island.resignKey() }
+
     }
     private var talking: Bool { voiceRequested || recording || currentStatus == "Speaking" }
     // Resting: a green line. Audio live: the waveform. Anything else to say: text and line.

@@ -1,7 +1,8 @@
 import AppKit
 
-/// The expanded native composer owns its controls inside the system material.
-/// Collapsing removes the material entirely, preserving the black notch renderer.
+/// The controls keep one stable parent while the native glass backdrop comes and
+/// goes. Reparenting them through NSGlassEffectView can leave its compositor mask
+/// attached after collapse, blanking the compact island.
 final class ComposerSurface: NSView {
     private let content: NSView
     private let material: NSView
@@ -83,19 +84,11 @@ final class ComposerSurface: NSView {
     func showComposer(_ value: Bool) {
         guard expanded != value else { return }
         expanded = value
-        content.removeFromSuperview()
         if value {
             material.frame = bounds
-            addSubview(material)
-            if #available(macOS 26.0, *), let glass = material as? NSGlassEffectView {
-                glass.contentView = content
-            } else {
-                material.addSubview(content)
-            }
+            addSubview(material, positioned: .below, relativeTo: content)
         } else {
-            if #available(macOS 26.0, *), let glass = material as? NSGlassEffectView { glass.contentView = nil }
             material.removeFromSuperview()
-            addSubview(content)
         }
         content.frame = bounds
     }
