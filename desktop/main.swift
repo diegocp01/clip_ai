@@ -53,6 +53,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var island: FloatingPanel!
     private var notchBridge: FloatingPanel!
     private var islandView: IslandView!
+    private var composerSurface: ComposerSurface!
+    private var composerTransition = 0
+    private var composerTransitioning = false
     private var overlay: FloatingPanel!
     private var webView: WKWebView!
     private var captions: FloatingPanel!
@@ -174,10 +177,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         b.frame = frame
         b.isBordered = false
         b.font = .systemFont(ofSize: 11, weight: .medium)
-        b.contentTintColor = NSColor(white: 0.76, alpha: 1)
+        b.contentTintColor = NSColor(white: 0.92, alpha: 1)
         b.wantsLayer = true
-        b.layer?.cornerRadius = 8
-        b.layer?.backgroundColor = NSColor(white: 0.12, alpha: 1).cgColor
+        b.layer?.cornerRadius = frame.height / 2
+        b.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.10).cgColor
+        b.layer?.borderWidth = 0.5
+        b.layer?.borderColor = NSColor.white.withAlphaComponent(0.2).cgColor
         if let symbol { b.image = NSImage(systemSymbolName: symbol, accessibilityDescription: text); b.imagePosition = iconOnly ? .imageOnly : .imageLeading }
         b.setAccessibilityLabel(text)
         b.toolTip = text
@@ -201,7 +206,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         islandView.layer?.borderWidth = 0.5
         islandView.layer?.cornerCurve = .continuous
         islandView.onExpand = { [weak self] in if self?.expanded == false { self?.setExpanded(true, focus: true) } }
-        island.contentView = islandView
+        composerSurface = ComposerSurface(content: islandView)
+        island.contentView = composerSurface
         islandView.setAccessibilityElement(true)
         islandView.setAccessibilityRole(.button)
         statusLabel = label(currentStatus, size: 12)
@@ -235,40 +241,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         statusLine.shadowOpacity = 0.8
         for layer in [sensingGlow, sensingLine, statusLine] { signalHost.layer?.addSublayer(layer) }
         islandView.addSubview(signalHost, positioned: .below, relativeTo: statusLabel)
-        prompt = NSTextField(frame: NSRect(x: 16, y: 54, width: 320, height: 42))
+        let promptSurface = NSView(frame: ComposerGeometry.prompt)
+        promptSurface.wantsLayer = true
+        promptSurface.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.12).cgColor
+        promptSurface.layer?.cornerRadius = 14
+        promptSurface.layer?.borderWidth = 1
+        promptSurface.layer?.borderColor = NSColor.white.withAlphaComponent(0.18).cgColor
+        islandView.addSubview(promptSurface)
+        expandedControls.append(promptSurface)
+        let promptField = ComposerPrompt(frame: ComposerGeometry.prompt.insetBy(dx: 12, dy: 13))
+        promptField.focusSurface = promptSurface
+        prompt = promptField
         prompt.placeholderString = "Ask me anything…"
         prompt.setAccessibilityLabel("Ask Clippy")
         prompt.font = .systemFont(ofSize: 14)
         prompt.textColor = .white
-        prompt.backgroundColor = NSColor(white: 0.09, alpha: 1)
-        prompt.bezelStyle = .roundedBezel
+        prompt.isBezeled = false
+        prompt.drawsBackground = false
+        prompt.focusRingType = .none
         prompt.target = self
         prompt.action = #selector(sendPrompt)
         islandView.addSubview(prompt)
         expandedControls.append(prompt)
-        collapseButton = button("Collapse island", frame: NSRect(x: 352, y: 108, width: 32, height: 24), action: #selector(collapseIsland), symbol: "chevron.up", iconOnly: true)
+        collapseButton = button("Collapse island", frame: ComposerGeometry.collapse, action: #selector(collapseIsland), symbol: "chevron.up", iconOnly: true)
         collapseButton.toolTip = "Make smaller · Esc or ⌃⌥Space"
         collapseButton.layer?.backgroundColor = NSColor.clear.cgColor
-        captureButton = button("Screen", frame: NSRect(x: 16, y: 14, width: 98, height: 26), action: #selector(captureScreen), symbol: "rectangle.dashed")
+        collapseButton.layer?.borderWidth = 0
+        captureButton = button("Screen", frame: ComposerGeometry.screen, action: #selector(captureScreen), symbol: "rectangle.dashed")
         captureButton.toolTip = "Attach one screenshot to your next question"
         micButton = NSButton(title: "Dictate", target: self, action: #selector(toggleDictation))
-        talkButton = button("Talk", frame: NSRect(x: 122, y: 14, width: 64, height: 26), action: #selector(toggleRealtimeVoice), symbol: "waveform")
+        talkButton = button("Talk", frame: ComposerGeometry.talk, action: #selector(toggleRealtimeVoice), symbol: "waveform")
         talkButton.toolTip = "Live AI voice · separately billed API usage · click End to stop the microphone"
-        voiceButton = button("Voice on", frame: NSRect(x: 194, y: 14, width: 30, height: 26), action: #selector(toggleVoice), symbol: "speaker.wave.2", iconOnly: true)
-        voiceButton.contentTintColor = coral
+        voiceButton = button("Voice on", frame: ComposerGeometry.voice, action: #selector(toggleVoice), symbol: "speaker.wave.2", iconOnly: true)
+        voiceButton.contentTintColor = .systemBlue
         voiceButton.toolTip = "Spoken replies on · click to mute"
-        sendButton = button("Send", frame: NSRect(x: 346, y: 57, width: 38, height: 36), action: #selector(sendOrCancel), symbol: "arrow.up", iconOnly: true)
-        sendButton.layer?.backgroundColor = coral.cgColor
-        sendButton.contentTintColor = .black
+        sendButton = button("Send", frame: ComposerGeometry.send, action: #selector(sendOrCancel), symbol: "arrow.up", iconOnly: true)
+        sendButton.layer?.backgroundColor = NSColor.systemBlue.cgColor
+        sendButton.contentTintColor = .white
         sendButton.toolTip = "Send · Return"
-        tierPicker = NSPopUpButton(frame: NSRect(x: 238, y: 14, width: 90, height: 26))
+        tierPicker = NSPopUpButton(frame: ComposerGeometry.tier)
         tierPicker.addItems(withTitles: ["Standard", "Fast"])
         tierPicker.selectItem(at: 1)
         tierPicker.font = .systemFont(ofSize: 11)
+        tierPicker.bezelStyle = .accessoryBarAction
         tierPicker.toolTip = "GPT-6.1 Terra · Low reasoning. Fast uses more Codex allowance."
         islandView.addSubview(tierPicker)
         expandedControls.append(tierPicker)
-        _ = button("More options", frame: NSRect(x: 352, y: 14, width: 32, height: 26), action: #selector(showIslandOptions(_:)), symbol: "ellipsis", iconOnly: true)
+        _ = button("More options", frame: ComposerGeometry.more, action: #selector(showIslandOptions(_:)), symbol: "ellipsis", iconOnly: true)
         setExpanded(false)
     }
     @objc private func collapseIsland() { setExpanded(false) }
@@ -311,6 +330,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         RunLoop.main.add(timer, forMode: .common)
     }
     private func updatePointer() {
+        guard !composerTransitioning else { return }
         // The pointer can rest on the screen's top edge, which a rect excludes.
         let area = islandView.hoverArea.offsetBy(dx: island.frame.minX, dy: island.frame.minY).insetBy(dx: 0, dy: -1)
         let hovering = island.isVisible && area.contains(NSEvent.mouseLocation)
@@ -432,36 +452,95 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     @objc private func toggleIsland() { setExpanded(!expanded, focus: true) }
     @objc private func cancelTextEdit() { selectionEditor.cancel(); setStatus("Text edit cancelled") }
     @objc private func enableTextEditing() { selectionEditor.requestAccess() }
-    private func setExpanded(_ value: Bool, focus: Bool = false) {
+    private func setExpanded(_ value: Bool, focus: Bool = false, animated: Bool = true) {
+        let changed = expanded != value
+        let compactWidth = value ? island.frame.width : (island.screen?.auxiliaryTopRightArea?.minX ?? 0) - (island.screen?.auxiliaryTopLeftArea?.maxX ?? 0)
         expanded = value
-        let layout = layoutIsland()
+        composerTransition += 1
+        let generation = composerTransition
+        composerTransitioning = false
+        let shouldAnimate = changed && animated && !island.frame.isEmpty && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+
+        // Retain the expanded glass while it folds away; restore the existing
+        // compact renderer only at the end. No new frame logic is used at rest.
+        if !value && shouldAnimate {
+            island.makeFirstResponder(nil)
+            island.resignKey()
+            composerTransitioning = true
+            let origin = ComposerGeometry.originFrame(for: island.frame, compactWidth: compactWidth)
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.20
+                context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                island.animator().setFrame(origin, display: true)
+                islandView.animator().alphaValue = 0
+            } completionHandler: { [weak self] in
+                guard let self, self.composerTransition == generation else { return }
+                self.composerTransitioning = false
+                self.finishComposerLayout(focus: false)
+            }
+            return
+        }
+
+        composerSurface.showComposer(value)
+        let layout = layoutIsland(updateFrame: false)
+        updateNotchBridge(layout)
+        for control in expandedControls { control.isHidden = !value }
+        island.hasShadow = value
+        islandView.alphaValue = shouldAnimate ? 0 : 1
+        if shouldAnimate {
+            island.setFrame(ComposerGeometry.originFrame(for: layout.frame, compactWidth: compactWidth), display: true)
+            composerTransitioning = true
+            island.orderFrontRegardless()
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.34
+                context.timingFunction = CAMediaTimingFunction(controlPoints: 0.16, 0.9, 0.25, 1)
+                island.animator().setFrame(layout.frame, display: true)
+                islandView.animator().alphaValue = 1
+            } completionHandler: { [weak self] in
+                guard let self, self.composerTransition == generation else { return }
+                self.composerTransitioning = false
+                self.finishComposerLayout(focus: focus)
+            }
+        } else {
+            island.setFrame(layout.frame, display: true)
+            finishComposerLayout(focus: focus)
+        }
+    }
+    private func updateNotchBridge(_ layout: IslandLayout) {
         if let bridge = layout.notchBridge {
             notchBridge.setFrame(bridge, display: true)
             notchBridge.orderFrontRegardless()
             notchBridge.order(.below, relativeTo: island.windowNumber)
-        } else {
-            notchBridge.orderOut(nil)
-        }
-        for control in expandedControls { control.isHidden = !value }
+        } else { notchBridge.orderOut(nil) }
+    }
+    private func finishComposerLayout(focus: Bool) {
+        composerSurface.showComposer(expanded)
+        islandView.alphaValue = 1
+        for control in expandedControls { control.isHidden = !expanded }
+        let layout = layoutIsland(updateFrame: false)
+        island.setFrame(layout.frame, display: true)
+        updateNotchBridge(layout)
+        island.hasShadow = expanded
         island.orderFrontRegardless()
-        if value && focus { island.makeKey(); island.makeFirstResponder(prompt) }
-        if !value { island.resignKey() }
+        if expanded && focus { island.makeKey(); island.makeFirstResponder(prompt) }
+        if !expanded { island.resignKey() }
     }
     private var talking: Bool { voiceRequested || recording || currentStatus == "Speaking" }
     // Resting: a green line. Audio live: the waveform. Anything else to say: text and line.
-    @discardableResult private func layoutIsland() -> IslandLayout {
+    @discardableResult private func layoutIsland(updateFrame: Bool = true) -> IslandLayout {
         let content: IslandContent = talking ? .audio : currentStatus == "Ready" ? .idle : .status(textWidth: ceil(statusLabel.cell?.cellSize.width ?? 52))
         let awake = pointerOnIsland && content == .idle && !expanded
         let screen = island?.screen ?? NSScreen.main ?? NSScreen.screens[0]
         let layout = IslandLayout(screen: screen.frame, safeTop: screen.safeAreaInsets.top,
                                   leftArea: screen.auxiliaryTopLeftArea, rightArea: screen.auxiliaryTopRightArea,
                                   expanded: expanded, content: content, hovered: awake)
+        guard !composerTransitioning else { return layout }
         islandView.layer?.cornerRadius = layout.cornerRadius
         islandView.layer?.maskedCorners = layout.isNotched && !expanded
             ? [.layerMinXMinYCorner, .layerMaxXMinYCorner]
             : [.layerMinXMinYCorner, .layerMaxXMinYCorner, .layerMinXMaxYCorner, .layerMaxXMaxYCorner]
-        islandView.layer?.backgroundColor = (layout.isNotched ? .black : NSColor(white: 0.025, alpha: 1)).cgColor
-        islandView.layer?.borderWidth = layout.isNotched ? 0 : 0.5
+        islandView.layer?.backgroundColor = (expanded ? NSColor.clear : layout.isNotched ? .black : NSColor(white: 0.025, alpha: 1)).cgColor
+        islandView.layer?.borderWidth = expanded || layout.isNotched ? 0 : 0.5
         statusLabel.frame = layout.statusFrame
         activityMark.frame = layout.activityFrame
         islandView.hoverArea = content == .idle && !expanded ? layout.wakeArea : .zero
@@ -470,6 +549,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         activityMark.isHidden = content != .audio
         islandView.toolTip = expanded ? nil : "\(currentStatus) · Click to open · ⌃⌥Space"
         islandView.setAccessibilityLabel("Clippy: \(currentStatus)")
+        guard updateFrame else { return layout }
         if island.frame.isEmpty || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             island.setFrame(layout.frame, display: true)
         } else if island.frame != layout.frame {
@@ -523,7 +603,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         sensingGlow.endPoint = CGPoint(x: point + 0.3, y: 1)
         CATransaction.commit()
     }
-    @objc private func reposition() { setExpanded(expanded); positionOverlay() }
+    @objc private func reposition() { setExpanded(expanded, animated: false); positionOverlay() }
     private func positionOverlay() {
         let screen = island?.screen ?? NSScreen.main ?? NSScreen.screens[0]
         let area = screen.visibleFrame
@@ -578,7 +658,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         voiceEnabled.toggle()
         voiceButton.title = voiceEnabled ? "Voice on" : "Voice off"
         voiceButton.image = NSImage(systemSymbolName: voiceEnabled ? "speaker.wave.2" : "speaker.slash", accessibilityDescription: voiceButton.title)
-        voiceButton.contentTintColor = voiceEnabled ? coral : NSColor(white: 0.6, alpha: 1)
+        voiceButton.contentTintColor = voiceEnabled ? .systemBlue : NSColor(white: 0.6, alpha: 1)
         voiceButton.toolTip = voiceEnabled ? "Spoken replies on · click to mute" : "Spoken replies off · click to enable"
         voiceButton.setAccessibilityLabel(voiceButton.title)
         webView?.evaluateJavaScript("window.clippyVoice?.setMuted(\(!voiceEnabled)); void 0;")

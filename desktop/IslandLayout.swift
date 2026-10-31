@@ -1,5 +1,25 @@
 import AppKit
 
+/// Expanded-only metrics. The compact signal/hover geometry is independent.
+enum ComposerGeometry {
+    static let size = NSSize(width: 440, height: 176)
+    static let cornerRadius: CGFloat = 24
+    static let prompt = NSRect(x: 18, y: 65, width: 344, height: 48)
+    static let send = NSRect(x: 374, y: 65, width: 48, height: 48)
+    static let collapse = NSRect(x: 392, y: 134, width: 30, height: 26)
+    static let screen = NSRect(x: 18, y: 18, width: 100, height: 30)
+    static let talk = NSRect(x: 126, y: 18, width: 70, height: 30)
+    static let voice = NSRect(x: 204, y: 18, width: 32, height: 30)
+    static let tier = NSRect(x: 250, y: 18, width: 120, height: 30)
+    static let more = NSRect(x: 386, y: 18, width: 36, height: 30)
+
+    /// Both endpoints share a top edge, so window interpolation grows downward.
+    static func originFrame(for frame: NSRect, compactWidth: CGFloat) -> NSRect {
+        let width = min(frame.width, max(30, compactWidth))
+        return NSRect(x: frame.midX - width / 2, y: frame.maxY - 1, width: width, height: 1)
+    }
+}
+
 /// What the collapsed island shows, which decides how much room it takes.
 enum IslandContent: Equatable {
     case idle
@@ -62,7 +82,7 @@ struct IslandLayout {
                              : NSRect(x: leftWing + notch.width, y: 0, width: rightWing, height: notch.height)
             return
         }
-        cornerRadius = expanded ? 18 : 11
+        cornerRadius = expanded ? ComposerGeometry.cornerRadius : 11
         let textWidth: CGFloat
         let compactWidth: CGFloat
         switch content {
@@ -70,16 +90,16 @@ struct IslandLayout {
         case .audio: textWidth = 0; compactWidth = 40
         case .status(let width): textWidth = min(width, 240); compactWidth = 38 + textWidth
         }
-        let width: CGFloat = expanded ? 400 : compactWidth
-        let height: CGFloat = expanded ? 144 : 22
+        let width: CGFloat = expanded ? ComposerGeometry.size.width : compactWidth
+        let height: CGFloat = expanded ? ComposerGeometry.size.height : 22
         let center = notch?.midX ?? screen.midX
         let top = screen.maxY - max(safeTop, notch == nil ? 4 : 0)
         frame = NSRect(x: center - width / 2, y: top - height, width: width, height: height)
-        statusFrame = expanded ? NSRect(x: 46, y: 110, width: 294, height: 20)
+        statusFrame = expanded ? NSRect(x: 48, y: 137, width: 330, height: 20)
                                : NSRect(x: 26, y: 2, width: textWidth, height: 18)
-        activityFrame = expanded ? NSRect(x: 16, y: 110, width: 24, height: 20)
+        activityFrame = expanded ? NSRect(x: 18, y: 137, width: 24, height: 20)
                                  : NSRect(x: 8, y: 1, width: 24, height: 20)
-        if expanded { lineFrame = NSRect(x: 26.5, y: 113, width: 3, height: 14) }
+        if expanded { lineFrame = NSRect(x: 28.5, y: 140, width: 3, height: 14) }
         else if awake { lineFrame = NSRect(x: 10, y: 3, width: width - 20, height: 2) }
         else { lineFrame = NSRect(x: content == .idle ? (width - 3) / 2 : 12, y: (height - 14) / 2, width: 3, height: 14) }
         wakeArea = NSRect(x: 0, y: 0, width: width, height: height)
