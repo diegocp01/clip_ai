@@ -28,7 +28,7 @@ test('both editing actions always use Sol high, no tools or visual context',asyn
 });
 test('edit HTTP route requires local token and does not use visual generation',async t=>{
   let calls=0;
-  const server=createServer({checkAuth:async()=>true,run:async()=>{throw new Error('wrong route');},runEdit:async request=>{calls++;assert.equal(request.action,'proofread');return{result:{text:'I am ready.'},model:'gpt-6.1-sol',reasoningEffort:'high'};}});
+  const server=createServer({chooseStatus:async()=>null,checkAuth:async()=>true,run:async()=>{throw new Error('wrong route');},runEdit:async request=>{calls++;assert.equal(request.action,'proofread');return{result:{text:'I am ready.'},model:'gpt-6.1-sol',reasoningEffort:'high'};}});
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>server.close());
   const url=`http://127.0.0.1:${server.address().port}`;
   const headers={'Content-Type':'application/json'};
@@ -71,7 +71,7 @@ test('Claude editing rejects an invalid answer so the selection is preserved',as
 });
 test('the edit route checks the sign-in of the selected provider',async t=>{
   const seen=[];
-  const server=createServer({checkAuth:async()=>false,checkClaude:async()=>true,runEdit:async request=>{seen.push(request.provider);return {result:{text:'ok'}};},voice:{ready:async()=>false,closeAll:async()=>{}}});
+  const server=createServer({chooseStatus:async()=>null,checkAuth:async()=>false,checkClaude:async()=>true,runEdit:async request=>{seen.push(request.provider);return {result:{text:'ok'}};},voice:{ready:async()=>false,closeAll:async()=>{}}});
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>{server.closeAllConnections();server.close();});
   const url=`http://127.0.0.1:${server.address().port}`;
   const {token}=await(await fetch(url+'/api/session')).json();

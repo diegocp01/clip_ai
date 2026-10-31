@@ -109,7 +109,7 @@ test('cancelling stops the CLI',async()=>{
 
 test('the server routes each provider to its own runner and sign-in check',async t=>{
   const calls=[];
-  const server=createServer({
+  const server=createServer({chooseStatus:async()=>null,
     run:async(r,o)=>{calls.push('gpt');o.onStatus('codex');return {result:visual,provider:'gpt'};},
     runClaude:async(r,o)=>{calls.push('claude');o.onStatus('claude');return {result:visual,provider:'claude'};},
     checkAuth:async()=>false,checkClaude:async()=>true,
@@ -132,7 +132,7 @@ test('the server routes each provider to its own runner and sign-in check',async
   assert.equal((await send('gemini')).status,400);
   assert.deepEqual(calls,['claude']);
 
-  const signedIn=createServer({run:async()=>({result:visual}),checkAuth:async()=>true,voice:{ready:async()=>false,closeAll:async()=>{}}});
+  const signedIn=createServer({chooseStatus:async()=>null,run:async()=>({result:visual}),checkAuth:async()=>true,voice:{ready:async()=>false,closeAll:async()=>{}}});
   await new Promise(resolve=>signedIn.listen(0,'127.0.0.1',resolve));
   t.after(()=>new Promise(resolve=>signedIn.close(resolve)));
   const other=`http://127.0.0.1:${signedIn.address().port}`;
@@ -149,7 +149,7 @@ test('the server routes each provider to its own runner and sign-in check',async
   assert.equal(claudeStatus.model,CLAUDE_MODEL);
 });
 test('a signed-out Claude gets its own sign-in message',async t=>{
-  const server=createServer({run:async()=>({}),runClaude:async()=>({}),checkAuth:async()=>true,checkClaude:async()=>false,voice:{ready:async()=>false,closeAll:async()=>{}}});
+  const server=createServer({chooseStatus:async()=>null,run:async()=>({}),runClaude:async()=>({}),checkAuth:async()=>true,checkClaude:async()=>false,voice:{ready:async()=>false,closeAll:async()=>{}}});
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
   t.after(()=>new Promise(resolve=>server.close(resolve)));
   const base=`http://127.0.0.1:${server.address().port}`;
