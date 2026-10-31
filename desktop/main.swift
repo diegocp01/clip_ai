@@ -366,7 +366,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         sendButton.layer?.borderColor = NSColor.white.withAlphaComponent(0.65).cgColor
         sendButton.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 18, weight: .thin)
         sendButton.contentTintColor = .white
-        sendButton.toolTip = "Send · Return"
+        sendButton.toolTip = "Send · Return · automatically choose a visual or text answer"
         let drawButton = button("Draw", frame: ComposerGeometry.draw, action: #selector(drawPrompt), symbol: "paintbrush.pointed", iconOnly: true)
         drawButton.image = easelIcon()
         drawButton.toolTip = "Draw your prompt · type an idea, then click Draw"
@@ -1080,7 +1080,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let text = text == "Ready" ? connectionProblem ?? text : text
         currentStatus = text
         statusLabel.stringValue = text
-        let working = ["Choosing model", "Thinking", "Drawing", "Replying", "Explaining", "Summarizing", "Translating", "Solving", "Exploring", "Speaking", "Listening", "Proofreading", "Rewriting"].contains { text.contains($0) }
+        let working = ["Choosing response", "Choosing model", "Thinking", "Drawing", "Replying", "Explaining", "Summarizing", "Translating", "Solving", "Exploring", "Speaking", "Listening", "Proofreading", "Rewriting"].contains { text.contains($0) }
         let problem = text == connectionProblem || text.contains("failed") || text.contains("unavailable")
         refreshComposerSignal()
         activityMark.active = talking
@@ -1396,7 +1396,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let message = prompt.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !message.isEmpty else { island.makeKey(); island.makeFirstResponder(prompt); return }
         guard message.count <= 6000 else { showError("Keep the question under 6,000 characters."); return }
-        generate(message, mode: "chat")
+        generate(message, mode: "auto")
     }
     @objc private func drawPrompt() {
         let message = prompt.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1422,9 +1422,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         responseStatus = 200
         resultReceived = false
         pendingRequestMode = mode
-        var selectedSettings = mode == "chat" ? chatSettings.request(for: chatProvider.rawValue) : drawingSettings.request(for: provider.rawValue)
+        var selectedSettings = mode == "draw" ? drawingSettings.request(for: provider.rawValue) : chatSettings.request(for: chatProvider.rawValue)
         selectedSettings["mode"] = mode
-        if mode == "chat" && chatSettings.isAuto { autoRouteCaption = nil; updateDrawingSettings() }
+        if mode != "draw" && chatSettings.isAuto { autoRouteCaption = nil; updateDrawingSettings() }
+        let automaticDrawing = mode == "auto" ? drawingSettings.request(for: provider.rawValue) : nil
         let tokenRequest = URLRequest(url: baseURL.appendingPathComponent("api/session"), timeoutInterval: 10)
         requestTask = URLSession.shared.dataTask(with: tokenRequest) { [weak self] data, _, error in
             DispatchQueue.main.async {
@@ -1436,7 +1437,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 request.httpMethod = "POST"
                 request.setValue("application/json", forHTTPHeaderField: "Content-Type")
                 request.setValue(token, forHTTPHeaderField: "X-Clippy-Session")
-                let body: [String: Any] = ["message": message, "mode": selectedSettings["mode"]!, "tier": "fast", "provider": selectedSettings["provider"]!, "model": selectedSettings["model"]!, "reasoningEffort": selectedSettings["reasoningEffort"]!, "history": Array(self.history.suffix(12)), "previous": self.previous as Any? ?? NSNull(), "image": self.attachedImage as Any? ?? NSNull()]
+                let body: [String: Any] = ["drawing": automaticDrawing as Any? ?? NSNull(), "message": message, "mode": selectedSettings["mode"]!, "tier": "fast", "provider": selectedSettings["provider"]!, "model": selectedSettings["model"]!, "reasoningEffort": selectedSettings["reasoningEffort"]!, "history": Array(self.history.suffix(12)), "previous": self.previous as Any? ?? NSNull(), "image": self.attachedImage as Any? ?? NSNull()]
                 guard let encoded = try? JSONSerialization.data(withJSONObject: body) else { self.finishRequest(); self.showError("Could not prepare the request."); return }
                 request.httpBody = encoded
                 self.requestTask = self.streamingSession.dataTask(with: request)
@@ -1463,6 +1464,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
     private func handle(_ event: [String: Any]) {
         switch event["type"] as? String {
+        case "presentation":
+            if let mode = event["mode"] as? String, ["chat", "draw"].contains(mode) { pendingRequestMode = mode }
         case "route":
             if let name = event["name"] as? String, let effort = event["reasoningEffort"] as? String {
                 autoRouteCaption = "Auto · \(name) · \(DrawingPreferences.effortTitle(effort))"
@@ -1483,7 +1486,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             resultReceived = true
             previewVisible = false
             previous = result
-            lastRequestMode = pendingRequestMode
+            lastRequestMode = (event["mode"] as? String).flatMap { ["chat", "draw"].contains($0) ? $0 : nil } ?? pendingRequestMode
             history.append(["role": "user", "content": String(pendingMessage.prefix(4000))])
             history.append(["role": "assistant", "content": String(reply.prefix(4000))])
             history = Array(history.suffix(12))
@@ -1513,7 +1516,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private func finishRequest() {
         busy = false; requestTask = nil; sendButton.title = ""
         sendButton.image = NSImage(systemSymbolName: "arrow.up", accessibilityDescription: "Send")
-        sendButton.toolTip = "Send · Return"
+        sendButton.toolTip = "Send · Return · automatically choose a visual or text answer"
         sendButton.setAccessibilityLabel("Send")
     }
     private func cancelRequest() {
