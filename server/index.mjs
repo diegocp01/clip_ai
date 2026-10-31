@@ -132,5 +132,5 @@ if(process.argv[1]===fileURLToPath(import.meta.url)){
   const port=Number(process.env.CLIPPY_PORT||4317);
   const server=createServer();
   server.on('error',error=>{console.error(error.code==='EADDRINUSE'?`Port ${port} is in use. Set CLIPPY_PORT to another port.`:error.message);process.exitCode=1;});
-  server.listen(port,'127.0.0.1',()=>console.log(`Clippy is ready at http://127.0.0.1:${port}`));
+  server.listen(port,'127.0.0.1',()=>console.log(`Clip is ready at http://127.0.0.1:${port}`));
 }

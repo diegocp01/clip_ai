@@ -23,7 +23,7 @@ final class SelectionEditor: NSObject {
         if AXIsProcessTrusted() { onStatus("Text editing ready · ⌃⌥D / ⌃D"); return }
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         _ = AXIsProcessTrustedWithOptions(options)
-        onStatus("Enable Clippy in Accessibility, then press the shortcut again")
+        onStatus("Enable Clip in Accessibility, then press the shortcut again")
     }
 
     func cancel() {
@@ -63,7 +63,7 @@ final class SelectionEditor: NSObject {
                         let (tokenBytes, tokenResponse) = try await URLSession.shared.data(from: base.appendingPathComponent("api/session"))
                         guard (tokenResponse as? HTTPURLResponse)?.statusCode == 200,
                               let object = try JSONSerialization.jsonObject(with: tokenBytes) as? [String: String], let token = object["token"] else {
-                            throw NSError(domain: "Clippy", code: 1, userInfo: [NSLocalizedDescriptionKey: "Local server unavailable"])
+                            throw NSError(domain: "Clip", code: 1, userInfo: [NSLocalizedDescriptionKey: "Local server unavailable"])
                         }
                         try Task.checkCancellation()
                         var request = URLRequest(url: base.appendingPathComponent("api/edit"), timeoutInterval: 135)
@@ -76,18 +76,18 @@ final class SelectionEditor: NSObject {
                         guard self.generation == current else { return }
                         guard (response as? HTTPURLResponse)?.statusCode == 200 else {
                             let value = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
-                            throw NSError(domain: "Clippy", code: 2, userInfo: [NSLocalizedDescriptionKey: value?["error"] as? String ?? "Editing request failed"])
+                            throw NSError(domain: "Clip", code: 2, userInfo: [NSLocalizedDescriptionKey: value?["error"] as? String ?? "Editing request failed"])
                         }
                         var output: String?
                         for line in String(decoding: data, as: UTF8.self).split(separator: "\n") {
                             guard let event = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any] else { continue }
                             if event["type"] as? String == "error" {
-                                throw NSError(domain: "Clippy", code: 3, userInfo: [NSLocalizedDescriptionKey: event["message"] as? String ?? "Editing failed"])
+                                throw NSError(domain: "Clip", code: 3, userInfo: [NSLocalizedDescriptionKey: event["message"] as? String ?? "Editing failed"])
                             }
                             if event["type"] as? String == "result", let result = event["result"] as? [String: Any] { output = result["text"] as? String }
                         }
                         guard let output, !output.isEmpty, output.utf16.count <= 24000 else {
-                            throw NSError(domain: "Clippy", code: 4, userInfo: [NSLocalizedDescriptionKey: "No edited text returned"])
+                            throw NSError(domain: "Clip", code: 4, userInfo: [NSLocalizedDescriptionKey: "No edited text returned"])
                         }
                         self.replace(selection, with: output, generation: current)
                     } catch {
@@ -224,7 +224,7 @@ final class SelectionEditor: NSObject {
         onStatus("Edit ready · selection changed")
         resultPanel?.close()
         let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 520, height: 330), styleMask: [.titled, .closable, .utilityWindow], backing: .buffered, defer: false)
-        panel.title = "Clippy · edited text"
+        panel.title = "Clip · edited text"
         panel.isReleasedWhenClosed = false
         let label = NSTextField(wrappingLabelWithString: reason)
         label.frame = NSRect(x: 18, y: 282, width: 484, height: 32)

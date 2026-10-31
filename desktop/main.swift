@@ -247,11 +247,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private func buildIsland() {
         island = panel(.zero, level: NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1))
         notchBridge = panel(.zero, level: island.level)
-        notchBridge.title = "Clippy notch background"
+        notchBridge.title = "Clip notch background"
         notchBridge.backgroundColor = .black
         notchBridge.ignoresMouseEvents = true
         notchBridge.setAccessibilityElement(false)
-        island.title = "Clippy island"
+        island.title = "Clip island"
         island.appearance = NSAppearance(named: .darkAqua)
         islandView = IslandView(frame: .zero)
         islandView.wantsLayer = true
@@ -311,7 +311,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         buildGoo()
         prompt = NSTextField(frame: ComposerGeometry.input)
         prompt.placeholderString = ""
-        prompt.setAccessibilityLabel("Ask Clippy")
+        prompt.setAccessibilityLabel("Ask Clip")
         prompt.font = .systemFont(ofSize: 14)
         prompt.textColor = .white
         prompt.isBezeled = false
@@ -379,7 +379,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     // In the island's window it would block the menu bar.
     private func buildGoo() {
         gooPanel = panel(.zero, level: island.level)
-        gooPanel.title = "Clippy liquid edge"
+        gooPanel.title = "Clip liquid edge"
         gooPanel.ignoresMouseEvents = true
         gooPanel.setAccessibilityElement(false)
         let host = NSView(frame: .zero)
@@ -396,7 +396,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private func buildDwellRing() {
         let size: CGFloat = 20
         dwellPanel = panel(NSRect(x: 0, y: 0, width: size, height: size), level: island.level)
-        dwellPanel.title = "Clippy hold timer"
+        dwellPanel.title = "Clip hold timer"
         dwellPanel.ignoresMouseEvents = true
         dwellPanel.setAccessibilityElement(false)
         let host = NSView(frame: NSRect(x: 0, y: 0, width: size, height: size))
@@ -458,7 +458,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     @objc private func toggleWakeSound() { wakeSound.enabled.toggle() }
     private func buildOverlay() {
         overlay = panel(NSRect(x: 0, y: 0, width: 900, height: 650), level: .floating)
-        overlay.title = "Clippy drawing"
+        overlay.title = "Clip drawing"
         overlay.isMovableByWindowBackground = false
         overlay.ignoresMouseEvents = true
         let content = WKUserContentController()
@@ -605,14 +605,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
     private func buildMenu() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        statusItem.button?.image = NSImage(systemSymbolName: "paperclip", accessibilityDescription: "Clippy")
+        statusItem.button?.image = NSImage(systemSymbolName: "paperclip", accessibilityDescription: "Clip")
         let menu = NSMenu()
-        for (title, action) in [("Ask Clippy  ⌃⌥Space", #selector(toggleIsland)), ("Show last drawing", #selector(showLastVisual)), ("Hide drawings", #selector(hideVisuals)), ("New conversation", #selector(newConversation))] {
+        for (title, action) in [("Ask Clip  ⌃⌥Space", #selector(toggleIsland)), ("Show last drawing", #selector(showLastVisual)), ("Hide drawings", #selector(hideVisuals)), ("New conversation", #selector(newConversation))] {
             let item = menu.addItem(withTitle: title, action: action, keyEquivalent: "")
             item.target = self
         }
         menu.addItem(.separator())
-        menu.addItem(withTitle: "Quit Clippy", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        menu.addItem(withTitle: "Quit Clip", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         statusItem.menu = menu
         menu.insertItem(NSMenuItem(title: "Proofread selection: ⌃⌥D", action: nil, keyEquivalent: ""), at: 0)
         menu.insertItem(NSMenuItem(title: "Rewrite selection: ⌃D", action: nil, keyEquivalent: ""), at: 1)
@@ -623,12 +623,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         editingAccess.target = self
         menu.insertItem(editingAccess, at: 3)
         let main = NSMenu()
-        let appRoot = NSMenuItem(title: "Clippy", action: nil, keyEquivalent: "")
-        let appMenu = NSMenu(title: "Clippy")
+        let appRoot = NSMenuItem(title: "Clip", action: nil, keyEquivalent: "")
+        let appMenu = NSMenu(title: "Clip")
         let showDrawing = appMenu.addItem(withTitle: "Show last drawing", action: #selector(showLastVisual), keyEquivalent: "d")
         showDrawing.target = self
         appMenu.addItem(.separator())
-        appMenu.addItem(withTitle: "Quit Clippy", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appMenu.addItem(withTitle: "Quit Clip", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appRoot.submenu = appMenu
         main.addItem(appRoot)
         let editRoot = NSMenuItem(title: "Edit", action: nil, keyEquivalent: "")
@@ -837,7 +837,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         modelCaption.isHidden = !expanded || content != .idle
         activityMark.isHidden = content != .audio
         islandView.toolTip = expanded ? nil : "\(currentStatus) · Hold here to open · ⌃⌥Space"
-        islandView.setAccessibilityLabel("Clippy: \(currentStatus)")
+        islandView.setAccessibilityLabel("Clip: \(currentStatus)")
         wake.target = awake ? 1 : 0
         if content == .idle && !expanded {
             let rest = makeLayout(false)
@@ -1349,7 +1349,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { self.checkServer(startIfNeeded: false, retries: retries - 1) }
                 } else {
                     self.setConnection(serverUnavailable)
-                    self.showError("Local server unavailable. Run npm start in the Clippy project.")
+                    self.showError("Local server unavailable. Run npm start in the Clip project.")
                     self.startHealthMonitor()
                 }
             }
@@ -1430,7 +1430,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             DispatchQueue.main.async {
                 guard let self, self.requestGeneration == generation else { return }
                 guard error == nil, let data, let tokenData = (try? JSONSerialization.jsonObject(with: data)) as? [String: String], let token = tokenData["token"] else {
-                    self.finishRequest(); self.showError("Cannot connect to the local Codex server. Try reopening Clippy."); return
+                    self.finishRequest(); self.showError("Cannot connect to the local Codex server. Try reopening Clip."); return
                 }
                 var request = URLRequest(url: baseURL.appendingPathComponent("api/chat"), timeoutInterval: 135)
                 request.httpMethod = "POST"
@@ -1534,7 +1534,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private func render(_ result: [String: Any], preview: Bool = false) {
         if overlayReady, let data = try? JSONSerialization.data(withJSONObject: result), let json = String(data: data, encoding: .utf8) {
             webView.evaluateJavaScript("window.clippyRender(\(json), \(preview)); \(preview ? "" : "window.clippyVoice?.setVisual(\(json));") void 0;") { [weak self] _, error in
-                if error != nil { self?.showError("Drawing renderer unavailable. Reopen Clippy after starting the server.") }
+                if error != nil { self?.showError("Drawing renderer unavailable. Reopen Clip after starting the server.") }
             }
         }
         overlay.orderFrontRegardless()
@@ -1601,11 +1601,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 guard let self, self.voiceRequested, self.voiceGeneration == generation else { return }
                 guard granted else {
                     self.voiceRequested = false; self.updateTalkButton()
-                    self.showError("Allow Clippy microphone access in Privacy & Security to use Talk."); return
+                    self.showError("Allow Clip microphone access in Privacy & Security to use Talk."); return
                 }
                 self.webView.evaluateJavaScript("window.clippyVoice.setMuted(\(!self.voiceEnabled)); window.clippyVoice.setProvider('\(self.provider.rawValue)'); window.clippyVoice.start(\(generation)); void 0;") { [weak self] _, error in
                     guard let self, self.voiceGeneration == generation else { return }
-                    if error != nil { self.stopRealtimeVoice(); self.showError("Live voice could not start. Reopen Clippy and try again.") }
+                    if error != nil { self.stopRealtimeVoice(); self.showError("Live voice could not start. Reopen Clip and try again.") }
                 }
             }
         }
@@ -1644,7 +1644,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     @objc private func captureScreen() {
         guard !busy else { return }
         if attachedImage != nil { attachedImage = nil; updateCaptureButton(); setStatus("Screen removed"); return }
-        guard CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess() else { showError("Allow Screen Recording in System Settings, then reopen Clippy to attach a screenshot."); return }
+        guard CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess() else { showError("Allow Screen Recording in System Settings, then reopen Clip to attach a screenshot."); return }
         let overlayVisible = overlay.isVisible, captionsVisible = captions.isVisible
         island.orderOut(nil); notchBridge.orderOut(nil); gooPanel.orderOut(nil); hideDwellRing(); overlay.orderOut(nil); captions.orderOut(nil)
         let target = FileManager.default.temporaryDirectory.appendingPathComponent("clippy-\(UUID().uuidString).png")

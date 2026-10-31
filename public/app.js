@@ -26,7 +26,7 @@ function updateHistory() {
   $('conversation-items').replaceChildren();
   for (const message of state.history) {
     const block = document.createElement('div'); block.className = `history-message ${message.role}`;
-    const label = document.createElement('strong'); label.textContent = message.role === 'user' ? 'You' : 'Clippy';
+    const label = document.createElement('strong'); label.textContent = message.role === 'user' ? 'You' : 'Clip';
     const text = document.createElement('span'); text.textContent = message.content; block.append(label, text); $('conversation-items').append(block);
   }
 }
@@ -64,12 +64,12 @@ function renderResult(result, metadata = {}) {
 }
 async function loadSession() {
   const [sessionResponse, statusResponse] = await Promise.all([fetch('/api/session'), fetch('/api/status')]);
-  if (!sessionResponse.ok || !statusResponse.ok) throw new Error('Could not connect to the local Clippy server.');
+  if (!sessionResponse.ok || !statusResponse.ok) throw new Error('Could not connect to the local Clip server.');
   const session = await sessionResponse.json(), status = await statusResponse.json(); state.token = session.token;
   const connected = Boolean(status.authenticated);
   $('connection').className = `connection ${connected ? 'connected' : 'disconnected'}`;
   $('connection').lastElementChild.textContent = connected ? 'Codex is connected' : 'Codex sign-in needed';
-  if (!connected) error('Sign in with ChatGPT using “codex login” in Terminal, then reload Clippy.');
+  if (!connected) error('Sign in with ChatGPT using “codex login” in Terminal, then reload Clip.');
 }
 async function send(message) {
   message = message.trim(); if (!message || state.controller) return;

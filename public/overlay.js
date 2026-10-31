@@ -19,7 +19,7 @@ function view(kind) {
 function render(result, preview = false) {
   const preserveCamera = streaming; streaming = preview;
   current = result; $('overlay').hidden = false; $('demo-label').hidden = true;
-  $('visual-title').textContent = (result.title || 'Clippy') + (preview ? ' · Drawing…' : '');
+  $('visual-title').textContent = (result.title || 'Clip') + (preview ? ' · Drawing…' : '');
   $('caption-text').textContent = result.reply || '';
   const showCaption = Boolean(result.reply) && !window.clippyCaptionManaged;
   $('caption').hidden = !showCaption;

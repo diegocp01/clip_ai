@@ -45,7 +45,7 @@ export async function runVisualStream({input,work,model,reasoningEffort,tier,sch
     try {
       if(line.length>3_000_000)throw new Error('Codex event too large.');
       const event=JSON.parse(line);
-      if(event.method&&event.id!==undefined){write({id:event.id,error:{code:-32601,message:'Tools and approval requests are unavailable in Clippy visuals.'}});return;}
+      if(event.method&&event.id!==undefined){write({id:event.id,error:{code:-32601,message:'Tools and approval requests are unavailable in Clip visuals.'}});return;}
       if(event.id!==undefined){const item=pending.get(event.id);if(item){pending.delete(event.id);event.error?item.reject(new Error(String(event.error.message).slice(0,500))):item.resolve(event.result);}return;}
       const p=event.params;if(!p||p.threadId!==threadId)return;
       if(event.method==='item/agentMessage/delta'){raw+=p.delta;if(raw.length>2_000_000)throw new Error('Visual response too large.');onText(raw);}
@@ -58,9 +58,9 @@ export async function runVisualStream({input,work,model,reasoningEffort,tier,sch
     }catch(error){fail(error);}
   });
   try {
-    await request('initialize',{clientInfo:{name:'clippy_island',title:'Clippy Island',version:'0.1.0'}});
+    await request('initialize',{clientInfo:{name:'clippy_island',title:'Clip Island',version:'0.1.0'}});
     write({method:'initialized',params:{}});
-    const started=await request('thread/start',{model,cwd:work,ephemeral:true,approvalPolicy:'never',sandbox:'read-only',serviceTier:tier==='standard'?'default':'fast',baseInstructions:'You are Clippy. Follow the supplied task instructions and JSON schema. You have no tools.',config:{model_reasoning_effort:reasoningEffort}});
+    const started=await request('thread/start',{model,cwd:work,ephemeral:true,approvalPolicy:'never',sandbox:'read-only',serviceTier:tier==='standard'?'default':'fast',baseInstructions:'You are Clip. Follow the supplied task instructions and JSON schema. You have no tools.',config:{model_reasoning_effort:reasoningEffort}});
     threadId=started.thread.id;
     await request('turn/start',{threadId,model,effort:reasoningEffort,outputSchema:schema,input:input.map(item=>item.type==='local_image'?{type:'localImage',path:item.path}:{...item,text_elements:[]})});
     return await completion;
