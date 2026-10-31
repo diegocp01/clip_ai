@@ -320,6 +320,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         prompt.action = #selector(sendPrompt)
         islandView.addSubview(prompt)
         expandedControls.append(prompt)
+        // A quiet baseline, centered under the text field with softly fading ends.
+        let promptLine = NSView(frame: NSRect(x: ComposerGeometry.input.midX - 48, y: ComposerGeometry.input.minY - 4, width: 96, height: 0.5))
+        let promptGradient = CAGradientLayer()
+        promptGradient.colors = [NSColor.clear.cgColor, NSColor.white.withAlphaComponent(0.16).cgColor, NSColor.clear.cgColor]
+        promptGradient.startPoint = CGPoint(x: 0, y: 0.5)
+        promptGradient.endPoint = CGPoint(x: 1, y: 0.5)
+        promptLine.layer = promptGradient
+        promptLine.wantsLayer = true
+        promptLine.setAccessibilityElement(false)
+        islandView.addSubview(promptLine)
+        expandedControls.append(promptLine)
         selectionIndicator = NSTextField(labelWithString: "")
         selectionIndicator.frame = ComposerGeometry.selectionIndicator
         selectionIndicator.font = .systemFont(ofSize: 10, weight: .light)
