@@ -389,6 +389,22 @@ expect(voiceIdentity.listening, "User interruption takes priority over reply aud
 for _ in 0..<90 { voiceIdentity.step(input: 1, output: 1, userSpeaking: true, fresh: false, dt: 1.0 / 30) }
 expect(voiceIdentity.listening && voiceIdentity.level == 0, "Stale audio cannot leave a speaking indicator stuck on")
 print("Voice identity passed: input, playback, interruption and stale-level recovery.")
+
+chat.selectGlobalAuto()
+expect(chat.isGlobalAuto && chat.request(for: "gpt")["autoScope"] == "all", "Bottom Auto must cover all four models")
+chat.selectProvider("gpt")
+expect(chat.isAuto && !chat.isGlobalAuto && chat.request(for: "gpt")["autoScope"] == "gpt", "Codex mascot plus Auto stays inside Codex")
+chat.setAuto(false, for: "gpt")
+chat.selectProvider("claude")
+expect(chat.isAuto && chat.request(for: "claude")["autoScope"] == "claude", "Claude initially offers scoped Auto")
+chat.selectGlobalAuto(); chat.selectProvider("gpt")
+expect(!chat.isAuto && chat.request(for: "gpt")["autoScope"] == nil, "Return to Codex preserves its explicit manual selection")
+chat.selectProvider("claude")
+let scopedRestore = ChatPreferences(models: chatModels, defaults: preferences)
+expect(scopedRestore.isAuto && !scopedRestore.isGlobalAuto && scopedRestore.autoScope == "claude", "Provider scope persists across launches")
+expect(choices.request(for: "gpt") == drawBefore, "Provider Auto must leave Draw unchanged")
+print("Global and provider Auto scopes, manual persistence and Draw isolation passed.")
+
 let attentionBounds = NSRect(origin: .zero, size: ComposerGeometry.size)
 expect(ComposerAttention.pointer(NSPoint(x: 40, y: 170), in: attentionBounds) != nil, "Pointer tracking includes the whole bowl, not just the signal strip")
 expect(ComposerAttention.pointer(NSPoint(x: 10, y: 10), in: attentionBounds) == nil, "Points outside the curved shell do not attract the signal")

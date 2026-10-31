@@ -10,6 +10,7 @@ Build with `npm run desktop:build`, then open `build/Clip.app`. The app reuses a
 - Rotate, zoom or select 3D parts in the drawing. Follow-ups keep the previous scene and bounded conversation history in memory.
 - Drag the drawing using its drag handle. While a drawing, reply or comparison is on screen, a small floating X appears right under the notch, or under the composer when it's open. It closes all of them at once, as does Hide drawing. The … menu or menu-bar paperclip can reopen the last drawing.
 - Captions float near the bottom of the display. Voice on/off toggles local macOS speech synthesis.
+- While explaining a visual during Talk, the voice can use a red pointer with a fading tail to point at or circle parts of a 3D model, diagram or HTML panel, write short notes on them, and rotate or zoom a 3D model. It's drawn on the visual only: your real mouse isn't touched, and it can't click anything. Speaking or grabbing the drawing stops it. Open `/overlay.html?demo=water&cursor=1` or `/overlay.html?demo=html&cursor=1` on the local server to preview it.
 - Talk starts an OpenAI Realtime voice conversation. End or Escape stops the microphone and connection. Collapse keeps the voice session running, indicated by the island’s activity state. The speaker button mutes output, not the microphone. … → Dictate on-device remains available separately.
 - Screen captures the main display once, with Clip's panels temporarily hidden. It requests Screen Recording permission only when used. The screenshot remains in memory until sent or removed, and the temporary capture file is deleted immediately. Clicking Remove screen clears it. During Talk, Screen explicitly shares that single screenshot with the live voice session instead.
 - Click the provider circle for **Codex · Claude · Both**. Codex and Claude choose the chat and selected-text editing provider. Both sends the same text and optional image to both providers and shows two copyable text answers in a separate glass comparison window; it never replaces selected text automatically. Both is text-only: it does not run automatic Draw routing, produce drawings, or speak its answers. The Draw button and Talk retain their independent single-provider settings. Hover or click the model caption to choose models and reasoning effort; Both offers separate Codex and Claude submenus. Auto leaves Both and returns to single-model Decisions routing. Each provider remembers its model and effort. Codex uses the signed-in Codex SDK and Claude uses the signed-in Claude CLI, with tools disabled. Neither silently falls back to the other.
@@ -84,6 +85,13 @@ During Realtime Talk, your microphone makes the green line/eyes shimmer; Clip’
 
 Metering reuses the existing voice streams, requests no extra microphone access, and sends only normalized input/output levels and the existing speech-detected flag to the native UI at 30 Hz. Raw samples stay local and are not retained. Ending Talk closes the meter, audio graph and native timer. Verify on a Mac by speaking softly/loudly, listening to a reply, muting replies, expanding/collapsing, enabling Reduce Motion and ending Talk; check the physical camera clearance as well as a non-notched display.
 
+
+### Provider-scoped Auto
+
+Use the bottom selector to choose Codex, Claude, Auto, or Both. Codex and Claude keep their mascots even when the top model selector is Auto; their top menus contain only that provider’s models plus Auto. Codex Auto chooses between Astra and Terra with all six supported reasoning levels. Claude Auto chooses between Opus and Sonnet with all five supported levels. Bottom Auto chooses across all four models and shows an Auto/sparkles icon. Explicit models still expose manual effort selection. Per-provider Auto/manual choices persist; legacy global Auto remains global. Both retains independent explicit models for comparisons.
+
+The request includes a validated `autoScope` only for Auto chat. Decisions receives only permitted model/effort choices, and the HTTP handler revalidates the returned provider before starting inference. Draw, Talk, and automatic selection editing keep their independent behavior. Check the mascot remains Codex after choosing top Auto, the request routes only to Codex, switching to Claude lists only Claude models, and bottom Auto restores the four-model pool.
+
 ### Wake transition
 
 The vertical-to-horizontal wake transition uses a gentler, more damped spring and an overlapping crossfade. The gradient travels with the shrinking vertical light before widening, so it does not appear separately at the destination. Leaving mid-transition reverses the same geometry; the one-second opening dwell and Reduce Motion behavior are unchanged.
@@ -109,7 +117,7 @@ sections as they stream, rather than waiting for the full answer.
 HTML supports semantic text, tables, CSS, checkbox/radio controls and expandable
 answers (`details`/`summary`). It does **not** execute generated JavaScript, load
 remote content, submit forms, navigate, or expose the native bridge. A tag/attribute
-allowlist, an empty iframe sandbox and a restrictive CSP enforce that boundary.
+allowlist, an iframe sandbox with scripts blocked and a restrictive CSP enforce that boundary. The sandbox allows same-origin access so the page can read positions for the voice's cursor; nothing inside the frame can use that, because no script runs there.
 There is one panel, at most eight 8,000-character sections, and a 300ms preview
 coalescer. No new WebView or local AI model is created. This is bounded resource
 usage by design, not a measured RAM guarantee. Dismiss cancels the in-flight visual;

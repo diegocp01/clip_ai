@@ -28,7 +28,7 @@ export function createScene(host, onSelect) {
   catch {
     const message = document.createElement('p'); message.className = 'scene-fallback';
     message.textContent = '3D rendering is unavailable in this browser. Your explanations and diagrams still work. Try a browser with WebGL enabled.'; host.append(message);
-    return { update() {}, reset() {}, clearSelection() {}, hitTest() { return false; } };
+    return { update() {}, reset() {}, clearSelection() {}, hitTest() { return false; }, locate() { return null; }, orbit() {}, zoom() {} };
   }
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.setClearColor(0x000000, 0);
@@ -90,6 +90,32 @@ export function createScene(host, onSelect) {
     camera.position.copy(center).add(new THREE.Vector3(distance * .18, distance * .16, distance));
     controls.target.copy(center); controls.update();
   }
+  // Where a part sits on screen right now, and about how big it looks.
+  function locate(id) {
+    const mesh = meshes.find(item => item.userData.part.id === id);
+    if (!mesh || host.hidden || !host.clientWidth) return null;
+    const rect = host.getBoundingClientRect();
+    // The camera may have just moved, and the marks must not lag a frame behind the model.
+    camera.updateMatrixWorld();
+    projected.copy(mesh.position).project(camera);
+    if (projected.z > 1 || projected.z < -1) return null;
+    const x = (projected.x * .5 + .5) * rect.width + rect.left, y = (-projected.y * .5 + .5) * rect.height + rect.top;
+    const size = Math.max(mesh.scale.x, mesh.scale.y, mesh.scale.z) * .6;
+    const distance = camera.position.distanceTo(mesh.position) || 1;
+    const r = size / (distance * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2)) * rect.height / 2;
+    return { x, y, r: Math.min(Math.max(r, 12), 90) };
+  }
+  const offset = new THREE.Vector3(), spherical = new THREE.Spherical();
+  function orbit(yaw, pitch) {
+    offset.copy(camera.position).sub(controls.target); spherical.setFromVector3(offset);
+    spherical.theta -= yaw; spherical.phi = Math.min(Math.max(spherical.phi + pitch, .08), Math.PI - .08);
+    camera.position.copy(controls.target).add(offset.setFromSpherical(spherical)); camera.lookAt(controls.target);
+  }
+  function zoom(factor) {
+    offset.copy(camera.position).sub(controls.target);
+    const length = Math.min(Math.max(offset.length() / factor, controls.minDistance), controls.maxDistance);
+    camera.position.copy(controls.target).add(offset.setLength(length));
+  }
   function resize() {
     const width = host.clientWidth, height = host.clientHeight;
     if (!width || !height) return;
@@ -132,7 +158,7 @@ export function createScene(host, onSelect) {
     renderer.render(scene, camera);
   }
   resize(); frame();
-  return { update, reset, clearSelection: () => select(null), hitTest };
+  return { update, reset, clearSelection: () => select(null), hitTest, locate, orbit, zoom };
 }
 
 const ns = 'http://www.w3.org/2000/svg';
@@ -159,7 +185,7 @@ export function renderDiagram(host, diagram, onSelect) {
     }
   }
   for (const node of points.values()) {
-    const g = svgElement('g', { tabindex: 0, role: 'button', 'aria-label': `Ask about ${node.label}`, style: 'cursor:pointer' });
+    const g = svgElement('g', { tabindex: 0, role: 'button', 'aria-label': `Ask about ${node.label}`, style: 'cursor:pointer', 'data-part': node.id });
     g.append(svgElement('rect', { x: node.px - 76, y: node.py - 29, width: 152, height: 58, rx: 13, fill: node.color, 'fill-opacity': .13, stroke: node.color, 'stroke-width': 1.4 }));
     const text = svgElement('text', { x: node.px, y: node.py + 5, 'text-anchor': 'middle', fill: '#484035', 'font-size': 14, 'font-family': '-apple-system, sans-serif' });
     const words = node.label.split(' '); let line = '', lines = [];
