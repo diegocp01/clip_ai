@@ -166,3 +166,12 @@ test('selected Claude model and reasoning effort reach CLI arguments',async()=>{
   assert.equal(fake.args[fake.args.indexOf('--effort')+1],'max');
   assert.equal(out.model,'claude-opus-5-5');assert.equal(out.reasoningEffort,'max');
 });
+
+test('Claude chat uses chat instructions and preserves maximum effort without visual previews',async()=>{
+  const result={...visual,scene:{objects:[]},reply:'Hello'};
+  const fake=fakeClaude([delta(JSON.stringify(result)),success({structured_output:result})]);
+  await generateWithClaude(request({mode:'chat',model:'claude-opus-5-5',reasoningEffort:'max'}),{spawnImpl:fake.spawn,env:{HOME:'/h'},onPreview:()=>assert.fail('no chat visual preview')});
+  const value=flag=>fake.args[fake.args.indexOf(flag)+1];
+  assert.equal(value('--model'),'claude-opus-5-5');assert.equal(value('--effort'),'max');
+  assert.match(value('--system-prompt'),/This is chat, not Draw/);
+});

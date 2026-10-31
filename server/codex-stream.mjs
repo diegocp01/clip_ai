@@ -60,7 +60,7 @@ export async function runVisualStream({input,work,model,reasoningEffort,tier,sch
   try {
     await request('initialize',{clientInfo:{name:'clippy_island',title:'Clippy Island',version:'0.1.0'}});
     write({method:'initialized',params:{}});
-    const started=await request('thread/start',{model,cwd:work,ephemeral:true,approvalPolicy:'never',sandbox:'read-only',serviceTier:tier==='standard'?'default':'fast',baseInstructions:'You are a visual JSON generator. Follow the supplied visual specification. You have no tools.',config:{model_reasoning_effort:reasoningEffort}});
+    const started=await request('thread/start',{model,cwd:work,ephemeral:true,approvalPolicy:'never',sandbox:'read-only',serviceTier:tier==='standard'?'default':'fast',baseInstructions:'You are Clippy. Follow the supplied task instructions and JSON schema. You have no tools.',config:{model_reasoning_effort:reasoningEffort}});
     threadId=started.thread.id;
     await request('turn/start',{threadId,model,effort:reasoningEffort,outputSchema:schema,input:input.map(item=>item.type==='local_image'?{type:'localImage',path:item.path}:{...item,text_elements:[]})});
     return await completion;

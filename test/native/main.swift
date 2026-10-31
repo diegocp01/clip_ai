@@ -331,3 +331,21 @@ for frame in ComposerGeometry.optionFrames + [ComposerGeometry.send] {
     expect(!ComposerGeometry.selectionIndicator.intersects(frame), "Selection badge must not overlap controls")
 }
 print("Selected-text word counting and badge geometry passed.")
+
+let chatModels = try JSONDecoder().decode([DrawingModel].self, from: Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[2])))
+let chat = ChatPreferences(models: chatModels, defaults: preferences)
+let drawBefore = choices.request(for: "gpt")
+chat.isAuto = true
+expect(chat.request(for: "gpt")["model"] == "auto" && chat.request(for: "gpt")["reasoningEffort"] == "auto", "Auto owns both model and effort")
+expect(chat.request(for: "gpt")["mode"] == "chat", "Auto is chat only")
+expect(choices.request(for: "gpt") == drawBefore, "Auto must not mutate Draw preferences")
+chat.isAuto = false
+chat.manual.select(model: "gpt-6-astra", provider: "gpt")
+chat.manual.select(effort: "ultra", provider: "gpt")
+expect(chat.request(for: "gpt")["reasoningEffort"] == "ultra", "Chat supports all GPT reasoning efforts")
+expect(choices.request(for: "gpt") == drawBefore, "Manual chat selections must not mutate Draw")
+chat.isAuto = true
+let restoredChat = ChatPreferences(models: chatModels, defaults: preferences)
+expect(restoredChat.isAuto && restoredChat.manual.effort(for: "gpt") == "ultra", "Auto and manual settings persist independently")
+expect(choices.request(for: "gpt") == drawBefore, "Restoring chat must not mutate Draw")
+print("Chat Auto persistence and Draw isolation passed.")

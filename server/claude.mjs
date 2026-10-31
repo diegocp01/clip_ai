@@ -1,3 +1,4 @@
+import { chatSettings } from './chat-settings.mjs';
 import { drawingSettings } from './drawing-settings.mjs';
 import { execFile,spawn } from 'node:child_process';
 import { mkdtemp,rm } from 'node:fs/promises';
@@ -6,7 +7,7 @@ import { createInterface } from 'node:readline';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { assertResult,decodeImage,resultSchema } from './schema.mjs';
-import { VISUAL_INSTRUCTIONS } from './codex.mjs';
+import { VISUAL_INSTRUCTIONS,CHAT_INSTRUCTIONS } from './codex.mjs';
 import { previewEmitter } from './visual-stream.mjs';
 
 const exec = promisify(execFile);
@@ -38,8 +39,8 @@ export function claudeMessage(request) {
   return {type:'user',message:{role:'user',content}};
 }
 export function generateWithClaude(request,options={}) {
-  const {model,reasoningEffort,name}=drawingSettings({...request,provider:'claude'});
-  return runClaudeStructured(claudeMessage(request),{model,effort:reasoningEffort,...options,instructions:VISUAL_INSTRUCTIONS,schema:resultSchema,validate:assertResult,status:`Thinking with ${name}…`,tier:request.tier??'fast'});
+  const {model,reasoningEffort,name}=(request.mode==='chat'?chatSettings:drawingSettings)({...request,provider:'claude'});
+  return runClaudeStructured(claudeMessage(request),{model,effort:reasoningEffort,...options,onPreview:request.mode==='chat'?undefined:options.onPreview,instructions:request.mode==='chat'?CHAT_INSTRUCTIONS:VISUAL_INSTRUCTIONS,schema:resultSchema,validate:assertResult,status:`Thinking with ${name}…`,tier:request.tier??'fast'});
 }
 export async function runClaudeStructured(message,{signal,onStatus=()=>{},onPreview,env=claudeEnvironment(),spawnImpl=spawn,model=CLAUDE_MODEL,effort=CLAUDE_EFFORT,instructions,schema,validate=x=>x,status,tier=null}={}) {
   const started=Date.now();

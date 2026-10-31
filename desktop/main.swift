@@ -111,6 +111,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var voiceButton: NSButton!
     private var providerControl: NSButton!
     private var modelCaption: NSButton!
+    private var chatProvider = AIProvider(rawValue: UserDefaults.standard.string(forKey: "chatProvider") ?? UserDefaults.standard.string(forKey: "aiProvider") ?? "") ?? .gpt
+    private lazy var chatSettings = ChatPreferences(models: DrawingModel.bundled(resource: "chat-models"))
+    private var autoRouteCaption: String?
+    private var lastRequestMode = "draw"
+    private var pendingRequestMode = "chat"
     private lazy var drawingSettings = DrawingPreferences(models: DrawingModel.bundled())
     private var modelHoverStarted: TimeInterval?
     private var modelMenuLatched = false
@@ -344,7 +349,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         sendButton.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 18, weight: .thin)
         sendButton.contentTintColor = .white
         sendButton.toolTip = "Send · Return"
-        let drawButton = button("Draw", frame: ComposerGeometry.draw, action: #selector(sendPrompt), symbol: "paintbrush.pointed", iconOnly: true)
+        let drawButton = button("Draw", frame: ComposerGeometry.draw, action: #selector(drawPrompt), symbol: "paintbrush.pointed", iconOnly: true)
         drawButton.image = easelIcon()
         drawButton.toolTip = "Draw your prompt · type an idea, then click Draw"
         providerControl = button("Model", frame: ComposerGeometry.provider, action: #selector(providerChanged), symbol: "cpu", iconOnly: true)
@@ -1020,7 +1025,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let text = text == "Ready" ? connectionProblem ?? text : text
         currentStatus = text
         statusLabel.stringValue = text
-        let working = ["Thinking", "Drawing", "Replying", "Explaining", "Summarizing", "Translating", "Solving", "Exploring", "Speaking", "Listening", "Proofreading", "Rewriting"].contains { text.contains($0) }
+        let working = ["Choosing model", "Thinking", "Drawing", "Replying", "Explaining", "Summarizing", "Translating", "Solving", "Exploring", "Speaking", "Listening", "Proofreading", "Rewriting"].contains { text.contains($0) }
         let problem = text == connectionProblem || text.contains("failed") || text.contains("unavailable")
         activityMark.active = talking
         statusLabel.toolTip = text
@@ -1100,7 +1105,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         setStatus("Ready")
     }
 
-    @objc private func providerChanged() { setProvider(provider == .gpt ? .claude : .gpt) }
+    @objc private func providerChanged() {
+        chatSettings.isAuto = false
+        chatProvider = chatProvider == .gpt ? .claude : .gpt
+        UserDefaults.standard.set(chatProvider.rawValue, forKey: "chatProvider")
+        updateProviderControl(); pollServer()
+    }
     private func easelIcon() -> NSImage {
         let image = NSImage(size: NSSize(width: 20, height: 20), flipped: false) { _ in
             NSColor.white.setStroke()
@@ -1136,17 +1146,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         return image
     }
     private func updateProviderControl() {
-        let name = provider == .claude ? "Claude" : "GPT"
-        let next = provider == .claude ? "GPT" : "Claude"
-        providerControl.image = mascot(provider == .claude ? "mascot-claude" : "mascot-gpt", description: name)
-            ?? NSImage(systemSymbolName: provider == .claude ? "sparkle" : "cpu", accessibilityDescription: name)
-        providerControl.setAccessibilityLabel("Model: \(name). Switch to \(next)")
-        providerControl.toolTip = "Using \(name) · click to switch to \(next)"
+        let name = chatSettings.isAuto ? "Auto" : chatProvider == .claude ? "Claude" : "GPT"
+        let next = chatProvider == .claude ? "GPT" : "Claude"
+        providerControl.image = chatSettings.isAuto ? NSImage(systemSymbolName: "sparkles", accessibilityDescription: "Auto chat model")
+            : mascot(chatProvider == .claude ? "mascot-claude" : "mascot-gpt", description: name)
+        providerControl.setAccessibilityLabel("Chat model: \(name). Switch to \(next)")
+        providerControl.toolTip = "Chat: \(name) · click to switch to \(next)"
         updateDrawingSettings()
     }
     private func updateDrawingSettings() {
-        modelCaption.title = drawingSettings.caption(for: provider.rawValue)
-        modelCaption.setAccessibilityLabel("\(modelCaption.title). Choose model and reasoning effort")
+        modelCaption.title = chatSettings.isAuto ? autoRouteCaption ?? chatSettings.caption(for: chatProvider.rawValue)
+            : chatSettings.caption(for: chatProvider.rawValue)
+        modelCaption.setAccessibilityLabel("\(modelCaption.title). Choose chat model and reasoning effort")
         let settings = drawingSettings.request(for: provider.rawValue)
         if let data = try? JSONSerialization.data(withJSONObject: settings), let json = String(data: data, encoding: .utf8) {
             webView?.evaluateJavaScript("window.clippyVoice?.setDrawingSettings(\(json)); void 0;")
@@ -1156,36 +1167,66 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         guard expanded, !busy, !composerTransitioning, menuTrackingDepth == 0 else { return }
         modelMenuLatched = true
         composerSurface.updateHover(at: nil)
-        let menu = NSMenu()
-        menu.autoenablesItems = false
-        let current = drawingSettings.model(for: provider.rawValue)
-        let heading = NSMenuItem(title: "Drawing model", action: nil, keyEquivalent: "")
-        heading.isEnabled = false
-        menu.addItem(heading)
-        for model in drawingSettings.choices(for: provider.rawValue) {
-            let item = NSMenuItem(title: model.name, action: #selector(selectDrawingModel(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = model.id
-            item.state = current.id == model.id ? .on : .off
+        let menu = NSMenu(); menu.autoenablesItems = false
+        let heading = NSMenuItem(title: "Chat model", action: nil, keyEquivalent: "")
+        heading.isEnabled = false; menu.addItem(heading)
+        let auto = NSMenuItem(title: "Auto", action: #selector(selectAutoChat), keyEquivalent: "")
+        auto.target = self; auto.state = chatSettings.isAuto ? .on : .off
+        auto.toolTip = "Decisions chooses Astra, Terra, Opus or Sonnet and its supported reasoning effort for each chat prompt"
+        menu.addItem(auto)
+        addModelOptions(to: menu, chat: true)
+        menu.addItem(.separator())
+        let draw = NSMenuItem(title: "Draw settings", action: nil, keyEquivalent: "")
+        let drawMenu = NSMenu(); drawMenu.autoenablesItems = false
+        addModelOptions(to: drawMenu, chat: false)
+        draw.submenu = drawMenu; menu.addItem(draw)
+        menu.popUp(positioning: nil, at: NSPoint(x: modelCaption.frame.minX, y: modelCaption.frame.minY), in: islandView)
+    }
+    private func addModelOptions(to menu: NSMenu, chat: Bool) {
+        let settings = chat ? chatSettings.manual : drawingSettings
+        let currentProvider = chat ? chatProvider : provider
+        let current = settings.model(for: currentProvider.rawValue)
+        for model in settings.models {
+            let item = NSMenuItem(title: model.name, action: chat ? #selector(selectChatModel(_:)) : #selector(selectDrawingModel(_:)), keyEquivalent: "")
+            item.target = self; item.representedObject = model.id
+            item.state = current.id == model.id && (!chat || !chatSettings.isAuto) ? .on : .off
             menu.addItem(item)
         }
         menu.addItem(.separator())
-        let effortHeading = NSMenuItem(title: "Reasoning effort", action: nil, keyEquivalent: "")
-        effortHeading.isEnabled = false
-        menu.addItem(effortHeading)
+        let heading = NSMenuItem(title: chat && chatSettings.isAuto ? "Reasoning: Auto (Decisions)" : "Reasoning effort", action: nil, keyEquivalent: "")
+        heading.isEnabled = false; menu.addItem(heading)
+        if chat && chatSettings.isAuto { return }
         for effort in current.efforts {
-            let item = NSMenuItem(title: DrawingPreferences.effortTitle(effort), action: #selector(selectDrawingEffort(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = effort
-            item.state = drawingSettings.effort(for: provider.rawValue) == effort ? .on : .off
+            let item = NSMenuItem(title: DrawingPreferences.effortTitle(effort), action: chat ? #selector(selectChatEffort(_:)) : #selector(selectDrawingEffort(_:)), keyEquivalent: "")
+            item.target = self; item.representedObject = effort
+            item.state = settings.effort(for: currentProvider.rawValue) == effort ? .on : .off
             menu.addItem(item)
         }
-        menu.popUp(positioning: nil, at: NSPoint(x: modelCaption.frame.minX, y: modelCaption.frame.minY), in: islandView)
+    }
+    @objc private func selectAutoChat() {
+        chatSettings.isAuto = true; autoRouteCaption = nil
+        updateProviderControl(); pollServer()
+    }
+    @objc private func selectChatModel(_ item: NSMenuItem) {
+        guard let id = item.representedObject as? String,
+              let model = chatSettings.manual.models.first(where: { $0.id == id }),
+              let selected = AIProvider(rawValue: model.provider) else { return }
+        chatSettings.isAuto = false; chatProvider = selected
+        chatSettings.manual.select(model: id, provider: model.provider)
+        UserDefaults.standard.set(model.provider, forKey: "chatProvider")
+        updateProviderControl(); pollServer()
+    }
+    @objc private func selectChatEffort(_ item: NSMenuItem) {
+        guard let effort = item.representedObject as? String, !chatSettings.isAuto else { return }
+        chatSettings.manual.select(effort: effort, provider: chatProvider.rawValue)
+        updateDrawingSettings()
     }
     @objc private func selectDrawingModel(_ item: NSMenuItem) {
-        guard let id = item.representedObject as? String else { return }
-        drawingSettings.select(model: id, provider: provider.rawValue)
-        updateDrawingSettings()
+        guard let id = item.representedObject as? String,
+              let model = drawingSettings.models.first(where: { $0.id == id }),
+              let selected = AIProvider(rawValue: model.provider) else { return }
+        drawingSettings.select(model: id, provider: model.provider)
+        setProvider(selected); updateDrawingSettings()
     }
     @objc private func selectDrawingEffort(_ item: NSMenuItem) {
         guard let effort = item.representedObject as? String else { return }
@@ -1203,7 +1244,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         // Each backend has its own sign-in, which decides whether the line can be green.
         pollServer()
     }
-    private var statusURL: URL { URL(string: "api/status?provider=\(provider.rawValue)", relativeTo: baseURL)!.absoluteURL }
+    private var statusURL: URL { URL(string: "api/status?provider=\(chatSettings.isAuto ? "auto" : chatProvider.rawValue)", relativeTo: baseURL)!.absoluteURL }
     private func checkServer(startIfNeeded: Bool, retries: Int = 12) {
         var request = URLRequest(url: statusURL)
         request.timeoutInterval = 8
@@ -1211,7 +1252,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             DispatchQueue.main.async {
                 guard let self else { return }
                 if let data, let value = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any], value["model"] != nil {
-                    self.setConnection(value["authenticated"] as? Bool == true ? nil : self.provider.signInRequired)
+                    self.setConnection(value["authenticated"] as? Bool == true ? nil : self.chatSettings.isAuto ? "Sign in to Codex or Claude for Auto" : self.chatProvider.signInRequired)
                     self.webView.load(URLRequest(url: baseURL.appendingPathComponent("overlay.html")))
                     self.startHealthMonitor()
                 } else if startIfNeeded && error != nil {
@@ -1241,7 +1282,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 guard let data, let value = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any], value["model"] != nil else {
                     self.setConnection(serverUnavailable); return
                 }
-                if value["authenticated"] as? Bool != true { self.setConnection(self.provider.signInRequired) }
+                if value["authenticated"] as? Bool != true { self.setConnection(self.chatSettings.isAuto ? "Sign in to Codex or Claude for Auto" : self.chatProvider.signInRequired) }
                 else { self.setConnection(self.overlayReady ? nil : drawingUnavailable) }
                 if !self.overlayReady { self.webView.load(URLRequest(url: baseURL.appendingPathComponent("overlay.html"))) }
             }
@@ -1268,9 +1309,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let message = prompt.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !message.isEmpty else { island.makeKey(); island.makeFirstResponder(prompt); return }
         guard message.count <= 6000 else { showError("Keep the question under 6,000 characters."); return }
-        generate(message)
+        generate(message, mode: "chat")
     }
-    private func generate(_ message: String) {
+    @objc private func drawPrompt() {
+        let message = prompt.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !message.isEmpty else { island.makeKey(); island.makeFirstResponder(prompt); return }
+        guard message.count <= 6000 else { showError("Keep the prompt under 6,000 characters."); return }
+        generate(message, mode: "draw")
+    }
+    private func generate(_ message: String, mode: String = "chat") {
         guard !busy else { return }
         if voiceRequested { stopRealtimeVoice() }
         stopDictation(sendTranscript: false)
@@ -1287,7 +1334,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         responseBuffer = Data()
         responseStatus = 200
         resultReceived = false
-        let selectedSettings = drawingSettings.request(for: provider.rawValue)
+        pendingRequestMode = mode
+        var selectedSettings = mode == "chat" ? chatSettings.request(for: chatProvider.rawValue) : drawingSettings.request(for: provider.rawValue)
+        selectedSettings["mode"] = mode
+        if mode == "chat" && chatSettings.isAuto { autoRouteCaption = nil; updateDrawingSettings() }
         let tokenRequest = URLRequest(url: baseURL.appendingPathComponent("api/session"), timeoutInterval: 10)
         requestTask = URLSession.shared.dataTask(with: tokenRequest) { [weak self] data, _, error in
             DispatchQueue.main.async {
@@ -1299,7 +1349,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 request.httpMethod = "POST"
                 request.setValue("application/json", forHTTPHeaderField: "Content-Type")
                 request.setValue(token, forHTTPHeaderField: "X-Clippy-Session")
-                let body: [String: Any] = ["message": message, "tier": "fast", "provider": selectedSettings["provider"]!, "model": selectedSettings["model"]!, "reasoningEffort": selectedSettings["reasoningEffort"]!, "history": Array(self.history.suffix(12)), "previous": self.previous as Any? ?? NSNull(), "image": self.attachedImage as Any? ?? NSNull()]
+                let body: [String: Any] = ["message": message, "mode": selectedSettings["mode"]!, "tier": "fast", "provider": selectedSettings["provider"]!, "model": selectedSettings["model"]!, "reasoningEffort": selectedSettings["reasoningEffort"]!, "history": Array(self.history.suffix(12)), "previous": self.previous as Any? ?? NSNull(), "image": self.attachedImage as Any? ?? NSNull()]
                 guard let encoded = try? JSONSerialization.data(withJSONObject: body) else { self.finishRequest(); self.showError("Could not prepare the request."); return }
                 request.httpBody = encoded
                 self.requestTask = self.streamingSession.dataTask(with: request)
@@ -1326,6 +1376,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
     private func handle(_ event: [String: Any]) {
         switch event["type"] as? String {
+        case "route":
+            if let name = event["name"] as? String, let effort = event["reasoningEffort"] as? String {
+                autoRouteCaption = "Auto · \(name) · \(DrawingPreferences.effortTitle(effort))"
+                updateDrawingSettings()
+            }
         case "status": setStatus(event["message"] as? String ?? "Thinking…")
         case "preview":
             guard let result = event["result"] as? [String: Any] else { return }
@@ -1341,6 +1396,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             resultReceived = true
             previewVisible = false
             previous = result
+            lastRequestMode = pendingRequestMode
             history.append(["role": "user", "content": String(pendingMessage.prefix(4000))])
             history.append(["role": "assistant", "content": String(reply.prefix(4000))])
             history = Array(history.suffix(12))
@@ -1418,7 +1474,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             updateDrawingSettings()
             if connectionProblem == drawingUnavailable { setConnection(nil) }
             if let previous { render(previous) }
-        case "followup": if let text = data["text"] as? String, !text.isEmpty, text.count <= 6000 { generate(text) }
+        case "followup": if let text = data["text"] as? String, !text.isEmpty, text.count <= 6000 { generate(text, mode: lastRequestMode) }
         case "closeOverlay": hideVisuals()
         case "dragOverlay": if let event = NSApp.currentEvent { overlay.performDrag(with: event) }
         case "dictate": startDictation()
@@ -1439,7 +1495,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             if voiceRequested, data["generation"] as? Int == voiceGeneration { overlay.orderFrontRegardless() }
         case "voiceVisual":
             if voiceRequested, data["generation"] as? Int == voiceGeneration, let result = data["result"] as? [String: Any], result["scene"] != nil, result["diagram"] != nil {
-                previous = result; render(result)
+                previous = result; lastRequestMode = "draw"; render(result)
             }
         default: break
         }
