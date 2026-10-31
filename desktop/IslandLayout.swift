@@ -33,6 +33,7 @@ struct IslandLayout {
     let notchBridge: NSRect?
     let cornerRadius: CGFloat
     let isNotched: Bool
+    let notchFrame: NSRect?
     let statusFrame: NSRect
     let activityFrame: NSRect
     /// The signal line: upright at rest, lying along the bottom edge once awake.
@@ -52,6 +53,7 @@ struct IslandLayout {
             notch = nil
         }
         isNotched = notch != nil
+        notchFrame = notch
         // The camera is physical, not drawable screen space. Keep the compact
         // content in two wings beside it, at menu-bar height, with nothing below.
         // Text goes left of the camera; the line and waveform go right of it, so
