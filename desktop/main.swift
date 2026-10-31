@@ -682,7 +682,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         statusLabel.frame = layout.statusFrame
         activityMark.frame = layout.activityFrame
         signalHost.layer?.maskedCorners = islandView.layer?.maskedCorners ?? []
-        if case .status = content { statusLabel.isHidden = false } else { statusLabel.isHidden = !expanded }
+        // Idle readiness is already represented by the compact menu-bar line.
+        if case .status = content { statusLabel.isHidden = false } else { statusLabel.isHidden = true }
         activityMark.isHidden = content != .audio
         islandView.toolTip = expanded ? nil : "\(currentStatus) · Click to open · ⌃⌥Space"
         islandView.setAccessibilityLabel("Clippy: \(currentStatus)")
@@ -734,7 +735,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         signalHost.layer?.cornerRadius = layout.cornerRadius
         statusLine.frame = layout.lineFrame
         statusLine.cornerRadius = min(layout.lineFrame.width, layout.lineFrame.height) / 2
-        statusLine.opacity = content == .audio ? 0 : 1
+        statusLine.opacity = content == .audio || (expanded && content == .idle) ? 0 : 1
         sensingLine.opacity = 0
         sensingEye.opacity = 0
         CATransaction.commit()
