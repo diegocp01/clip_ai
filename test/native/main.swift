@@ -459,3 +459,14 @@ expect(markedBitmap.pixelsWide == 120 && markedBitmap.pixelsHigh == 100, "Annota
 let red = markedBitmap.colorAt(x: 60, y: 35)!.usingColorSpace(.deviceRGB)!
 expect(red.redComponent > red.greenComponent + 0.2, "Shared screenshot must include the red pointer annotation")
 print("Pointer crop coordinates, display edges and visible annotation passed.")
+
+let spokenText = String(repeating: "Hello Diego. 🌿 你好.\n", count: 300)
+let speechParts = ReplyVoice.chunks(spokenText)
+expect(speechParts.joined() == spokenText, "Speech preserves the exact displayed text across chunks")
+expect(speechParts.allSatisfy { $0.utf16.count <= 1200 }, "Speech requests bound Unicode text")
+expect(ReplyVoice.chunks("").isEmpty, "Empty text creates no speech request")
+preferences.set("missing", forKey: "replyVoice")
+expect(ReplyVoice.selected(preferences) == "marin", "Unknown saved voice falls back to Marin")
+preferences.set("cedar", forKey: "replyVoice")
+expect(ReplyVoice.selected(preferences) == "cedar", "Reply voice preference persists")
+print("Reply speech text identity, Unicode chunk limits and voice preferences passed.")

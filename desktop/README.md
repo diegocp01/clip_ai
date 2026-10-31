@@ -126,3 +126,11 @@ ending Talk cancels the request and pointer sharing. The API retains the existin
 
 `/overlay.html?demo=html` is an offline illustrative fixture for layout and answer
 expansion checks; it does not start the microphone or an AI request.
+
+### OpenAI spoken replies
+
+Chat replies (including Claude answers) use OpenAI `gpt-4o-mini-tts` instead of the macOS synthesizer. In the expanded notch, choose **••• → Reply voice**: Marin is the default, with Cedar, Coral, Ash and the other built-in voices available. The selection persists. **Preview selected voice** plays a short sample when spoken replies are enabled. The menu identifies the voices as AI-generated. Talk remains a separate Realtime session using Marin; Both comparisons remain silent.
+
+The full text displayed in the floating reply bubble is the speech input, without a second summary or truncation. Long replies are split at whitespace into sequential bounded requests. One MP3 chunk is held in memory at a time, with no persistent audio cache or local model. Muting, dismissing outputs, submitting a new prompt, starting Talk/dictation, changing voice, or quitting cancels pending speech and playback. Failed TTS leaves the text available and reports that voice is unavailable rather than silently changing to a system voice.
+
+Reply text is sent to OpenAI for synthesis using the existing server-side API key. `/api/speech` requires the localhost session token, validates voice/input, admits one synthesis at a time, and cancels on disconnect or after 45 seconds. Test previews for Marin/Cedar, a long reply, mute/dismiss during preparation and playback, and starting Talk while a reply is playing.

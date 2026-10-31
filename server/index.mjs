@@ -1,3 +1,4 @@
+import {synthesizeSpeech,normalizeSpeech} from './speech.mjs';
 import {generateExplanation,normalizeExplanation} from './html-explanation.mjs';
 import {normalizeComparison,runComparison} from './comparison.mjs';
 import http from 'node:http';
@@ -20,9 +21,9 @@ import { RealtimeService,VOICE_MODEL } from './realtime.mjs';
 const root=fileURLToPath(new URL('../',import.meta.url));
 const MAX_BODY=8*1024*1024;
 const mime={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml','.png':'image/png'};
-export function createServer({run=generate,runHTML=generateExplanation,runClaude=generateWithClaude,runEdit=editText,checkAuth=authStatus,checkClaude=claudeAuthStatus,voice=new RealtimeService(),chooseStatus=chooseLoadingStatus,routeChat=chooseChatRoute,routePresentation=choosePresentation,routeEdit=chooseEditAction,routeScreen=chooseScreenContext,directSignal=createSignalDirector()}={}){
+export function createServer({run=generate,runHTML=generateExplanation,runSpeech=synthesizeSpeech,runClaude=generateWithClaude,runEdit=editText,checkAuth=authStatus,checkClaude=claudeAuthStatus,voice=new RealtimeService(),chooseStatus=chooseLoadingStatus,routeChat=chooseChatRoute,routePresentation=choosePresentation,routeEdit=chooseEditAction,routeScreen=chooseScreenContext,directSignal=createSignalDirector()}={}){
   const token=randomBytes(32).toString('hex');
-  let active=0;
+  let active=0,speaking=0;
   const server=http.createServer(async(req,res)=>{
     const port=server.address().port;
     const hosts=new Set([`127.0.0.1:${port}`,`localhost:${port}`]);
@@ -35,6 +36,24 @@ export function createServer({run=generate,runHTML=generateExplanation,runClaude
     if(!hosts.has(req.headers.host)|| (origin&&!hosts.has(origin.replace(/^http:\/\//,''))))return json(403,{error:'Local access only.'});
     let pathname,query;try{const url=new URL(req.url,`http://127.0.0.1:${port}`);pathname=decodeURIComponent(url.pathname);query=url.searchParams;}catch{return json(400,{error:'Invalid path.'});}
     if(req.method==='GET'&&pathname==='/api/session')return json(200,{token});
+    if(req.method==='POST'&&pathname==='/api/speech') {
+      const supplied=Buffer.from(String(req.headers['x-clippy-session']||''));
+      if(supplied.length!==token.length||!timingSafeEqual(supplied,Buffer.from(token)))return json(403,{error:'Refresh your local session.'});
+      if(!req.headers['content-type']?.startsWith('application/json'))return json(415,{error:'Expected application/json.'});
+      if(speaking)return json(429,{error:'A spoken reply is already being prepared.'});
+      speaking++;
+      const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),45000);
+      const disconnect=()=>{if(!res.writableEnded)controller.abort();};res.on('close',disconnect);
+      try {
+        let size=0;const chunks=[];
+        for await(const chunk of req){size+=chunk.length;if(size>20000)return json(413,{error:'Speech request too large.'});chunks.push(chunk);}
+        const request=normalizeSpeech(JSON.parse(Buffer.concat(chunks).toString('utf8')));
+        const audio=await runSpeech(request,{signal:controller.signal});controller.signal.throwIfAborted();
+        res.writeHead(200,{'Content-Type':'audio/mpeg','Content-Length':audio.length});res.end(audio);
+      }catch {if(!res.destroyed)json(400,{error:'Spoken reply unavailable. Your text reply is still available.'});}
+      finally{speaking--;clearTimeout(timer);res.off('close',disconnect);}
+      return;
+    }
     if(req.method==='POST'&&pathname==='/api/explanation'){
       const supplied=Buffer.from(String(req.headers['x-clippy-session']||''));
       if(supplied.length!==token.length||!timingSafeEqual(supplied,Buffer.from(token)))return json(403,{error:'Refresh your local session.'});
