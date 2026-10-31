@@ -5,6 +5,7 @@ import AppKit
 final class ComposerSurface: NSView {
     private let content: NSView
     private let shell = PetroleumCradle(frame: .zero)
+    private let shellOpacity: CGFloat = 0.8
     private let wedges = ComposerWedges(frame: NSRect(origin: .zero, size: ComposerGeometry.size))
     private var hoveredOption: Int?
     private var expanded = false
@@ -48,7 +49,7 @@ final class ComposerSurface: NSView {
             : [.layerMinXMinYCorner, .layerMaxXMinYCorner, .layerMinXMaxYCorner, .layerMaxXMaxYCorner]
         clearing.colors = [NSColor.white.withAlphaComponent(1 - smoothstep(0.12, 0.72, p)).cgColor,
                            NSColor.white.withAlphaComponent(1 - smoothstep(0.32, 1, p)).cgColor]
-        shell.alphaValue = smoothstep(0.2, 0.8, p)
+        shell.alphaValue = shellOpacity * smoothstep(0.2, 0.8, p)
         wedges.alphaValue = smoothstep(0.82, 1, p)
         content.alphaValue = smoothstep(0.82, 1, p)
         CATransaction.commit()
@@ -57,7 +58,7 @@ final class ComposerSurface: NSView {
     func endMorph() {
         oil.removeFromSuperlayer()
         oil.contents = nil
-        shell.alphaValue = 1
+        shell.alphaValue = shellOpacity
         wedges.alphaValue = 1
         content.alphaValue = 1
     }
@@ -91,8 +92,8 @@ final class ComposerSurface: NSView {
 }
 
 /// A sandblasted material across the whole shell; the input itself has no box.
-/// Keep the native backdrop at full strength: translucency comes from the
-/// material itself, rather than leaking an unblurred desktop through view alpha.
+/// The parent applies the requested opacity only to this backdrop; controls
+/// remain fully opaque above the native blur and fine grain.
 private final class PetroleumCradle: NSVisualEffectView {
     private let finishMask = CAShapeLayer()
     private var maskedSize = NSSize.zero
