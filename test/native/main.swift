@@ -232,6 +232,7 @@ let restored = DrawingPreferences(models: models, defaults: preferences)
 expect(restored.request(for: "gpt")["model"] == "gpt-6.1-sol" && restored.request(for: "gpt")["reasoningEffort"] == "high", "Model and effort must survive a relaunch")
 restored.select(model: "gpt-6.1-terra", provider: "gpt")
 expect(restored.effort(for: "gpt") == "low", "Each model keeps its own effort")
+expect(restored.caption(for: "gpt").hasSuffix(" · Low"), "The caption must name the level without the word effort")
 print("Drawing model and effort preferences passed.")
 
 // Selection counts describe words rather than whitespace runs or punctuation.
