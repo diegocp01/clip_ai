@@ -181,7 +181,7 @@ export function createServer({run=generate,runHTML=generateExplanation,runClaude
           const choice=await routePresentation(request,{signal:controller.signal});
           controller.signal.throwIfAborted();
           const mode=choice==='draw'?'draw':'chat';
-          request={...request,...(mode==='draw'?request.drawing:{}),mode,drawing:null};
+          request={...request,...(mode==='draw'?request.drawing:{}),mode,drawing:null,autoScope:mode==='draw'?null:request.autoScope};
           claude=request.provider==='claude';
           auto=mode==='chat'&&request.model==='auto';
           send({type:'presentation',mode,source:['chat','draw'].includes(choice)?'decisions':'fallback'});
@@ -190,7 +190,7 @@ export function createServer({run=generate,runHTML=generateExplanation,runClaude
         }
         if(auto) {
           send({type:'status',message:'Choosing model…'});
-          const route=validateAutoRoute(await routeChat(request,{signal:controller.signal}));
+          const route=validateAutoRoute(await routeChat(request,{signal:controller.signal}),request.autoScope);
           controller.signal.throwIfAborted();
           claude=route.provider==='claude';
           if(claude?!await checkClaude():!await checkAuth())throw new Error(`Auto chose ${route.name}, but ${claude?'Claude':'Codex'} is not signed in. Sign in or choose another model manually.`);

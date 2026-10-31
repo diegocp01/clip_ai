@@ -78,6 +78,13 @@ Realtime captions follow audio transcript delta/done events and the completed au
 
 Each fresh opening briefly replaces the idle model caption with a short greeting (at most five words). A shuffled local set avoids repeats until its 24 lines are used, remembers the last line across launches, and works offline without sending any user context. It holds for 3.2 seconds, fades out over 1.2 seconds, then fades the current model selector back in over 0.5 seconds. Reduced Motion uses a simple timed replacement. Clicking opens model settings immediately; automatic hover menus wait until the greeting is gone. Closing cancels the timer, and reopening starts a fresh line. Repositioning an already-open composer does not restart it. Work and voice status retain their existing priority.
 
+
+### Provider-scoped Auto
+
+Use the bottom selector to choose Codex, Claude, Auto, or Both. Codex and Claude keep their mascots even when the top model selector is Auto; their top menus contain only that provider’s models plus Auto. Codex Auto chooses between Astra and Terra with all six supported reasoning levels. Claude Auto chooses between Opus and Sonnet with all five supported levels. Bottom Auto chooses across all four models and shows an Auto/sparkles icon. Explicit models still expose manual effort selection. Per-provider Auto/manual choices persist; legacy global Auto remains global. Both retains independent explicit models for comparisons.
+
+The request includes a validated `autoScope` only for Auto chat. Decisions receives only permitted model/effort choices, and the HTTP handler revalidates the returned provider before starting inference. Draw, Talk, and automatic selection editing keep their independent behavior. Check the mascot remains Codex after choosing top Auto, the request routes only to Codex, switching to Claude lists only Claude models, and bottom Auto restores the four-model pool.
+
 The vertical-to-horizontal wake transition uses a gentler, more damped spring and an overlapping crossfade. The gradient travels with the shrinking vertical light before widening, so it does not appear separately at the destination. Leaving mid-transition reverses the same geometry; the one-second opening dwell and Reduce Motion behavior are unchanged.
 ### Point & Share during Talk
 
