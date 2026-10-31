@@ -111,136 +111,52 @@ _ = hold.update(inside: true, dt: 0.5)
 hold.disarm()
 expect(!hold.update(inside: true, dt: 2), "Opening some other way must use up the hold")
 
-// The tether holds while near, and separates when too far, too slow or clicked away.
-var tether = GooTether()
-expect(!tether.update(inside: false, distance: 5, pressed: false, dt: 0.1) && !tether.attached, "Passing near must not attach")
-expect(!tether.update(inside: true, distance: 0, pressed: false, dt: 0.1) && tether.attached, "Being inside must attach")
-expect(!tether.update(inside: false, distance: 30, pressed: false, dt: 0.1) && tether.attached, "Nearby pointer must stay attached")
-expect(tether.update(inside: false, distance: GooTether.reach + 1, pressed: false, dt: 0.1) && !tether.attached, "Too far must separate")
-expect(!tether.update(inside: false, distance: 0, pressed: false, dt: 0.1), "Separating must only report once")
-_ = tether.update(inside: true, distance: 0, pressed: false, dt: 0.1)
-var waited = 0
-while !tether.update(inside: false, distance: 10, pressed: false, dt: 0.1) { waited += 1; expect(waited < 100, "Tether must run out of patience") }
-expect(CGFloat(waited) * 0.1 <= GooTether.patience + 0.11, "Tether must separate after its patience")
-_ = tether.update(inside: true, distance: 0, pressed: false, dt: 0.1)
-expect(tether.update(inside: false, distance: 10, pressed: true, dt: 0.1), "Clicking elsewhere must separate")
-_ = tether.update(inside: true, distance: 0, pressed: false, dt: 0.1)
-expect(!tether.update(inside: true, distance: 0, pressed: true, dt: 0.1) && tether.attached, "Clicking the island must not separate")
+// The light eases after the pointer instead of snapping to it, the same at any frame rate.
+var glow = CursorGlow()
+glow.jump(to: CGPoint(x: 100, y: 50))
+expect(glow.position == CGPoint(x: 100, y: 50), "The light must start at the pointer")
+glow.follow(CGPoint(x: 200, y: 50), dt: 1.0 / 60)
+expect(glow.position.x > 100 && glow.position.x < 130, "The light must trail the pointer")
+for _ in 0..<60 { glow.follow(CGPoint(x: 200, y: 50), dt: 1.0 / 60) }
+expect(abs(glow.position.x - 200) < 0.5, "The light must catch up within a second")
+var fast = CursorGlow(), slow = CursorGlow()
+for _ in 0..<12 { fast.follow(CGPoint(x: 100, y: 0), dt: 1.0 / 120) }
+for _ in 0..<3 { slow.follow(CGPoint(x: 100, y: 0), dt: 1.0 / 30) }
+expect(abs(fast.position.x - slow.position.x) < 0.01, "The light must move the same at any frame rate")
 
-// The outline runs down the left, across the bottom and up the right.
-let island = IslandOutline(rect: CGRect(x: 100, y: 200, width: 273, height: 44))
-expect(island.point(at: 0) == CGPoint(x: 100, y: 244) && island.point(at: island.length) == CGPoint(x: 373, y: 244), "Outline must start and end on the top edge")
-for point in [CGPoint(x: 200, y: 150), CGPoint(x: 400, y: 220), CGPoint(x: 50, y: 220), CGPoint(x: 400, y: 150)] {
-    let nearest = island.point(at: island.nearest(to: point))
-    expect(abs(hypot(point.x - nearest.x, point.y - nearest.y) - island.distance(to: point)) < 0.001, "Nearest outline point must match the distance")
-}
-expect(island.point(at: island.nearest(to: CGPoint(x: 200, y: 150))) == CGPoint(x: 200, y: 200), "Point below must anchor on the bottom edge")
-
-// The awake line wanders side to side, then splits into two eyes that look at the pointer and blink.
+// Within the first second, the line moves both ways, splits into eyes that look at the pointer, and blinks.
 let barLine = CGRect(x: 51.5, y: 4, width: 130, height: 2)
 let barBounds = CGRect(x: 0, y: 0, width: 233, height: 44)
 var bar = SignalBar()
 var leftmost = CGFloat.infinity, rightmost = -CGFloat.infinity
-for _ in 0..<Int(SignalBar.sweepTime * 60) {
+for _ in 0..<Int(SignalBar.firstSweep * 60) {
     bar.step(1.0 / 60, pointer: 0)
     let parts = bar.bars(line: barLine, room: 51.5)
     leftmost = min(leftmost, parts.left.midX); rightmost = max(rightmost, parts.left.midX)
     expect(barBounds.contains(parts.left) && barBounds.contains(parts.right), "The line must stay inside the island")
 }
-expect(!bar.isEyes && leftmost < barLine.midX - 15 && rightmost > barLine.midX + 15, "The line must move left and right")
-expect(abs(bar.bars(line: barLine, room: 51.5).left.midX - bar.bars(line: barLine, room: 51.5).right.midX) < 8, "While sweeping it must read as one line")
-for _ in 0..<60 { bar.step(1.0 / 60, pointer: 1) }
-expect(bar.isEyes, "It must split into eyes after sweeping")
+expect(!bar.isEyes && leftmost < barLine.midX - 5 && rightmost > barLine.midX + 5, "The line must move left and right")
+var blinked = false, shortest = CGFloat.infinity, widestGap: CGFloat = 0
+for _ in Int(SignalBar.firstSweep * 60)..<60 {
+    bar.step(1.0 / 60, pointer: 1)
+    let parts = bar.bars(line: barLine, room: 51.5)
+    shortest = min(shortest, parts.left.height); widestGap = max(widestGap, parts.right.minX - parts.left.maxX)
+    expect(barBounds.contains(parts.left) && barBounds.contains(parts.right), "The eyes must stay inside the island")
+    if bar.blink > 0.9 { blinked = true }
+}
+expect(bar.isEyes && bar.time >= 0.99, "It must split into eyes within the hold")
+expect(widestGap > 5, "The eyes must come apart before the composer opens")
+expect(blinked && shortest < barLine.height, "The eyes must blink before the composer opens")
 let lookingRight = bar.bars(line: barLine, room: 51.5)
-expect(lookingRight.right.minX > lookingRight.left.maxX, "The eyes must be fully apart")
 expect(lookingRight.left.width < barLine.width / 2, "Each eye must be much shorter than the line")
-expect((lookingRight.left.midX + lookingRight.right.midX) / 2 > barLine.midX + 10, "The eyes must look toward the pointer")
-expect(barBounds.contains(lookingRight.left) && barBounds.contains(lookingRight.right), "The eyes must stay inside the island")
+expect((lookingRight.left.midX + lookingRight.right.midX) / 2 > barLine.midX + 5, "The eyes must look toward the pointer")
 for _ in 0..<60 { bar.step(1.0 / 60, pointer: -1) }
 let lookingLeft = bar.bars(line: barLine, room: 51.5)
-expect((lookingLeft.left.midX + lookingLeft.right.midX) / 2 < barLine.midX - 10, "The eyes must follow the pointer across")
-var blinked = false, shortest = CGFloat.infinity
-for _ in 0..<Int(SignalBar.eyesTime * 60) {
-    if bar.isEyes { shortest = min(shortest, bar.bars(line: barLine, room: 51.5).left.height); if bar.blink > 0.9 { blinked = true } }
-    bar.step(1.0 / 60, pointer: 0)
-}
-expect(blinked && shortest < barLine.height, "The eyes must blink")
-for _ in 0..<60 { bar.step(1.0 / 60, pointer: 0) }
-expect(!bar.isEyes, "The eyes must flow back into one line")
+expect((lookingLeft.left.midX + lookingLeft.right.midX) / 2 < barLine.midX - 5, "The eyes must follow the pointer across")
+var flowedBack = false
+for _ in 0..<Int((SignalBar.firstRound + 1) * 60) { bar.step(1.0 / 60, pointer: 0); if !bar.isEyes { flowedBack = true } }
+expect(flowedBack, "The eyes must flow back into one line")
 
-// The liquid grabs a little like something heavy and viscous, and doesn't follow the pointer exactly.
-func run(_ sim: inout LiquidSim, _ seconds: CGFloat, pointer: CGPoint?, each: (LiquidSim) -> Void = { _ in }) {
-    for _ in 0..<Int(seconds * 60) {
-        sim.step(1.0 / 60, outline: island, pointer: pointer)
-        for node in sim.nodes { expect(node.x.isFinite && node.y.isFinite, "Liquid must stay finite") }
-        each(sim)
-    }
-}
-var liquid = LiquidSim()
-expect(liquid.isSettled, "New liquid must be at rest")
-let below = CGPoint(x: 236, y: 165)
-liquid.attach(at: island.point(at: island.nearest(to: below)))
-run(&liquid, 0.05, pointer: below)
-expect(liquid.length < LiquidSim.maxReach - 5, "Liquid must lag behind the pointer at first")
-var longest: CGFloat = 0
-run(&liquid, 2, pointer: below) { longest = max(longest, $0.length) }
-expect(liquid.length > 12 && longest > liquid.length + 0.5, "Liquid must reach toward the pointer, overshoot and settle")
-expect(longest < LiquidSim.maxReach + 8, "The grab must stay small")
-expect(liquid.distance(to: liquid.head) < 0, "The rounded end must be inside the liquid")
-expect(liquid.distance(to: CGPoint(x: 600, y: 600)) > 0, "Far away must be outside the liquid")
-
-// However far the pointer goes, the reach stays short.
-var far = LiquidSim()
-let distant = CGPoint(x: 236, y: 60)
-far.attach(at: island.point(at: island.nearest(to: distant)))
-var farthest: CGFloat = 0
-run(&far, 2, pointer: distant) { farthest = max(farthest, island.distance(to: $0.head)) }
-expect(farthest < LiquidSim.maxReach + 8, "The reach must stay short however far the pointer goes")
-
-// It thins as it stretches.
-var short = LiquidSim()
-let close = CGPoint(x: 236, y: 172)
-short.attach(at: island.point(at: island.nearest(to: close)))
-run(&short, 2, pointer: close)
-expect(short.neckRadius > far.neckRadius + 1, "A longer pull must have a thinner neck")
-
-// Gravity makes a sideways pull sag.
-var sideways = LiquidSim()
-let beside = CGPoint(x: 460, y: 225)
-sideways.attach(at: island.point(at: island.nearest(to: beside)))
-run(&sideways, 2, pointer: beside)
-expect(sideways.nodes[3].y < (sideways.nodes[0].y + sideways.head.y) / 2, "A sideways pull must sag under gravity")
-
-// Letting go, it flows back quickly in one piece, with nothing left behind.
-var settledAt: CGFloat?, elapsed: CGFloat = 0
-run(&liquid, 2, pointer: nil) {
-    elapsed += 1.0 / 60
-    if $0.isSettled && settledAt == nil { settledAt = elapsed }
-    expect($0.distance(to: CGPoint(x: 236, y: 100)) > 0, "Nothing may detach from the island")
-}
-expect(settledAt != nil && settledAt! < 1.5 && liquid.isSettled, "Letting go must flow back and come to rest")
-expect(liquid.render(island: island.rect, cornerRadius: 18, scale: 2, clip: CGRect(x: 0, y: 0, width: 800, height: 800)) == nil, "Settled liquid must draw nothing")
-
-// It's drawn pure black with a green edge, with no color or texture inside.
-var drawn = LiquidSim()
-drawn.attach(at: island.point(at: island.nearest(to: below)))
-run(&drawn, 2, pointer: below)
-let clip = CGRect(x: 0, y: 0, width: 800, height: 800)
-let picture = drawn.render(island: island.rect, cornerRadius: 18, scale: 2, clip: clip)!
-expect(picture.frame.contains(drawn.head) && clip.contains(picture.frame), "The picture must cover the liquid inside the panel")
-let bitmap = NSBitmapImageRep(cgImage: picture.image)
-func pixel(_ point: CGPoint) -> (r: CGFloat, g: CGFloat, b: CGFloat, a: CGFloat) {
-    let color = bitmap.colorAt(x: Int((point.x - picture.frame.minX) * 2), y: Int((picture.frame.maxY - point.y) * 2))!
-    return (color.redComponent, color.greenComponent, color.blueComponent, color.alphaComponent)
-}
-for point in [drawn.nodes[3], drawn.head, CGPoint(x: drawn.nodes[1].x, y: drawn.nodes[1].y - 1)] {
-    let inside = pixel(point)
-    expect(inside.a > 0.99 && max(inside.r, inside.g, inside.b) < 0.004, "The inside of the liquid must be pure black")
-}
-var edge = drawn.head
-while drawn.distance(to: edge) < 1.5 { edge.y -= 0.5 }
-let outside = pixel(edge)
-expect(outside.a < 0.9 && outside.g > outside.r && outside.g > 0.05, "Just outside the liquid must be a green edge, not black")
 print("Native island layout checks passed (notched, shifted, external, and missing bounds).")
 
 // Opening/closing shares the final top edge, and every composer control stays visible.
@@ -316,6 +232,7 @@ let restored = DrawingPreferences(models: models, defaults: preferences)
 expect(restored.request(for: "gpt")["model"] == "gpt-6.1-sol" && restored.request(for: "gpt")["reasoningEffort"] == "high", "Model and effort must survive a relaunch")
 restored.select(model: "gpt-6.1-terra", provider: "gpt")
 expect(restored.effort(for: "gpt") == "low", "Each model keeps its own effort")
+expect(restored.caption(for: "gpt").hasSuffix(" · Low"), "The caption must name the level without the word effort")
 print("Drawing model and effort preferences passed.")
 
 // Selection counts describe words rather than whitespace runs or punctuation.
@@ -400,6 +317,16 @@ for frame in ComposerGeometry.optionFrames + [ComposerGeometry.input, ComposerGe
 }
 print("Screenshot notice geometry passed.")
 
+// The dismiss control floats just below the island, centered on the camera when there is one.
+let dismissUnder = DismissGeometry.frame(under: NSRect(x: 762, y: 1073, width: 209, height: 34), centeredOn: 855)
+expect(dismissUnder.midX == 855, "The X must center on the camera, not the off-center resting island")
+expect(dismissUnder.maxY == 1073 - DismissGeometry.gap, "The X must sit right under the island")
+expect(dismissUnder.width == DismissGeometry.size && dismissUnder.height == DismissGeometry.size, "The X must stay round")
+let dismissComposer = DismissGeometry.frame(under: NSRect(x: 615, y: 840, width: 480, height: 233), centeredOn: 855)
+expect(dismissComposer.maxY < 840 && dismissComposer.midX == 855, "With the composer open, the X must sit under it")
+let dismissFloating = DismissGeometry.frame(under: NSRect(x: 100, y: 500, width: 30, height: 22), centeredOn: nil)
+expect(dismissFloating.midX == 115 && dismissFloating.maxY < 500, "Without a camera, the X must center on the pill")
+
 let shortReplySize = ReplyCardLayout.size(text: "A short reply.", available: NSSize(width: 1440, height: 900))
 let longReplySize = ReplyCardLayout.size(text: String(repeating: "A full paragraph remains readable. ", count: 200), available: NSSize(width: 1440, height: 900))
 assert(shortReplySize.width >= 240 && shortReplySize.width <= 640 && shortReplySize.height >= 64)
@@ -440,3 +367,58 @@ let scopedRestore = ChatPreferences(models: chatModels, defaults: preferences)
 expect(scopedRestore.isAuto && !scopedRestore.isGlobalAuto && scopedRestore.autoScope == "claude", "Provider scope persists across launches")
 expect(choices.request(for: "gpt") == drawBefore, "Provider Auto must leave Draw unchanged")
 print("Global and provider Auto scopes, manual persistence and Draw isolation passed.")
+
+let attentionBounds = NSRect(origin: .zero, size: ComposerGeometry.size)
+expect(ComposerAttention.pointer(NSPoint(x: 40, y: 170), in: attentionBounds) != nil, "Pointer tracking includes the whole bowl, not just the signal strip")
+expect(ComposerAttention.pointer(NSPoint(x: 10, y: 10), in: attentionBounds) == nil, "Points outside the curved shell do not attract the signal")
+expect(ComposerAttention.pointer(NSPoint(x: -30, y: 170), in: attentionBounds) == nil, "Outside-screen motion is ignored")
+var follows = ComposerAttention()
+for _ in 0..<90 { follows.step(1.0 / 30, pointer: NSPoint(x: -1, y: 0.6)) }
+expect(follows.horizontal < -0.9 && follows.vertical > 0.5, "Follow reacts to horizontal and vertical pointer movement")
+for _ in 0..<90 { follows.step(1.0 / 30, pointer: NSPoint(x: 1, y: -0.6)) }
+expect(follows.horizontal > 0.9 && follows.vertical < -0.5, "Follow changes direction with the pointer")
+for mode in ["wander", "drift_left", "drift_right"] {
+    var a = ComposerAttention(), b = ComposerAttention(); a.mode = mode; b.mode = mode
+    var minX: CGFloat = 10, maxX: CGFloat = -10
+    var bodies = ["line", "eyes", "wave"].map { pattern -> SignalBar in var bar = SignalBar(); bar.pattern = pattern; return bar }
+    for _ in 0..<900 {
+        a.step(1.0 / 30, pointer: NSPoint(x: -1, y: -1)); b.step(1.0 / 30, pointer: NSPoint(x: 1, y: 1))
+        expect(abs(a.horizontal - b.horizontal) < 0.00001 && abs(a.vertical - b.vertical) < 0.00001, "Independent behavior must ignore the actual mouse")
+        minX = min(minX, a.horizontal); maxX = max(maxX, a.horizontal)
+        for index in bodies.indices {
+            bodies[index].step(1.0 / 30, pointer: a.horizontal, swayScale: 0.4)
+            let line = CGRect(x: 45 + a.horizontal * 10, y: 3.75 + a.vertical * 0.7, width: 130, height: 2.5)
+            let pair = bodies[index].bars(line: line, room: 24)
+            expect(NSRect(x: 0, y: 0, width: 220, height: 10).contains(pair.left) && NSRect(x: 0, y: 0, width: 220, height: 10).contains(pair.right), "Independent motion stays within its strip")
+        }
+    }
+    expect(maxX - minX > 1, "Independent motion must travel without pointer input")
+}
+var transitions = ComposerAttention()
+for _ in 0..<90 { transitions.step(1.0 / 30, pointer: NSPoint(x: 1, y: 0)) }
+let beforeSwitch = transitions.horizontal
+transitions.mode = "wander"; transitions.step(1.0 / 30, pointer: NSPoint(x: -1, y: 0))
+expect(abs(transitions.horizontal - beforeSwitch) < 0.1, "Changing attention mode must not snap the signal")
+transitions.mode = "follow"; transitions.step(1.0 / 30, pointer: nil)
+expect(!transitions.following, "Follow mode wanders when the mouse leaves")
+print("Composer mouse attention, autonomous motion, bounds and smooth switching passed.")
+for screen in [NSRect(x: 0, y: 0, width: 1710, height: 1107), NSRect(x: -1920, y: 200, width: 1920, height: 1080), NSRect(x: 0, y: 1107, width: 1280, height: 720)] {
+    for point in [screen.origin, NSPoint(x: screen.maxX - 1, y: screen.maxY - 1), NSPoint(x: screen.midX, y: screen.midY)] {
+        let region = PointerFocus.region(point: point, screen: screen)
+        expect(screen.contains(region), "Pointer crop must stay on the pointed display")
+        expect(region.width <= 760 && region.height <= 520 && region.contains(point), "Share only a bounded focus region")
+        let normalized = PointerFocus.normalized(point, in: region)
+        expect(normalized.allSatisfy { $0 >= 0 && $0 <= 1 }, "Pointer coordinates must fit the cropped image")
+        let capture = PointerFocus.captureRect(region, desktopTop: 1107)
+        expect(capture.maxY == 1107 - region.minY, "Cocoa capture coordinates must invert around primary display top")
+    }
+}
+let pointerRegion = NSRect(x: 0, y: 0, width: 120, height: 100)
+let pointerFixture = NSImage(size: pointerRegion.size, flipped: false) { rect in NSColor.white.setFill(); rect.fill(); return true }
+let marked = VoicePointerShare.annotated(pointerFixture, region: pointerRegion, samples: [PointerSample(point: NSPoint(x: 40, y: 40), time: 1), PointerSample(point: NSPoint(x: 60, y: 60), time: 2)], now: 2)!
+let markedBytes = Data(base64Encoded: String(marked.split(separator: ",")[1]))!
+let markedBitmap = NSBitmapImageRep(data: markedBytes)!
+expect(markedBitmap.pixelsWide == 120 && markedBitmap.pixelsHigh == 100, "Annotation must preserve crop size")
+let red = markedBitmap.colorAt(x: 60, y: 35)!.usingColorSpace(.deviceRGB)!
+expect(red.redComponent > red.greenComponent + 0.2, "Shared screenshot must include the red pointer annotation")
+print("Pointer crop coordinates, display edges and visible annotation passed.")
