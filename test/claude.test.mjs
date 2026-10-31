@@ -158,3 +158,11 @@ test('a signed-out Claude gets its own sign-in message',async t=>{
   assert.equal(response.status,401);
   assert.match((await response.json()).error,/claude auth login/);
 });
+
+test('selected Claude model and reasoning effort reach CLI arguments',async()=>{
+  const fake=fakeClaude([success({structured_output:visual})]);
+  const out=await generateWithClaude(request({model:'claude-opus-5-5',reasoningEffort:'max'}),{spawnImpl:fake.spawn,env:{}});
+  assert.equal(fake.args[fake.args.indexOf('--model')+1],'claude-opus-5-5');
+  assert.equal(fake.args[fake.args.indexOf('--effort')+1],'max');
+  assert.equal(out.model,'claude-opus-5-5');assert.equal(out.reasoningEffort,'max');
+});

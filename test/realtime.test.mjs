@@ -75,10 +75,13 @@ test('ending while microphone permission is pending cannot start a late session'
  assert.equal(f.stopped(),1);assert.equal(f.voice.session,null);assert.equal(f.requests.some(r=>r.path.endsWith('/call')),false);
 });
 test('voice drawings follow the selected provider while the voice itself stays on Realtime',async()=>{
- const f=clientFixture();f.voice.setProvider('claude');await f.voice.start();const s=f.voice.session;
+ const f=clientFixture();f.voice.setProvider('claude');
+ f.voice.setDrawingSettings({provider:'claude',model:'claude-opus-5-5',reasoningEffort:'high'});
+ await f.voice.start();const s=f.voice.session;
  f.voice.handle(s,{type:'session.created'});
  await f.voice.draw(s,{name:'draw_visual',call_id:'one',arguments:JSON.stringify({prompt:'Draw water'})});
- assert.equal(JSON.parse(f.requests.find(r=>r.path==='/api/chat').opts.body).provider,'claude');
+ const drawing=JSON.parse(f.requests.find(r=>r.path==='/api/chat').opts.body);
+ assert.equal(drawing.provider,'claude');assert.equal(drawing.model,'claude-opus-5-5');assert.equal(drawing.reasoningEffort,'high');
  assert.ok(f.requests.some(r=>r.path==='/api/realtime/call'));
  f.voice.setProvider('anything else');assert.equal(f.voice.provider,'gpt');
  f.voice.stop();

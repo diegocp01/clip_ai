@@ -1,3 +1,4 @@
+import { drawingSettings } from './drawing-settings.mjs';
 import { execFile,spawn } from 'node:child_process';
 import { mkdtemp,rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -37,7 +38,8 @@ export function claudeMessage(request) {
   return {type:'user',message:{role:'user',content}};
 }
 export function generateWithClaude(request,options={}) {
-  return runClaudeStructured(claudeMessage(request),{...options,instructions:VISUAL_INSTRUCTIONS,schema:resultSchema,validate:assertResult,status:'Drawing with Claude Sonnet 5.5…',tier:request.tier??'fast'});
+  const {model,reasoningEffort,name}=drawingSettings({...request,provider:'claude'});
+  return runClaudeStructured(claudeMessage(request),{model,effort:reasoningEffort,...options,instructions:VISUAL_INSTRUCTIONS,schema:resultSchema,validate:assertResult,status:`Drawing with ${name}…`,tier:request.tier??'fast'});
 }
 export async function runClaudeStructured(message,{signal,onStatus=()=>{},onPreview,env=claudeEnvironment(),spawnImpl=spawn,model=CLAUDE_MODEL,effort=CLAUDE_EFFORT,instructions,schema,validate=x=>x,status,tier=null}={}) {
   const started=Date.now();

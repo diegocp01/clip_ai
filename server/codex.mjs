@@ -1,3 +1,4 @@
+import { drawingSettings } from './drawing-settings.mjs';
 import { Codex } from '@openai/codex-sdk';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -41,7 +42,8 @@ The user can rotate/zoom/select parts. Follow-up may refer to the previous visua
 
 export const VISUAL_INSTRUCTIONS = INSTRUCTIONS+'\nWhen a screenshot is supplied, you can point out actual visible UI with annotations: rect/circle bounds or arrow from (x,y) to (x+width,y+height), normalized 0..1 relative to the entire supplied screenshot, origin top-left. Use only visible targets, never guess hidden controls. Keep annotations empty without a screenshot. For teaching, explain one actionable next step.';
 export async function generate(request,options={}) {
-  return generateStructured(request,{transport:runVisualStream,...options,onText:previewEmitter(options.onPreview),instructions:VISUAL_INSTRUCTIONS,schema:resultSchema,validate:assertResult});
+  const {model,reasoningEffort,name}=drawingSettings({...request,provider:'gpt'});
+  return generateStructured(request,{model,reasoningEffort,status:`Drawing with ${name}…`,transport:runVisualStream,...options,onText:previewEmitter(options.onPreview),instructions:VISUAL_INSTRUCTIONS,schema:resultSchema,validate:assertResult});
 }
 export async function generateStructured(request,{signal,onStatus=()=>{},CodexClass=Codex,instructions,schema,validate=x=>x,webSearch=false,model=MODEL,reasoningEffort=REASONING_EFFORT,status='Drawing with GPT-6.1 Terra…',transport=null,onText=()=>{}}={}) {
   const started=Date.now();
