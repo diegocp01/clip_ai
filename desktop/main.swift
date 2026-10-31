@@ -72,6 +72,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var activityMark: ActivityMark!
     private var signalHost: NSView!
     private let statusLine = CALayer()
+    private let loadingLine = CAShapeLayer()
+    private var startupLoading = true
+    private var loadingFinishing = false
+    private var loadingStarted: CFTimeInterval = 0
     private let sensingLine = CAGradientLayer()
     private let sensingEye = CAGradientLayer()
     private var signalBar = SignalBar()
@@ -279,7 +283,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         statusLine.shadowOffset = .zero
         statusLine.shadowRadius = 4
         statusLine.shadowOpacity = 0.8
-        for layer in [sensingLine, sensingEye, statusLine] { signalHost.layer?.addSublayer(layer) }
+        loadingLine.fillColor = nil
+        loadingLine.strokeColor = NSColor.white.cgColor
+        loadingLine.lineWidth = 2.5
+        loadingLine.lineCap = .round
+        loadingLine.lineJoin = .round
+        loadingLine.shadowColor = NSColor.white.cgColor
+        loadingLine.shadowOffset = .zero
+        loadingLine.shadowRadius = 5
+        loadingLine.shadowOpacity = 0.9
+        loadingLine.opacity = 0
+        for layer in [sensingLine, sensingEye, statusLine, loadingLine] { signalHost.layer?.addSublayer(layer) }
         islandView.addSubview(signalHost, positioned: .below, relativeTo: statusLabel)
         buildGoo()
         let promptSurface = NSView(frame: ComposerGeometry.prompt)
@@ -658,7 +672,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var talking: Bool { voiceRequested || recording || currentStatus == "Speaking" }
     // Resting: a green line. Audio live: the waveform. Anything else to say: text and line.
     @discardableResult private func layoutIsland(updateFrame: Bool = true) -> IslandLayout {
-        let content: IslandContent = talking ? .audio : currentStatus == "Ready" ? .idle : .status(textWidth: ceil(statusLabel.cell?.cellSize.width ?? 52))
+        let content: IslandContent = startupLoading && !expanded ? .loading : talking ? .audio : currentStatus == "Ready" ? .idle : .status(textWidth: ceil(statusLabel.cell?.cellSize.width ?? 52))
         let awake = pointerOnIsland && content == .idle && !expanded
         let screen = island?.screen ?? NSScreen.main ?? NSScreen.screens[0]
         let makeLayout = { [expanded] (hovered: Bool) in
@@ -667,6 +681,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                          expanded: expanded, content: content, hovered: hovered)
         }
         let layout = makeLayout(awake)
+        updateLoadingLine(layout: content == .loading ? layout : nil)
         guard !composerTransitioning else { return layout }
         islandView.layer?.cornerRadius = layout.cornerRadius
         islandView.layer?.maskedCorners = layout.isNotched && !expanded
@@ -718,6 +733,97 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
         return layout
     }
+    private static let loadingCycle: CFTimeInterval = 1.7
+    /// When in each sweep the light's front reaches the end of the path.
+    private static let loadingArrival = 0.75
+    // A white light sweeps around the camera until the server has answered.
+    private func updateLoadingLine(layout: IslandLayout?) {
+        guard let layout else {
+            if !loadingFinishing {
+                loadingLine.removeAllAnimations()
+                loadingLine.opacity = 0
+            }
+            return
+        }
+        let points = layout.loadingPath, path = CGMutablePath()
+        path.move(to: points[0])
+        if points.count > 2 {
+            for i in 1..<points.count - 1 { path.addArc(tangent1End: points[i], tangent2End: points[i + 1], radius: 8) }
+        }
+        path.addLine(to: points[points.count - 1])
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        loadingLine.frame = layout.bounds
+        loadingLine.path = path
+        loadingLine.opacity = 1
+        CATransaction.commit()
+        guard !loadingFinishing, loadingLine.animation(forKey: "sweep") == nil else { return }
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
+        func keyframes(_ keyPath: String, _ values: [CGFloat]) -> CAKeyframeAnimation {
+            let animation = CAKeyframeAnimation(keyPath: keyPath)
+            animation.values = values
+            animation.keyTimes = [0, NSNumber(value: AppDelegate.loadingArrival), 1]
+            animation.calculationMode = .linear
+            return animation
+        }
+        let sweep = CAAnimationGroup()
+        sweep.animations = [keyframes("strokeEnd", [0, 1, 1]), keyframes("strokeStart", [0, 0.72, 1])]
+        sweep.duration = AppDelegate.loadingCycle
+        sweep.repeatCount = .infinity
+        sweep.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        loadingStarted = CACurrentMediaTime()
+        loadingLine.add(sweep, forKey: "sweep")
+    }
+    // Waits for the light to reach the right side, so even an instant start shows one full sweep.
+    private func finishLoadingWhenConnected() {
+        guard startupLoading, !loadingFinishing, connectionProblem != "Starting…" else { return }
+        loadingFinishing = true
+        var delay: CFTimeInterval = 0
+        if !expanded, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion, loadingLine.animation(forKey: "sweep") != nil {
+            let arrival = AppDelegate.loadingCycle * AppDelegate.loadingArrival
+            let elapsed = (CACurrentMediaTime() - loadingStarted).truncatingRemainder(dividingBy: AppDelegate.loadingCycle)
+            delay = elapsed <= arrival ? arrival - elapsed : AppDelegate.loadingCycle - elapsed + arrival
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in self?.settleLoadingLine() }
+    }
+    // The light gathers into the resting line's spot, then becomes that line and takes its color.
+    private func settleLoadingLine() {
+        let screen = island.screen ?? NSScreen.main ?? NSScreen.screens[0]
+        let layout = IslandLayout(screen: screen.frame, safeTop: screen.safeAreaInsets.top,
+                                  leftArea: screen.auxiliaryTopLeftArea, rightArea: screen.auxiliaryTopRightArea,
+                                  expanded: false, content: .loading)
+        let tail = loadingLine.presentation()?.strokeStart ?? 0
+        loadingLine.removeAllAnimations()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        loadingLine.strokeStart = tail
+        loadingLine.strokeEnd = 1
+        CATransaction.commit()
+        CATransaction.begin()
+        CATransaction.setAnimationDuration(0.22)
+        CATransaction.setCompletionBlock { [weak self] in
+            guard let self else { return }
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            self.loadingLine.opacity = 0
+            self.statusLine.frame = layout.lineFrame
+            self.statusLine.cornerRadius = 1.5
+            self.statusLine.opacity = 1
+            CATransaction.commit()
+            for keyPath in ["backgroundColor", "shadowColor"] {
+                let color = CABasicAnimation(keyPath: keyPath)
+                color.fromValue = NSColor.white.cgColor
+                color.duration = 0.7
+                color.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                self.statusLine.add(color, forKey: "arrive-\(keyPath)")
+            }
+            self.startupLoading = false
+            self.loadingFinishing = false
+            self.layoutIsland()
+        }
+        loadingLine.strokeStart = 1 - layout.loadingLineFraction
+        CATransaction.commit()
+    }
     // The resting line, breathing while idle. The spring takes over from here while awake.
     private func updateSignal(content: IslandContent, layout: IslandLayout) {
         let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
@@ -725,11 +831,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         CATransaction.setDisableActions(reduceMotion)
         CATransaction.setAnimationDuration(expanded ? 0.18 : 0.26)
         CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(controlPoints: 0.2, 0.8, 0.2, 1))
-        signalHost.frame = layout.bounds
+        // It autoresizes with the window, so match the size now rather than the target,
+        // or the coming resize is applied twice and clips the line.
+        signalHost.frame = islandView.bounds
         signalHost.layer?.cornerRadius = layout.cornerRadius
         statusLine.frame = layout.lineFrame
         statusLine.cornerRadius = min(layout.lineFrame.width, layout.lineFrame.height) / 2
-        statusLine.opacity = content == .audio ? 0 : 1
+        statusLine.opacity = content == .audio || content == .loading ? 0 : 1
         sensingLine.opacity = 0
         sensingEye.opacity = 0
         CATransaction.commit()
@@ -857,6 +965,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let resting = connectionProblem ?? "Ready"
         connectionProblem = problem
         if currentStatus == resting { setStatus("Ready") }
+        finishLoadingWhenConnected()
     }
     private func showError(_ text: String) {
         setStatus(text)
