@@ -8,11 +8,12 @@ enum ComposerGeometry {
     static let input = NSRect(x: 106, y: 135, width: 226, height: 22)
     static let send = NSRect(x: 342, y: 128, width: 36, height: 36)
     static let collapse = NSRect(x: 420, y: 194, width: 28, height: 28)
-    static let screen = NSRect(x: 52, y: 80, width: 36, height: 36)
-    static let talk = NSRect(x: 124, y: 30, width: 36, height: 36)
-    static let voice = NSRect(x: 222, y: 12, width: 36, height: 36)
-    static let tier = NSRect(x: 320, y: 30, width: 36, height: 36)
-    static let more = NSRect(x: 392, y: 80, width: 36, height: 36)
+    static let screen = NSRect(x: 52, y: 88, width: 36, height: 36)
+    static let talk = NSRect(x: 110, y: 40, width: 36, height: 36)
+    static let voice = NSRect(x: 182, y: 16, width: 36, height: 36)
+    static let tier = NSRect(x: 334, y: 40, width: 36, height: 36)
+    static let provider = NSRect(x: 262, y: 16, width: 36, height: 36)
+    static let more = NSRect(x: 392, y: 88, width: 36, height: 36)
 
     /// A shallow bowl with flat shoulders at the camera edge. Coordinates scale
     /// with the window during the existing compact-to-expanded morph.

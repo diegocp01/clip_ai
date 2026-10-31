@@ -63,8 +63,8 @@ struct SignalBar {
 
 /// Holds on to the pointer after it leaves the island, until it goes too far, takes too long or clicks elsewhere.
 struct GooTether {
-    static let reach: CGFloat = 110
-    static let patience: CGFloat = 2.2
+    static let reach: CGFloat = 46
+    static let patience: CGFloat = 1
     var attached = false
     private var elapsed: CGFloat = 0
     /// Returns true on the update where the tether separates.

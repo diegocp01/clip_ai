@@ -3,8 +3,10 @@
 Independent implementation, no HeyClicky code or assets copied into the app.
 
 GET /api/status returns {model, authenticated, auth: "ChatGPT", tiers: ["standard","fast"], note}. Tiers are request choices, not proof of account eligibility.
+GET /api/status?provider=claude returns the same shape for the Claude CLI: {provider, model, reasoningEffort, authenticated, auth: "Claude", note}. Without the query it describes GPT.
 GET /api/session returns {token}; send X-Clippy-Session header on POST /api/chat.
 POST /api/chat JSON: {message: string, tier: "standard" | "fast", history: [{role: "user" | "assistant", content: string}], previous: visual-result | null, image: PNG/JPEG data URL | null}. Max 8 MB body. Model always gpt-6.1-terra. Defaults fast, with low reasoning. No API key.
+POST /api/chat also accepts provider: "gpt" | "claude", defaulting to "gpt". GPT uses the Codex SDK and ChatGPT login. Claude uses the signed-in Claude CLI with no tools, MCP servers, settings, hooks, skills or saved sessions, and with API keys kept out of its environment. Results include provider. There is no fallback between providers, and tier does not apply to Claude. /api/edit and live voice stay on GPT.
 Response application/x-ndjson stream: {type:"status",message}, {type:"preview",result}, {type:"result",result,usage,elapsedMs,model,reasoningEffort,requestedTier}, {type:"error",message}. Browser AbortController cancels server/model. Errors are shown, no silent tier/model fallback.
 
 visual-result is {title, reply, cards: [{title, body}], diagram: {nodes: [{id,label,x,y,color}], links: [{from,to,label}]}, scene: {objects:[{id,label,description,shape,color,position:[x,y,z],scale:[x,y,z],rotation:[x,y,z]}]}}.

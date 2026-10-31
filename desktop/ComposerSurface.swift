@@ -34,7 +34,6 @@ final class ComposerSurface: NSView {
         super.init(frame: .zero)
         wantsLayer = true
         oil.backgroundColor = NSColor.black.cgColor
-        oil.contentsGravity = .resize
         oil.masksToBounds = true
         clearing.startPoint = CGPoint(x: 0.5, y: 0)
         clearing.endPoint = CGPoint(x: 0.5, y: 1)
@@ -45,11 +44,10 @@ final class ComposerSurface: NSView {
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    /// Reuse the notch's petroleum shader, then clear it from bottom to top.
+    /// Start from the notch's pure black, then clear it from bottom to top.
     /// The native refractive material underneath stays mounted in both directions.
-    func beginMorph(area: NSRect, time: CGFloat) {
+    func beginMorph() {
         showComposer(true)
-        oil.contents = Petroleum.image(area: area, hole: nil, time: time)
         layer?.addSublayer(oil)
     }
 
