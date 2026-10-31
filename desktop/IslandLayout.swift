@@ -6,6 +6,7 @@ enum ComposerGeometry {
     static let cornerRadius: CGFloat = 28
     static let modelCaption = NSRect(x: 110, y: 176, width: 260, height: 14)
     static let prompt = NSRect(x: 90, y: 112, width: 300, height: 56)
+    static let selectionIndicator = NSRect(x: 106, y: 112, width: 226, height: 16)
     static let input = NSRect(x: 106, y: 134, width: 226, height: 22)
     static let send = NSRect(x: 342, y: 127, width: 36, height: 36)
     static let screen = NSRect(x: 36, y: 116, width: 36, height: 36)

@@ -317,3 +317,17 @@ expect(restored.request(for: "gpt")["model"] == "gpt-6.1-sol" && restored.reques
 restored.select(model: "gpt-6.1-terra", provider: "gpt")
 expect(restored.effort(for: "gpt") == "low", "Each model keeps its own effort")
 print("Drawing model and effort preferences passed.")
+
+// Selection counts describe words rather than whitespace runs or punctuation.
+expect(SelectionSummary.wordCount("Hello, world!\nOne more word.") == 5, "Count words across lines and punctuation")
+expect(SelectionSummary.wordCount("   \n!!! 🙂") == 0, "Whitespace, punctuation and emoji are not words")
+expect(SelectionSummary.wordCount("café déjà vu") == 3, "Count accented words")
+expect(SelectionSummary.label(for: 1) == "1 word | selected text", "Use singular for one word")
+expect(SelectionSummary.label(for: 12) == "12 words | selected text", "Use requested badge wording")
+expect(SelectionSummary.label(for: 0) == nil, "Hide the empty selection badge")
+expect(composerBounds.contains(ComposerGeometry.selectionIndicator), "Selection badge stays inside composer")
+expect(!ComposerGeometry.selectionIndicator.intersects(ComposerGeometry.input), "Selection badge must not cover input")
+for frame in ComposerGeometry.optionFrames + [ComposerGeometry.send] {
+    expect(!ComposerGeometry.selectionIndicator.intersects(frame), "Selection badge must not overlap controls")
+}
+print("Selected-text word counting and badge geometry passed.")

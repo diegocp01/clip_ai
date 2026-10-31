@@ -98,6 +98,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var outsideClickMonitor: Any?
     private var menuTrackingDepth = 0
     private var prompt: NSTextField!
+    private var selectionIndicator: NSTextField!
+    private var selectionReadGeneration = 0
+    private let selectionReadQueue = DispatchQueue(label: "clippy.selection-summary", qos: .userInitiated)
     private var expandedControls = [NSView]()
     private var sendButton: NSButton!
     private var micButton: NSButton!
@@ -306,6 +309,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         prompt.action = #selector(sendPrompt)
         islandView.addSubview(prompt)
         expandedControls.append(prompt)
+        selectionIndicator = NSTextField(labelWithString: "")
+        selectionIndicator.frame = ComposerGeometry.selectionIndicator
+        selectionIndicator.font = .systemFont(ofSize: 10, weight: .light)
+        selectionIndicator.textColor = NSColor.white.withAlphaComponent(0.55)
+        selectionIndicator.lineBreakMode = .byTruncatingTail
+        selectionIndicator.isHidden = true
+        selectionIndicator.toolTip = "Selection detected in another app. This indicator does not attach or send its text."
+        islandView.addSubview(selectionIndicator)
         collapseButton = button("Collapse island", frame: ComposerGeometry.collapse, action: #selector(collapseIsland), symbol: "chevron.up", iconOnly: true)
         collapseButton.toolTip = "Make smaller · Esc or ⌃⌥Space"
         modelCaption = NSButton(title: "", target: self, action: #selector(showModelSettings))
@@ -615,6 +626,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private func setExpanded(_ value: Bool, focus: Bool = false, animated: Bool = true) {
         let changed = expanded != value
         if !changed && composerTransitioning && animated { return }
+        if changed {
+            selectionReadGeneration += 1
+            selectionIndicator.isHidden = true
+            selectionIndicator.stringValue = ""
+            if value { refreshSelectionIndicator() }
+        }
         let sourceFrame = island.frame
         let sourceRadius = composerTransitioning ? composerSurface.currentRadius : (islandView.layer?.cornerRadius ?? 10)
         let sourceReveal = composerReveal
@@ -675,6 +692,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         composerTimer = timer
         RunLoop.main.add(timer, forMode: .common)
     }
+    private func refreshSelectionIndicator() {
+        guard let source = NSWorkspace.shared.frontmostApplication,
+              source.processIdentifier != ProcessInfo.processInfo.processIdentifier else { return }
+        let pid = source.processIdentifier
+        let generation = selectionReadGeneration
+        // The request begins before the composer takes keyboard focus.
+        selectionReadQueue.async { [weak self] in
+            let count = SelectionSummary.readWordCount(pid: pid)
+            DispatchQueue.main.async {
+                guard let self, self.expanded, self.selectionReadGeneration == generation,
+                      let count, let label = SelectionSummary.label(for: count) else { return }
+                let foreground = NSWorkspace.shared.frontmostApplication?.processIdentifier
+                guard foreground == pid || foreground == ProcessInfo.processInfo.processIdentifier else { return }
+                let text = NSMutableAttributedString()
+                if let image = NSImage(systemSymbolName: "text.badge.checkmark", accessibilityDescription: nil) {
+                    let attachment = NSTextAttachment()
+                    attachment.image = image.withSymbolConfiguration(NSImage.SymbolConfiguration(paletteColors: [NSColor.white.withAlphaComponent(0.55)]))
+                    attachment.bounds = NSRect(x: 0, y: -2, width: 12, height: 12)
+                    text.append(NSAttributedString(attachment: attachment))
+                    text.append(NSAttributedString(string: "  "))
+                }
+                text.append(NSAttributedString(string: label, attributes: [
+                    .font: NSFont.systemFont(ofSize: 10, weight: .light),
+                    .foregroundColor: NSColor.white.withAlphaComponent(0.55)]))
+                self.selectionIndicator.attributedStringValue = text
+                self.selectionIndicator.setAccessibilityLabel(label)
+                self.selectionIndicator.isHidden = false
+            }
+        }
+    }
+
     private func updateNotchBridge(_ layout: IslandLayout) {
         if let bridge = layout.notchBridge {
             notchBridge.setFrame(bridge, display: true)
