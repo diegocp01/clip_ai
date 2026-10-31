@@ -28,12 +28,12 @@ for origin in [NSPoint.zero, NSPoint(x: -1710, y: 250)] {
             expect(layout.frame.minX == left.maxX, "Resting island must not extend left of the camera")
             expect(right.contains(onScreen(layout.wakeArea, layout)), "Only the line's side may wake the island")
             let hovered = IslandLayout(screen: screen, safeTop: 33.5, leftArea: left, rightArea: right, expanded: false, content: .idle, hovered: true)
-            expect(hovered.frame.width == 185 + 88 && hovered.frame.midX == screen.midX, "Hover must grow the island evenly on both sides")
+            expect(hovered.frame.width == 185 + 48 && hovered.frame.midX == screen.midX, "Hover must grow only slightly and evenly past the camera, leaving no empty blocks")
             expect(onScreen(hovered.wakeArea, hovered) == hovered.frame, "The whole awake island must keep it awake")
             expect(hovered.frame.maxY == screen.maxY && hovered.frame.minY < left.minY, "Awake island must stay on the screen edge and hang below the camera")
             let sensing = onScreen(hovered.lineFrame, hovered)
             expect(sensing.maxY <= left.minY && hovered.frame.contains(sensing), "Awake line must sit below the camera, where there are pixels")
-            expect(sensing.width > hovered.frame.width / 2 && sensing.midX == hovered.frame.midX, "Awake line must span the island evenly")
+            expect(sensing.midX == screen.midX && sensing.width < hovered.frame.width, "Awake line must be centered under the camera, inside the island")
             expect(layout.lineFrame.height > layout.lineFrame.width, "Resting line must be vertical")
             expect(right.contains(onScreen(layout.lineFrame, layout)) && layout.frame.contains(onScreen(layout.lineFrame, layout)), "Resting line must be visible entirely right of the physical camera")
             let audio = IslandLayout(screen: screen, safeTop: 33.5, leftArea: left, rightArea: right, expanded: false, content: .audio)
@@ -67,6 +67,54 @@ expect(hoveredPill.lineFrame.width > hoveredPill.lineFrame.height, "Floating pil
 expect(audioPill.frame.width == 40 && audioPill.bounds.contains(audioPill.activityFrame), "Floating pill must fit the waveform")
 let statusPill = IslandLayout(screen: external, safeTop: 0, leftArea: nil, rightArea: nil, expanded: false, content: .status(textWidth: 600))
 expect(statusPill.frame.width == 278 && statusPill.bounds.contains(statusPill.statusFrame), "Floating pill must cap and fit status text")
+// The spring settles exactly on its target, overshooting a little on the way.
+var spring = Spring(stiffness: 150, damping: 17)
+spring.target = 1
+var peak: CGFloat = 0
+for _ in 0..<240 { spring.step(1.0 / 60); peak = max(peak, spring.value) }
+expect(spring.value == 1 && spring.isSettled && peak > 1 && peak < 1.2, "Wake spring must settle on target after a small overshoot")
+
+// The tether holds while near, and separates when too far, too slow or clicked away.
+var tether = GooTether()
+expect(!tether.update(inside: false, distance: 5, pressed: false, dt: 0.1) && !tether.attached, "Passing near must not attach")
+expect(!tether.update(inside: true, distance: 0, pressed: false, dt: 0.1) && tether.attached, "Being inside must attach")
+expect(!tether.update(inside: false, distance: 60, pressed: false, dt: 0.1) && tether.attached, "Nearby pointer must stay attached")
+expect(tether.update(inside: false, distance: GooTether.reach + 1, pressed: false, dt: 0.1) && !tether.attached, "Too far must separate")
+expect(!tether.update(inside: false, distance: 0, pressed: false, dt: 0.1), "Separating must only report once")
+_ = tether.update(inside: true, distance: 0, pressed: false, dt: 0.1)
+var waited = 0
+while !tether.update(inside: false, distance: 10, pressed: false, dt: 0.1) { waited += 1; expect(waited < 100, "Tether must run out of patience") }
+expect(CGFloat(waited) * 0.1 <= GooTether.patience + 0.11, "Tether must separate after its patience")
+_ = tether.update(inside: true, distance: 0, pressed: false, dt: 0.1)
+expect(tether.update(inside: false, distance: 10, pressed: true, dt: 0.1), "Clicking elsewhere must separate")
+_ = tether.update(inside: true, distance: 0, pressed: false, dt: 0.1)
+expect(!tether.update(inside: true, distance: 0, pressed: true, dt: 0.1) && tether.attached, "Clicking the island must not separate")
+
+// The outline runs down the left, across the bottom and up the right.
+let island = IslandOutline(rect: CGRect(x: 100, y: 200, width: 273, height: 44))
+expect(island.point(at: 0) == CGPoint(x: 100, y: 244) && island.point(at: island.length) == CGPoint(x: 373, y: 244), "Outline must start and end on the top edge")
+for point in [CGPoint(x: 200, y: 150), CGPoint(x: 400, y: 220), CGPoint(x: 50, y: 220), CGPoint(x: 400, y: 150)] {
+    let nearest = island.point(at: island.nearest(to: point))
+    expect(abs(hypot(point.x - nearest.x, point.y - nearest.y) - island.distance(to: point)) < 0.001, "Nearest outline point must match the distance")
+}
+expect(island.point(at: island.nearest(to: CGPoint(x: 200, y: 150))) == CGPoint(x: 200, y: 200), "Point below must anchor on the bottom edge")
+
+// The blob reaches the tip and stays out of the way when there is nothing to draw.
+for tip in [CGPoint(x: 200, y: 150), CGPoint(x: 400, y: 220), CGPoint(x: 390, y: 170), CGPoint(x: 60, y: 210)] {
+    let box = GooShape.blob(outline: island, tip: tip)!.boundingBoxOfPath
+    expect(box.insetBy(dx: -1, dy: -1).contains(tip), "Blob must reach its tip")
+    expect(box.intersects(island.rect), "Blob must stay joined to the island")
+}
+// Clicks count on the blob and just around it, never on the island itself or further away.
+let tip = CGPoint(x: 200, y: 150)
+expect(GooShape.touches(outline: island, tip: tip, point: CGPoint(x: 200, y: 160)), "A point inside the blob must count")
+expect(GooShape.touches(outline: island, tip: tip, point: CGPoint(x: 200, y: 142)), "A point just past the tip must count")
+expect(!GooShape.touches(outline: island, tip: tip, point: CGPoint(x: 200, y: 100)), "A point far past the tip must not count")
+expect(!GooShape.touches(outline: island, tip: tip, point: CGPoint(x: 300, y: 160)), "A point beside the blob must not count")
+expect(!GooShape.touches(outline: island, tip: tip, point: CGPoint(x: 200, y: 220)), "The island handles its own clicks")
+expect(!GooShape.touches(outline: island, tip: CGPoint(x: 200, y: 220), point: CGPoint(x: 200, y: 180)), "No blob must mean no click")
+expect(GooShape.blob(outline: island, tip: CGPoint(x: 200, y: 220)) == nil, "A tip inside the island must draw nothing")
+expect(GooShape.blob(outline: island, tip: CGPoint(x: 200, y: 199.5)) == nil, "A tip on the edge must draw nothing")
 print("Native island layout checks passed (notched, shifted, external, and missing bounds).")
 
 // Opening/closing shares the final top edge, and every composer control stays visible.
