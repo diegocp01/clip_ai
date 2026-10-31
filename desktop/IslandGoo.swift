@@ -35,10 +35,13 @@ struct SignalBar {
     private var split = Spring(stiffness: 60, damping: 10)
     private var look = Spring(stiffness: 70, damping: 11)
     private var phase: CGFloat { time.truncatingRemainder(dividingBy: SignalBar.sweepTime + SignalBar.eyesTime) }
-    var isEyes: Bool { phase > SignalBar.sweepTime }
+    var pattern: String? = nil
+    var isEyes: Bool { pattern == "eyes" || (pattern == nil && phase > SignalBar.sweepTime) }
     /// Two quick closes while the eyes are open: 1 is shut.
     var blink: CGFloat {
-        let first = (phase - SignalBar.sweepTime - 1.3) / 0.07, second = (phase - SignalBar.sweepTime - 2.4) / 0.07
+        guard isEyes else { return 0 }
+        let eyePhase = pattern == "eyes" ? time.truncatingRemainder(dividingBy: 4.8) : phase - SignalBar.sweepTime
+        let first = (eyePhase - 1.3) / 0.07, second = (eyePhase - 2.4) / 0.07
         return min(exp(-first * first) + exp(-second * second), 1)
     }
     /// `pointer` runs from -1 at the island's left edge to 1 at its right.
