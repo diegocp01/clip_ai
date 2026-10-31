@@ -49,3 +49,7 @@ The frosted composer uses an active behind-window HUD material at full view opac
 On notched screens, a separate elliptical black gradient joins the camera's lower edge to the expanded glass shell. Its opaque center follows the detected notch width, fading sideways and downward into the unchanged frosted material within the upper 90 points. It is clipped to the shell, stays behind the controls, and disappears on screens without a notch. The native blur retains full opacity.
 
 The app is branded Clip and builds as `build/Clip.app`. Its bundle identifier remains `local.clippy.codex` so existing preferences and permission identity are retained. Internal `clippy` WebKit messages and session headers are compatibility interfaces, not displayed branding.
+
+### Visual explanations during Talk
+
+Ask “How do molecules work?” in Talk: the Realtime voice can call Draw without a separate drawing command, using the current Draw provider/model/effort. The existing desktop overlay receives the progressive visual and the voice explains it after the tool confirms it is shown. Ask for “voice only” to avoid a drawing. Greetings/simple facts stay verbal, drawing failures get a verbal fallback, and interrupted responses cannot start a stale drawing call. End stops microphone/audio and pending drawing work.
