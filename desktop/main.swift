@@ -1254,10 +1254,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     @objc private func providerChanged() {
         guard !busy, !selectionEditor.automaticRunning else { return }
         let menu = NSMenu(); menu.autoenablesItems = false
-        for (value, title) in [("gpt", "Codex"), ("claude", "Claude"), ("both", "Both")] {
+        for (value, title) in [("gpt", "Codex"), ("claude", "Claude"), ("auto", "Auto"), ("both", "Both")] {
             let item = NSMenuItem(title: title, action: #selector(selectChatProvider(_:)), keyEquivalent: "")
             item.target = self; item.representedObject = value
-            item.state = (compareBoth ? value == "both" : !chatSettings.isAuto && value == chatProvider.rawValue) ? .on : .off
+            item.state = (compareBoth ? value == "both" : chatSettings.isGlobalAuto ? value == "auto" : value == chatProvider.rawValue) ? .on : .off
             if value == "both" { item.toolTip = "Compare text answers and edits · optional screenshot · no Draw or voice" }
             menu.addItem(item)
         }
@@ -1265,10 +1265,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
     @objc private func selectChatProvider(_ item: NSMenuItem) {
         guard let value = item.representedObject as? String else { return }
-        compareBoth = value == "both"; chatSettings.isAuto = false
+        compareBoth = value == "both"; autoRouteCaption = nil
+        if value == "auto" { chatSettings.selectGlobalAuto() }
+        else if value == "both" { chatSettings.isAuto = false }
         UserDefaults.standard.set(compareBoth, forKey: "chatCompareBoth")
         if let selected = AIProvider(rawValue: value) {
-            chatProvider = selected; UserDefaults.standard.set(value, forKey: "chatProvider")
+            chatProvider = selected; chatSettings.selectProvider(value)
+            UserDefaults.standard.set(value, forKey: "chatProvider")
         }
         updateProviderControl(); pollServer()
     }
@@ -1307,11 +1310,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         return image
     }
     private func updateProviderControl() {
-        let name = compareBoth ? "Both" : chatSettings.isAuto ? "Auto" : chatProvider == .claude ? "Claude" : "Codex"
-        providerControl.image = compareBoth ? NSImage(systemSymbolName: "square.split.2x1", accessibilityDescription: "Both providers") : chatSettings.isAuto ? NSImage(systemSymbolName: "sparkles", accessibilityDescription: "Auto chat model")
+        let name = compareBoth ? "Both" : chatSettings.isGlobalAuto ? "Auto" : chatProvider == .claude ? "Claude" : "Codex"
+        providerControl.image = compareBoth ? NSImage(systemSymbolName: "square.split.2x1", accessibilityDescription: "Both providers") : chatSettings.isGlobalAuto ? NSImage(systemSymbolName: "sparkles", accessibilityDescription: "Auto chat model")
             : mascot(chatProvider == .claude ? "mascot-claude" : "mascot-gpt", description: name)
-        providerControl.setAccessibilityLabel("Chat provider: \(name). Choose Codex, Claude or Both")
-        providerControl.toolTip = "Chat: \(name) · choose Codex, Claude or Both"
+        providerControl.setAccessibilityLabel("Chat provider: \(name). Choose Codex, Claude, Auto or Both")
+        providerControl.toolTip = "Chat: \(name) · choose Codex, Claude, Auto or Both"
         updateDrawingSettings()
     }
     private func updateModelCaption() {
@@ -1366,8 +1369,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let heading = NSMenuItem(title: "Chat model", action: nil, keyEquivalent: "")
         heading.isEnabled = false; menu.addItem(heading)
         let auto = NSMenuItem(title: "Auto", action: #selector(selectAutoChat), keyEquivalent: "")
-        auto.target = self; auto.state = chatSettings.isAuto ? .on : .off
-        auto.toolTip = "Decisions chooses Astra, Terra, Opus or Sonnet and its supported reasoning effort for each chat prompt"
+        auto.target = self; auto.state = !compareBoth && chatSettings.isAuto ? .on : .off
+        auto.toolTip = compareBoth || chatSettings.isGlobalAuto ? "Decisions chooses across all four models and their supported efforts" : "Decisions chooses only \(chatProvider == .gpt ? "Codex" : "Claude") models and their supported efforts"
         menu.addItem(auto)
         if compareBoth {
             for p in ["gpt", "claude"] {
@@ -1376,7 +1379,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 addModelOptions(to: choices, chat: true, comparisonProvider: p)
                 item.submenu = choices; menu.addItem(item)
             }
-        } else { addModelOptions(to: menu, chat: true) }
+        } else if !chatSettings.isGlobalAuto {
+            addModelOptions(to: menu, chat: true, comparisonProvider: chatProvider.rawValue)
+        } else {
+            let effort = NSMenuItem(title: "Reasoning: Auto (Decisions)", action: nil, keyEquivalent: "")
+            effort.isEnabled = false; menu.addItem(effort)
+        }
         menu.addItem(.separator())
         let draw = NSMenuItem(title: "Draw settings", action: nil, keyEquivalent: "")
         let drawMenu = NSMenu(); drawMenu.autoenablesItems = false
@@ -1406,15 +1414,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
     }
     @objc private func selectAutoChat() {
+        if compareBoth || chatSettings.isGlobalAuto { chatSettings.selectGlobalAuto() }
+        else { chatSettings.setAuto(true, for: chatProvider.rawValue) }
         compareBoth = false; UserDefaults.standard.set(false, forKey: "chatCompareBoth")
-        chatSettings.isAuto = true; autoRouteCaption = nil
+        autoRouteCaption = nil
         updateProviderControl(); pollServer()
     }
     @objc private func selectChatModel(_ item: NSMenuItem) {
         guard let id = item.representedObject as? String,
               let model = chatSettings.manual.models.first(where: { $0.id == id }),
               let selected = AIProvider(rawValue: model.provider) else { return }
-        chatSettings.isAuto = false; chatProvider = selected
+        chatSettings.setAuto(false, for: model.provider); chatProvider = selected
+        autoRouteCaption = nil
         chatSettings.manual.select(model: id, provider: model.provider)
         UserDefaults.standard.set(model.provider, forKey: "chatProvider")
         updateProviderControl(); pollServer()
@@ -1448,7 +1459,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         // Each backend has its own sign-in, which decides whether the line can be green.
         pollServer()
     }
-    private var statusURL: URL { URL(string: "api/status?provider=\(compareBoth ? "both" : chatSettings.isAuto ? "auto" : chatProvider.rawValue)", relativeTo: baseURL)!.absoluteURL }
+    private var statusURL: URL { URL(string: "api/status?provider=\(compareBoth ? "both" : chatSettings.isGlobalAuto ? "auto" : chatProvider.rawValue)", relativeTo: baseURL)!.absoluteURL }
     private func checkServer(startIfNeeded: Bool, retries: Int = 12) {
         var request = URLRequest(url: statusURL)
         request.timeoutInterval = 8
@@ -1456,7 +1467,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             DispatchQueue.main.async {
                 guard let self else { return }
                 if let data, let value = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any], value["model"] != nil {
-                    self.setConnection(value["authenticated"] as? Bool == true ? nil : self.compareBoth ? "Sign in to Codex and Claude for Both" : self.chatSettings.isAuto ? "Sign in to Codex or Claude for Auto" : self.chatProvider.signInRequired)
+                    self.setConnection(value["authenticated"] as? Bool == true ? nil : self.compareBoth ? "Sign in to Codex and Claude for Both" : self.chatSettings.isGlobalAuto ? "Sign in to Codex or Claude for Auto" : self.chatProvider.signInRequired)
                     self.webView.load(URLRequest(url: baseURL.appendingPathComponent("overlay.html")))
                     self.startHealthMonitor()
                 } else if startIfNeeded && error != nil {
@@ -1486,7 +1497,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 guard let data, let value = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any], value["model"] != nil else {
                     self.setConnection(serverUnavailable); return
                 }
-                if value["authenticated"] as? Bool != true { self.setConnection(self.compareBoth ? "Sign in to Codex and Claude for Both" : self.chatSettings.isAuto ? "Sign in to Codex or Claude for Auto" : self.chatProvider.signInRequired) }
+                if value["authenticated"] as? Bool != true { self.setConnection(self.compareBoth ? "Sign in to Codex and Claude for Both" : self.chatSettings.isGlobalAuto ? "Sign in to Codex or Claude for Auto" : self.chatProvider.signInRequired) }
                 else { self.setConnection(self.overlayReady ? nil : drawingUnavailable) }
                 if !self.overlayReady { self.webView.load(URLRequest(url: baseURL.appendingPathComponent("overlay.html"))) }
             }
@@ -1563,7 +1574,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                     request.httpMethod = "POST"
                     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
                     request.setValue(token, forHTTPHeaderField: "X-Clippy-Session")
-                    var body: [String: Any] = ["drawing": automaticDrawing as Any? ?? NSNull(), "message": message, "mode": selectedSettings["mode"]!, "tier": "fast", "provider": selectedSettings["provider"]!, "model": selectedSettings["model"]!, "reasoningEffort": selectedSettings["reasoningEffort"]!, "history": Array(self.history.suffix(12)), "previous": self.previous as Any? ?? NSNull(), "image": image as Any? ?? NSNull()]
+                    var body: [String: Any] = ["autoScope": selectedSettings["autoScope"] as Any? ?? NSNull(), "drawing": automaticDrawing as Any? ?? NSNull(), "message": message, "mode": selectedSettings["mode"]!, "tier": "fast", "provider": selectedSettings["provider"]!, "model": selectedSettings["model"]!, "reasoningEffort": selectedSettings["reasoningEffort"]!, "history": Array(self.history.suffix(12)), "previous": self.previous as Any? ?? NSNull(), "image": image as Any? ?? NSNull()]
                     if comparing { body = ["task": "chat", "message": message, "image": image as Any? ?? NSNull(), "settings": comparisonSettings] }
                     guard let encoded = try? JSONSerialization.data(withJSONObject: body) else { self.finishRequest(); self.showError("Could not prepare the request."); return }
                     request.httpBody = encoded

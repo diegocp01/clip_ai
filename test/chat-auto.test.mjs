@@ -97,3 +97,46 @@ test('disconnect during routing aborts Decisions and never starts a model',async
   await response.body.getReader().read();controller.abort();
   await Promise.race([aborted,new Promise((_resolve,reject)=>{const timer=setTimeout(()=>reject(Error('routing did not abort')),1500);timer.unref();})]);
 });
+
+test('provider Auto exposes only its two eligible models and every supported effort',async()=>{
+ for(const provider of ['gpt','claude']){
+  const eligible=autoModels.filter(m=>m.provider===provider);
+  const chosen=eligible.at(-1),effort=chosen.efforts.at(-1);
+  const route=await chooseChatRoute({message:'Explain a difficult idea',provider,autoScope:provider},{getKey:async()=>'secret',fetchImpl:async(_url,opts)=>{
+   const choices=JSON.parse(opts.body).questions[0].choices;
+   assert.equal(choices.length,provider==='gpt'?12:10);
+   assert.deepEqual(choices.map(c=>c.value).sort(),eligible.flatMap(m=>m.efforts.map(e=>`${m.id}:${e}`)).sort());
+   return Response.json({answers:[{name:'chat_route',type:'choice',choice:`${chosen.id}:${effort}`}]});
+  }});
+  assert.equal(route.provider,provider);assert.equal(route.reasoningEffort,effort);
+ }
+});
+test('scoped Auto rejects a decision from the other provider',async()=>{
+ await assert.rejects(chooseChatRoute({message:'hi',autoScope:'gpt'},{getKey:async()=>'secret',fetchImpl:async()=>Response.json({answers:[{name:'chat_route',type:'choice',choice:'claude-opus-5-5:max'}]})}),/could not choose/);
+ assert.throws(()=>validateAutoRoute({provider:'gpt',model:'gpt-6-astra',reasoningEffort:'ultra'},'claude'),/unsupported/);
+});
+test('Auto scope validates at the request boundary and legacy Auto still covers all four',()=>{
+ assert.equal(normalizeRequest({message:'hi',mode:'chat',model:'auto'}).autoScope,'all');
+ assert.equal(normalizeRequest({message:'hi',mode:'chat',provider:'claude',model:'auto',autoScope:'claude'}).autoScope,'claude');
+ for(const request of [
+  {mode:'chat',model:'auto',autoScope:'claude',provider:'gpt'},
+  {mode:'chat',model:'auto',autoScope:'unknown'},
+  {mode:'chat',model:'gpt-6-astra',autoScope:'gpt'},
+  {mode:'draw',autoScope:'gpt'}
+ ])assert.throws(()=>normalizeRequest({message:'hi',...request}));
+});
+test('HTTP scoped Auto blocks cross-provider injected routes before any inference',async t=>{
+ let calls=0;
+ const send=await harness(t,{routeChat:async request=>{assert.equal(request.autoScope,'gpt');return{provider:'claude',model:'claude-opus-5-5',reasoningEffort:'max'};},run:()=>{calls++;},runClaude:()=>{calls++;}});
+ const {events}=await send({message:'hi',mode:'chat',provider:'gpt',model:'auto',autoScope:'gpt'});
+ assert.equal(events.at(-1).type,'error');assert.equal(calls,0);
+});
+test('scoped Auto survives presentation routing and never changes independent Draw settings',async t=>{
+ let presentation='chat',seen;
+ const send=await harness(t,{routePresentation:async()=>presentation,routeChat:async request=>{
+  assert.equal(request.autoScope,'claude');return{provider:'claude',model:'claude-sonnet-5-5',reasoningEffort:'max'};
+ },runClaude:async req=>{seen=req;return{result:{reply:'answer'}};},run:async req=>{seen=req;return{result:{reply:'drawing'}};}});
+ const request={message:'Explain this',mode:'auto',provider:'claude',model:'auto',autoScope:'claude',drawing:{provider:'gpt',model:'gpt-6.1-terra',reasoningEffort:'low'}};
+ assert.equal((await send(request)).events.at(-1).type,'result');assert.equal(seen.provider,'claude');assert.equal(seen.reasoningEffort,'max');
+ presentation='draw';await send(request);assert.equal(seen.provider,'gpt');assert.equal(seen.model,'gpt-6.1-terra');assert.equal(seen.reasoningEffort,'low');assert.equal(seen.autoScope,null);
+});
