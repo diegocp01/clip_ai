@@ -247,7 +247,7 @@ print("Native island layout checks passed (notched, shifted, external, and missi
 let composerBounds = NSRect(origin: .zero, size: ComposerGeometry.size)
 let controls = [ComposerGeometry.input, ComposerGeometry.send, ComposerGeometry.collapse,
                 ComposerGeometry.screen, ComposerGeometry.talk, ComposerGeometry.voice,
-                ComposerGeometry.tier, ComposerGeometry.more, ComposerGeometry.provider]
+                ComposerGeometry.draw, ComposerGeometry.more, ComposerGeometry.provider]
 for (i, control) in controls.enumerated() {
     expect(composerBounds.contains(control), "Composer control must fit inside the surface")
     let shell = ComposerGeometry.shellPath(in: composerBounds)
