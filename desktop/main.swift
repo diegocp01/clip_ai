@@ -41,11 +41,11 @@ final class ActivityMark: NSView {
         }
     }
     override func draw(_ dirtyRect: NSRect) {
-        coral.withAlphaComponent(0.12).setFill()
+        NSColor.white.withAlphaComponent(0.12).setFill()
         NSBezierPath(ovalIn: bounds.insetBy(dx: 1, dy: 0)).fill()
         for i in 0..<4 {
             let height: CGFloat = active ? 4 + abs(sin(phase + CGFloat(i) * 0.85)) * 10 : [5, 10, 13, 7][i]
-            coral.withAlphaComponent(active ? 1 : 0.8).setFill()
+            NSColor.white.withAlphaComponent(active ? 1 : 0.8).setFill()
             NSBezierPath(roundedRect: NSRect(x: 4 + CGFloat(i) * 4, y: (bounds.height - height) / 2, width: 2, height: height), xRadius: 1, yRadius: 1).fill()
         }
     }
@@ -64,19 +64,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var overlay: FloatingPanel!
     private var webView: WKWebView!
     private var captions: FloatingPanel!
-    private var captionText: NSTextField!
+    private var replyCard: ReplyCard!
+    private var captionDismissed = false
     private var statusItem: NSStatusItem!
     private var statusLabel: NSTextField!
     private var activityMark: ActivityMark!
     private var signalHost: NSView!
     private let statusLine = CALayer()
     private let loadingLine = CAShapeLayer()
+    private let loadingFinish = CAGradientLayer()
+    private let loadingGlow = CALayer()
     private var startupLoading = true
     private var loadingFinishing = false
     private var loadingStarted: CFTimeInterval = 0
     private let sensingLine = CAGradientLayer()
     private let sensingEye = CAGradientLayer()
     private var signalBar = SignalBar()
+    private let cursorLight = CAGradientLayer()
+    private var cursorGlow = CursorGlow()
+    private let composerSignal = ComposerSignal(frame: ComposerSignal.stripFrame)
+    private var signalTask: URLSessionDataTask?
+    private var signalGeneration = 0
+    private var signalState = ""
     private var pointerOnIsland = false
     private let wakeSound = WakeSound()
     private var provider = AIProvider(rawValue: UserDefaults.standard.string(forKey: "aiProvider") ?? "") ?? .gpt
@@ -95,16 +104,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var outsideClickMonitor: Any?
     private var menuTrackingDepth = 0
     private var prompt: NSTextField!
+    private var selectionIndicator: NSTextField!
+    private var screenshotIndicator: NSTextField!
+    private var captureInProgress = false
+    private var selectionReadGeneration = 0
+    private var selectionReadPending = false
+    private var selectionOwnsOpening = false
+    private let selectionReadQueue = DispatchQueue(label: "clippy.selection-summary", qos: .userInitiated)
     private var expandedControls = [NSView]()
     private var sendButton: NSButton!
+    private var sendHovered = false
     private var micButton: NSButton!
     private var talkButton: NSButton!
     private var voiceRequested = false
     private var voiceGeneration = 0
     private var captureButton: NSButton!
     private var voiceButton: NSButton!
-    private var tierPicker: NSPopUpButton!
-    private var providerControl: NSPopUpButton!
+    private var providerControl: NSButton!
+    private var modelCaption: NSButton!
+    private var openingGreetings = OpeningGreeting()
+    private var openingGreeting: String?
+    private var openingCaptionTimer: Timer?
+    private var compareBoth = UserDefaults.standard.bool(forKey: "chatCompareBoth")
+    private var pendingComparison = false
+    private lazy var comparisonPanel: ComparisonPanel = {
+        let panel = ComparisonPanel()
+        panel.onCancel = { [weak self] in self?.cancelRequest(); self?.selectionEditor.cancel() }
+        return panel
+    }()
+    private var chatProvider = AIProvider(rawValue: UserDefaults.standard.string(forKey: "chatProvider") ?? UserDefaults.standard.string(forKey: "aiProvider") ?? "") ?? .gpt
+    private lazy var chatSettings = ChatPreferences(models: DrawingModel.bundled(resource: "chat-models"))
+    private var autoRouteCaption: String?
+    private var lastRequestMode = "draw"
+    private var pendingRequestMode = "chat"
+    private lazy var drawingSettings = DrawingPreferences(models: DrawingModel.bundled())
+    private var modelHoverStarted: TimeInterval?
+    private var modelMenuLatched = false
     private var expanded = false
     private var overlayReady = false
     private var hitTestTimer: Timer?
@@ -121,7 +156,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var keyboardMonitor: Any?
     private var hotKey: EventHotKeyRef?
     private var editingHotKeys = [EventHotKeyRef]()
-    private lazy var selectionEditor = SelectionEditor(provider: { [weak self] in self?.provider.rawValue ?? "gpt" }) { [weak self] text in self?.setStatus(text) }
+    private lazy var selectionEditor = SelectionEditor(provider: { [weak self] in self?.compareBoth == true ? "both" : self?.chatProvider.rawValue ?? "gpt" }) { [weak self] text in self?.setStatus(text) }
     private var eventHandler: EventHandlerRef?
     private var ownedServer: Process?
     private var requestTask: URLSessionDataTask?
@@ -154,6 +189,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         buildCaptions()
         buildMenu()
         registerShortcut()
+        selectionEditor.onComparisonStart = { [weak self] in
+            if self?.busy == true { self?.cancelRequest() }
+            self?.stopRealtimeVoice(); self?.comparisonPanel.start(editing: true)
+        }
+        selectionEditor.onComparisonEvent = { [weak self] event in self?.comparisonPanel.receive(event) }
+        selectionEditor.onComparisonEnd = { [weak self] reason in self?.comparisonPanel.stop(reason) }
+        selectionEditor.onAutomaticActivity = { [weak self] active in
+            guard let self, !self.busy else { return }
+            self.sendButton.image = NSImage(systemSymbolName: active ? "xmark" : "arrow.up", accessibilityDescription: active ? "Cancel text edit" : "Send")
+            self.sendButton.setAccessibilityLabel(active ? "Cancel text edit" : "Send")
+            self.sendButton.toolTip = active ? "Cancel text edit" : "Send · Return · automatically choose a visual or text answer"
+        }
         NotificationCenter.default.addObserver(self, selector: #selector(menuBeganTracking), name: NSMenu.didBeginTrackingNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(menuEndedTracking), name: NSMenu.didEndTrackingNotification, object: nil)
         keyboardMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .leftMouseDown, .rightMouseDown]) { [weak self] event in
@@ -228,11 +275,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private func buildIsland() {
         island = panel(.zero, level: NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1))
         notchBridge = panel(.zero, level: island.level)
-        notchBridge.title = "Clippy notch background"
+        notchBridge.title = "Clip notch background"
         notchBridge.backgroundColor = .black
         notchBridge.ignoresMouseEvents = true
         notchBridge.setAccessibilityElement(false)
-        island.title = "Clippy island"
+        island.title = "Clip island"
         island.appearance = NSAppearance(named: .darkAqua)
         islandView = IslandView(frame: .zero)
         islandView.wantsLayer = true
@@ -259,15 +306,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         signalHost.autoresizingMask = [.width, .height]
         // Two bars lying on top of each other read as one line until they split apart.
         for bar in [sensingLine, sensingEye] {
-            bar.startPoint = CGPoint(x: 0, y: 0.5)
-            bar.endPoint = CGPoint(x: 1, y: 0.5)
-            bar.colors = [signalGreen.withAlphaComponent(0), signalGreen.withAlphaComponent(0.6), NSColor(calibratedRed: 0.8, green: 1, blue: 0.86, alpha: 1), signalGreen.withAlphaComponent(0.6), signalGreen.withAlphaComponent(0)].map(\.cgColor)
-            bar.locations = [0, 0.3, 0.5, 0.7, 1]
+            SignalFinish.apply(to: bar, tint: signalGreen,
+                               core: NSColor(calibratedRed: 0.8, green: 1, blue: 0.86, alpha: 1))
             bar.cornerRadius = 1
-            bar.shadowColor = signalGreen.cgColor
-            bar.shadowOffset = .zero
-            bar.shadowRadius = 5
-            bar.shadowOpacity = 1
             bar.opacity = 0
         }
         statusLine.backgroundColor = coral.cgColor
@@ -280,17 +321,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         loadingLine.lineWidth = 2.5
         loadingLine.lineCap = .round
         loadingLine.lineJoin = .round
-        loadingLine.shadowColor = NSColor.white.cgColor
-        loadingLine.shadowOffset = .zero
-        loadingLine.shadowRadius = 5
-        loadingLine.shadowOpacity = 0.9
         loadingLine.opacity = 0
-        for layer in [sensingLine, sensingEye, statusLine, loadingLine] { signalHost.layer?.addSublayer(layer) }
+        // Keep the original animated stroke as a mask; only its finish changes.
+        SignalFinish.apply(to: loadingFinish, tint: .white, core: .white)
+        loadingFinish.mask = loadingLine
+        // Put the halo outside the masked layer so the stroke does not clip its glow.
+        loadingGlow.shadowColor = loadingFinish.shadowColor
+        loadingGlow.shadowRadius = loadingFinish.shadowRadius
+        loadingGlow.shadowOpacity = loadingFinish.shadowOpacity
+        loadingGlow.shadowOffset = .zero
+        loadingFinish.shadowOpacity = 0
+        loadingGlow.addSublayer(loadingFinish)
+        cursorLight.type = .radial
+        cursorLight.colors = [NSColor(calibratedRed: 0.78, green: 1, blue: 0.86, alpha: 0.13).cgColor, NSColor(calibratedRed: 0.78, green: 1, blue: 0.86, alpha: 0).cgColor]
+        cursorLight.startPoint = CGPoint(x: 0.5, y: 0.5)
+        cursorLight.endPoint = CGPoint(x: 1, y: 1)
+        cursorLight.bounds = CGRect(x: 0, y: 0, width: 116, height: 116)
+        cursorLight.opacity = 0
+        for layer in [cursorLight, sensingLine, sensingEye, statusLine, loadingGlow] { signalHost.layer?.addSublayer(layer) }
         islandView.addSubview(signalHost, positioned: .below, relativeTo: statusLabel)
+        islandView.addSubview(composerSignal)
+        expandedControls.append(composerSignal)
         buildShoulders()
         prompt = NSTextField(frame: ComposerGeometry.input)
         prompt.placeholderString = ""
-        prompt.setAccessibilityLabel("Ask Clippy")
+        prompt.setAccessibilityLabel("Ask Clip")
         prompt.font = .systemFont(ofSize: 14)
         prompt.textColor = .white
         prompt.isBezeled = false
@@ -300,12 +355,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         prompt.action = #selector(sendPrompt)
         islandView.addSubview(prompt)
         expandedControls.append(prompt)
+        // A quiet baseline, centered under the text field with softly fading ends.
+        let promptLineWidth: CGFloat = 96 * 1.15
+        let promptLine = NSView(frame: NSRect(x: ComposerGeometry.input.midX - promptLineWidth / 2, y: ComposerGeometry.input.minY - 4, width: promptLineWidth, height: 0.5))
+        let promptGradient = CAGradientLayer()
+        promptGradient.colors = [NSColor.clear.cgColor, NSColor.white.withAlphaComponent(0.16).cgColor, NSColor.clear.cgColor]
+        promptGradient.startPoint = CGPoint(x: 0, y: 0.5)
+        promptGradient.endPoint = CGPoint(x: 1, y: 0.5)
+        promptLine.layer = promptGradient
+        promptLine.wantsLayer = true
+        promptLine.setAccessibilityElement(false)
+        islandView.addSubview(promptLine)
+        expandedControls.append(promptLine)
+        selectionIndicator = NSTextField(labelWithString: "")
+        selectionIndicator.frame = ComposerGeometry.selectionIndicator
+        selectionIndicator.font = .systemFont(ofSize: 10, weight: .light)
+        selectionIndicator.textColor = NSColor.white.withAlphaComponent(0.55)
+        selectionIndicator.lineBreakMode = .byTruncatingTail
+        selectionIndicator.isHidden = true
+        selectionIndicator.toolTip = "Selected text is automatically proofread or rewritten when you open Clip."
+        islandView.addSubview(selectionIndicator)
+        screenshotIndicator = NSTextField(labelWithString: "")
+        screenshotIndicator.frame = ComposerGeometry.screenshotIndicator
+        screenshotIndicator.font = .systemFont(ofSize: 9, weight: .light)
+        screenshotIndicator.textColor = NSColor.white.withAlphaComponent(0.65)
+        screenshotIndicator.alignment = .center
+        screenshotIndicator.setAccessibilityLabel("Screenshot status")
+        islandView.addSubview(screenshotIndicator)
+        expandedControls.append(screenshotIndicator)
         collapseButton = button("Collapse island", frame: ComposerGeometry.collapse, action: #selector(collapseIsland), symbol: "chevron.up", iconOnly: true)
         collapseButton.toolTip = "Make smaller · Esc or ⌃⌥Space"
-        collapseButton.layer?.backgroundColor = NSColor.clear.cgColor
-        collapseButton.layer?.borderWidth = 0
+        modelCaption = NSButton(title: "", target: self, action: #selector(showModelSettings))
+        modelCaption.frame = ComposerGeometry.modelCaption
+        modelCaption.font = .systemFont(ofSize: 10, weight: .light)
+        modelCaption.isBordered = false
+        modelCaption.contentTintColor = NSColor.white.withAlphaComponent(0.46)
+        modelCaption.toolTip = "Hover or click to choose a model and reasoning effort"
+        modelCaption.alignment = .center
+        modelCaption.cell?.lineBreakMode = .byTruncatingTail
+        islandView.addSubview(modelCaption)
+        expandedControls.append(modelCaption)
         captureButton = button("Screen", frame: ComposerGeometry.screen, action: #selector(captureScreen), symbol: "rectangle.dashed", iconOnly: true)
-        captureButton.toolTip = "Attach one screenshot to your next question"
+        updateCaptureButton()
         micButton = NSButton(title: "Dictate", target: self, action: #selector(toggleDictation))
         talkButton = button("Talk", frame: ComposerGeometry.talk, action: #selector(toggleRealtimeVoice), symbol: "waveform", iconOnly: true)
         talkButton.toolTip = "Live AI voice · separately billed API usage · click End to stop the microphone"
@@ -314,49 +405,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         voiceButton.toolTip = "Spoken replies on · click to mute"
         sendButton = button("Send", frame: ComposerGeometry.send, action: #selector(sendOrCancel), symbol: "arrow.up", iconOnly: true)
         sendButton.layer?.backgroundColor = NSColor.clear.cgColor
-        sendButton.layer?.borderWidth = 0
+        sendButton.layer?.borderWidth = 1
+        sendButton.layer?.borderColor = NSColor.white.withAlphaComponent(0.65).cgColor
         sendButton.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 18, weight: .thin)
         sendButton.contentTintColor = .white
-        sendButton.toolTip = "Send · Return"
-        tierPicker = NSPopUpButton(frame: ComposerGeometry.tier)
-        tierPicker.addItems(withTitles: ["Standard", "Fast"])
-        tierPicker.selectItem(at: 1)
-        tierPicker.item(at: 0)?.image = NSImage(systemSymbolName: "leaf", accessibilityDescription: "Standard")
-        tierPicker.item(at: 1)?.image = NSImage(systemSymbolName: "bolt.fill", accessibilityDescription: "Fast")
-        tierPicker.imagePosition = .imageOnly
-        (tierPicker.cell as? NSPopUpButtonCell)?.arrowPosition = .noArrow
-        tierPicker.setAccessibilityLabel("Reasoning mode")
-        tierPicker.contentTintColor = .white
-        tierPicker.font = .systemFont(ofSize: 11)
-        tierPicker.bezelStyle = .accessoryBarAction
-        tierPicker.isBordered = false
-        tierPicker.wantsLayer = true
-        tierPicker.layer?.cornerRadius = ComposerGeometry.tier.height / 2
-        tierPicker.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.055).cgColor
-        tierPicker.layer?.borderWidth = 0.5
-        tierPicker.layer?.borderColor = NSColor.white.withAlphaComponent(0.15).cgColor
-        tierPicker.toolTip = "GPT-6.1 Terra · Low reasoning. Fast uses more Codex allowance."
-        islandView.addSubview(tierPicker)
-        expandedControls.append(tierPicker)
-        providerControl = NSPopUpButton(frame: ComposerGeometry.provider)
-        providerControl.addItems(withTitles: ["GPT", "Claude"])
-        providerControl.item(at: 0)?.image = mascot("mascot-gpt", description: "GPT") ?? NSImage(systemSymbolName: "cpu", accessibilityDescription: "GPT")
-        providerControl.item(at: 1)?.image = mascot("mascot-claude", description: "Claude") ?? NSImage(systemSymbolName: "sparkle", accessibilityDescription: "Claude")
-        providerControl.imagePosition = .imageOnly
-        (providerControl.cell as? NSPopUpButtonCell)?.arrowPosition = .noArrow
-        providerControl.target = self
-        providerControl.action = #selector(providerChanged)
-        providerControl.isBordered = false
-        providerControl.contentTintColor = .white
-        providerControl.wantsLayer = true
-        providerControl.layer?.cornerRadius = 18
-        providerControl.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.055).cgColor
-        providerControl.layer?.borderWidth = 0.5
-        providerControl.layer?.borderColor = NSColor.white.withAlphaComponent(0.15).cgColor
-        providerControl.setAccessibilityLabel("Model")
-        providerControl.toolTip = "GPT uses the Codex SDK · Claude uses the Claude CLI"
-        islandView.addSubview(providerControl)
-        expandedControls.append(providerControl)
+        sendButton.toolTip = "Send · Return · automatically choose a visual or text answer"
+        let drawButton = button("Draw", frame: ComposerGeometry.draw, action: #selector(drawPrompt), symbol: "paintbrush.pointed", iconOnly: true)
+        drawButton.image = easelIcon()
+        drawButton.toolTip = "Draw your prompt · type an idea, then click Draw"
+        providerControl = button("Model", frame: ComposerGeometry.provider, action: #selector(providerChanged), symbol: "cpu", iconOnly: true)
         updateProviderControl()
         _ = button("More options", frame: ComposerGeometry.more, action: #selector(showIslandOptions(_:)), symbol: "ellipsis", iconOnly: true)
         setExpanded(false)
@@ -365,7 +422,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     // In the island's window they would block the menu bar.
     private func buildShoulders() {
         shoulderPanel = panel(.zero, level: island.level)
-        shoulderPanel.title = "Clippy shoulders"
+        shoulderPanel.title = "Clip shoulders"
         shoulderPanel.ignoresMouseEvents = true
         shoulderPanel.setAccessibilityElement(false)
         let host = NSView(frame: .zero)
@@ -381,7 +438,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private func buildDwellRing() {
         let size: CGFloat = 20
         dwellPanel = panel(NSRect(x: 0, y: 0, width: size, height: size), level: island.level)
-        dwellPanel.title = "Clippy hold timer"
+        dwellPanel.title = "Clip hold timer"
         dwellPanel.ignoresMouseEvents = true
         dwellPanel.setAccessibilityElement(false)
         let host = NSView(frame: NSRect(x: 0, y: 0, width: size, height: size))
@@ -443,7 +500,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     @objc private func toggleWakeSound() { wakeSound.enabled.toggle() }
     private func buildOverlay() {
         overlay = panel(NSRect(x: 0, y: 0, width: 900, height: 650), level: .floating)
-        overlay.title = "Clippy drawing"
+        overlay.title = "Clip drawing"
         overlay.isMovableByWindowBackground = false
         overlay.ignoresMouseEvents = true
         let content = WKUserContentController()
@@ -468,6 +525,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         hitTestTimer = timer
         RunLoop.main.add(timer, forMode: .common)
     }
+    private func updateSendHover(at point: NSPoint?) {
+        let hovered = expanded && sendButton.isEnabled && point.map {
+            hypot($0.x - ComposerGeometry.send.midX, $0.y - ComposerGeometry.send.midY) <= ComposerGeometry.send.width / 2
+        } == true
+        guard hovered != sendHovered else { return }
+        sendHovered = hovered
+        let reduced = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        let duration = reduced ? 0 : 0.18
+        let frame = hovered && !reduced ? ComposerGeometry.send.insetBy(dx: -1, dy: -1).offsetBy(dx: 0, dy: 1.5) : ComposerGeometry.send
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = duration
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            sendButton.animator().frame = frame
+        }
+        CATransaction.begin()
+        CATransaction.setDisableActions(reduced)
+        CATransaction.setAnimationDuration(duration)
+        sendButton.layer?.backgroundColor = NSColor.white.withAlphaComponent(hovered ? 0.11 : 0).cgColor
+        sendButton.layer?.borderColor = NSColor.white.withAlphaComponent(hovered ? 1 : 0.65).cgColor
+        sendButton.layer?.shadowColor = NSColor.white.cgColor
+        sendButton.layer?.shadowOffset = .zero
+        sendButton.layer?.shadowRadius = 5
+        sendButton.layer?.shadowOpacity = hovered ? 0.2 : 0
+        CATransaction.commit()
+    }
     private func updatePointer() {
         guard !composerTransitioning else { return }
         let now = CACurrentMediaTime()
@@ -478,14 +560,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             updateDwell(pointer: pointer, inside: false, dt: dt)
             let point = island.isVisible && menuTrackingDepth == 0
                 ? NSPoint(x: pointer.x - island.frame.minX, y: pointer.y - island.frame.minY) : nil
-            composerSurface.updateHover(at: point, details: [
-                attachedImage == nil ? "Attach a screenshot to your next question." : "Remove the attached screenshot.",
-                voiceRequested ? "End the live voice conversation." : "Start a live voice conversation.",
-                voiceEnabled ? "Mute spoken replies." : "Turn spoken replies on.",
-                "Choose GPT or Claude.",
-                tierPicker.isEnabled ? "Choose Standard or Fast reasoning." : "Reasoning modes are available with GPT.",
-                "Open settings and additional actions."
-            ])
+            if menuTrackingDepth == 0 {
+                let overCaption = point.map { ComposerGeometry.modelCaption.insetBy(dx: -6, dy: -5).contains($0) } ?? false
+                if overCaption && !busy && openingGreeting == nil && !modelCaption.isHidden {
+                    if modelHoverStarted == nil { modelHoverStarted = now }
+                    if !modelMenuLatched, now - (modelHoverStarted ?? now) >= 0.25 {
+                        modelMenuLatched = true
+                        showModelSettings()
+                    }
+                } else {
+                    modelHoverStarted = nil
+                    modelMenuLatched = false
+                }
+            }
+            updateSendHover(at: point)
+            composerSurface.updateHover(at: point)
             return
         }
         // The pointer can rest on the screen's top edge, which a rect excludes.
@@ -501,7 +590,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 && !requestingPermission && !speech.isSpeaking && NSEvent.pressedMouseButtons == 0 {
                 wakeSound.play()
             }
-            if wake.value < 0.1 { signalBar = SignalBar() }
+            if wake.value < 0.1 {
+                signalBar = SignalBar()
+                cursorGlow.jump(to: pointer)
+            }
         }
         layoutIsland()
     }
@@ -536,28 +628,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
     private func buildCaptions() {
         captions = panel(.zero, level: .floating)
-        captions.ignoresMouseEvents = true
-        let v = NSView()
-        v.wantsLayer = true
-        v.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.87).cgColor
-        v.layer?.cornerRadius = 14
-        captionText = label("", size: 16)
-        captionText.alignment = .center
-        captionText.maximumNumberOfLines = 3
-        captionText.lineBreakMode = .byWordWrapping
-        v.addSubview(captionText)
-        captions.contentView = v
+        captions.title = "Clip reply"
+        captions.ignoresMouseEvents = false
+        captions.hasShadow = true
+        replyCard = ReplyCard(frame: .zero)
+        replyCard.onDismiss = { [weak self] in
+            self?.captionDismissed = true; self?.captions.orderOut(nil)
+            self?.speech.stopSpeaking(at: .immediate)
+        }
+        captions.contentView = replyCard
     }
     private func buildMenu() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        statusItem.button?.image = NSImage(systemSymbolName: "paperclip", accessibilityDescription: "Clippy")
+        statusItem.button?.image = NSImage(systemSymbolName: "paperclip", accessibilityDescription: "Clip")
         let menu = NSMenu()
-        for (title, action) in [("Ask Clippy  ⌃⌥Space", #selector(toggleIsland)), ("Show last drawing", #selector(showLastVisual)), ("Hide drawings", #selector(hideVisuals)), ("New conversation", #selector(newConversation))] {
+        for (title, action) in [("Ask Clip  ⌃⌥Space", #selector(toggleIsland)), ("Show last drawing", #selector(showLastVisual)), ("Hide drawings", #selector(hideVisuals)), ("New conversation", #selector(newConversation))] {
             let item = menu.addItem(withTitle: title, action: action, keyEquivalent: "")
             item.target = self
         }
         menu.addItem(.separator())
-        menu.addItem(withTitle: "Quit Clippy", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        menu.addItem(withTitle: "Quit Clip", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         statusItem.menu = menu
         menu.insertItem(NSMenuItem(title: "Proofread selection: ⌃⌥D", action: nil, keyEquivalent: ""), at: 0)
         menu.insertItem(NSMenuItem(title: "Rewrite selection: ⌃D", action: nil, keyEquivalent: ""), at: 1)
@@ -568,12 +658,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         editingAccess.target = self
         menu.insertItem(editingAccess, at: 3)
         let main = NSMenu()
-        let appRoot = NSMenuItem(title: "Clippy", action: nil, keyEquivalent: "")
-        let appMenu = NSMenu(title: "Clippy")
+        let appRoot = NSMenuItem(title: "Clip", action: nil, keyEquivalent: "")
+        let appMenu = NSMenu(title: "Clip")
         let showDrawing = appMenu.addItem(withTitle: "Show last drawing", action: #selector(showLastVisual), keyEquivalent: "d")
         showDrawing.target = self
         appMenu.addItem(.separator())
-        appMenu.addItem(withTitle: "Quit Clippy", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appMenu.addItem(withTitle: "Quit Clip", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appRoot.submenu = appMenu
         main.addItem(appRoot)
         let editRoot = NSMenuItem(title: "Edit", action: nil, keyEquivalent: "")
@@ -620,10 +710,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private func setExpanded(_ value: Bool, focus: Bool = false, animated: Bool = true) {
         let changed = expanded != value
         if !changed && composerTransitioning && animated { return }
+        if changed {
+            selectionReadGeneration += 1
+            selectionIndicator.isHidden = true
+            selectionIndicator.stringValue = ""
+            selectionReadPending = false
+            selectionOwnsOpening = false
+            if value { refreshSelectionIndicator(automatic: focus) }
+            else if !compareBoth { selectionEditor.cancelAutomatic() }
+        }
         let sourceFrame = island.frame
         let sourceRadius = composerTransitioning ? composerSurface.currentRadius : (islandView.layer?.cornerRadius ?? 10)
         let sourceReveal = composerReveal
+        if !value { updateSendHover(at: nil) }
         expanded = value
+        if changed {
+            if value { beginOpeningGreeting() } else { endOpeningGreeting() }
+            if value { composerSignal.signal = signalBar }
+            else { signalBar = composerSignal.signal; signalBar.pattern = nil }
+            composerSignal.setActive(value)
+            signalGeneration += 1
+            signalTask?.cancel(); signalTask = nil
+            signalState = ""
+            if value { refreshComposerSignal() }
+        }
         composerTransition += 1
         let generation = composerTransition
         composerTimer?.invalidate(); composerTimer = nil
@@ -680,7 +790,61 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         composerTimer = timer
         RunLoop.main.add(timer, forMode: .common)
     }
+    private func refreshSelectionIndicator(automatic: Bool) {
+        guard let source = NSWorkspace.shared.frontmostApplication,
+              source.processIdentifier != ProcessInfo.processInfo.processIdentifier else {
+            prompt.toolTip = "Selection check · Clip has focus"
+            return
+        }
+        let pid = source.processIdentifier
+        let generation = selectionReadGeneration
+        selectionReadPending = automatic
+        // The request begins before the composer takes keyboard focus.
+        selectionReadQueue.async { [weak self] in
+            var diagnostic = "No selection"
+            let snapshot = SelectionSummary.readSelection(pid: pid) { diagnostic = $0 }
+            DispatchQueue.main.async {
+                guard let self, self.expanded, self.selectionReadGeneration == generation else { return }
+                self.selectionReadPending = false
+                self.prompt.toolTip = snapshot == nil ? "Selection check · \(source.localizedName ?? "Source app") · \(diagnostic)" : "Type a prompt"
+                if snapshot == nil && diagnostic == "Accessibility access unavailable" {
+                    let help = "Enable selected-text access · More → Enable text editing"
+                    self.selectionIndicator.stringValue = "Enable selected-text access"
+                    self.selectionIndicator.setAccessibilityLabel(help)
+                    self.selectionIndicator.isHidden = false
+                }
+                let foreground = NSWorkspace.shared.frontmostApplication?.processIdentifier
+                guard foreground == pid || foreground == ProcessInfo.processInfo.processIdentifier else {
+                    self.selectionOwnsOpening = true // Never steal focus after the user switches apps.
+                    return
+                }
+                if let snapshot, automatic, !self.busy, !self.talking {
+                    self.selectionOwnsOpening = true
+                    self.selectionEditor.startAutomatic(snapshot)
+                } else if automatic && !self.composerTransitioning {
+                    self.island.makeKey(); self.island.makeFirstResponder(self.prompt)
+                }
+                guard let snapshot, let label = SelectionSummary.label(for: SelectionSummary.wordCount(snapshot.text)) else { return }
+                let text = NSMutableAttributedString()
+                if let image = NSImage(systemSymbolName: "text.badge.checkmark", accessibilityDescription: nil) {
+                    let attachment = NSTextAttachment()
+                    attachment.image = image.withSymbolConfiguration(NSImage.SymbolConfiguration(paletteColors: [NSColor.white.withAlphaComponent(0.55)]))
+                    attachment.bounds = NSRect(x: 0, y: -2, width: 12, height: 12)
+                    text.append(NSAttributedString(attachment: attachment))
+                    text.append(NSAttributedString(string: "  "))
+                }
+                text.append(NSAttributedString(string: label, attributes: [
+                    .font: NSFont.systemFont(ofSize: 10, weight: .light),
+                    .foregroundColor: NSColor.white.withAlphaComponent(0.55)]))
+                self.selectionIndicator.attributedStringValue = text
+                self.selectionIndicator.setAccessibilityLabel(label)
+                self.selectionIndicator.isHidden = false
+            }
+        }
+    }
+
     private func updateNotchBridge(_ layout: IslandLayout) {
+        composerSurface.setNotchWidth(layout.notchFrame?.width)
         if let bridge = layout.notchBridge {
             notchBridge.setFrame(bridge, display: true)
             notchBridge.orderFrontRegardless()
@@ -702,7 +866,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             shoulderPanel.orderFrontRegardless()
             shoulderPanel.order(.below, relativeTo: island.windowNumber)
         } else { shoulderPanel.orderOut(nil) }
-        if expanded && focus { island.makeKey(); island.makeFirstResponder(prompt) }
+        if expanded && focus && !selectionReadPending && !selectionOwnsOpening { island.makeKey(); island.makeFirstResponder(prompt) }
         if !expanded { island.resignKey() }
 
     }
@@ -731,9 +895,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         signalHost.layer?.maskedCorners = islandView.layer?.maskedCorners ?? []
         // Idle readiness is already represented by the compact menu-bar line.
         if case .status = content { statusLabel.isHidden = false } else { statusLabel.isHidden = true }
+        modelCaption.isHidden = !expanded || content != .idle
         activityMark.isHidden = content != .audio
         islandView.toolTip = expanded ? nil : "\(currentStatus) · Hold here to open · ⌃⌥Space"
-        islandView.setAccessibilityLabel("Clippy: \(currentStatus)")
+        islandView.setAccessibilityLabel("Clip: \(currentStatus)")
         wake.target = awake ? 1 : 0
         if content == .idle && !expanded {
             let rest = makeLayout(false)
@@ -790,7 +955,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         path.addLine(to: points[points.count - 1])
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        loadingLine.frame = layout.bounds
+        loadingGlow.frame = layout.bounds
+        loadingFinish.frame = loadingGlow.bounds
+        loadingLine.frame = loadingFinish.bounds
         loadingLine.path = path
         loadingLine.opacity = 1
         CATransaction.commit()
@@ -877,6 +1044,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         statusLine.opacity = content == .audio || content == .loading || (expanded && content == .idle) ? 0 : 1
         sensingLine.opacity = 0
         sensingEye.opacity = 0
+        cursorLight.opacity = 0
         CATransaction.commit()
         guard content == .idle, !expanded, !reduceMotion else { statusLine.removeAnimation(forKey: "pulse"); return }
         guard statusLine.animation(forKey: "pulse") == nil else { return }
@@ -906,6 +1074,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion { wake.jump(to: wake.target) } else {
             wake.step(dt)
             signalBar.step(dt, pointer: (NSEvent.mouseLocation.x - island.frame.midX) / max(island.frame.width / 2, 1))
+            if pointerOnIsland { cursorGlow.follow(NSEvent.mouseLocation, dt: dt) }
         }
         applyWake()
         if wakeEnds?.rest.isNotched == true { drawShoulders(rect: island.frame) }
@@ -942,6 +1111,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             layer.cornerRadius = bar.height / 2
             layer.opacity = Float(smoothstep(0.4, 0.75, t))
         }
+        // A faint light under the pointer. The island's own corners and the camera hide the rest.
+        cursorLight.position = CGPoint(x: cursorGlow.position.x - frame.minX, y: cursorGlow.position.y - frame.minY)
+        cursorLight.opacity = Float(smoothstep(0.4, 1, t))
         CATransaction.commit()
     }
     private func drawShoulders(rect: NSRect) {
@@ -966,8 +1138,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let text = text == "Ready" ? connectionProblem ?? text : text
         currentStatus = text
         statusLabel.stringValue = text
-        let working = ["Thinking", "Drawing", "Speaking", "Listening", "Proofreading", "Rewriting"].contains { text.contains($0) }
+        let working = ["Checking screen", "Capturing screen", "Choosing edit", "Choosing response", "Choosing model", "Thinking", "Drawing", "Replying", "Explaining", "Summarizing", "Translating", "Solving", "Exploring", "Speaking", "Listening", "Proofreading", "Rewriting"].contains { text.contains($0) }
         let problem = text == connectionProblem || text.contains("failed") || text.contains("unavailable")
+        refreshComposerSignal()
         activityMark.active = talking
         statusLabel.toolTip = text
         statusLabel.textColor = problem ? coral : .white
@@ -984,6 +1157,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
         layoutIsland()
     }
+    private func refreshComposerSignal() {
+        guard expanded, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
+        let state = talking ? "speaking" : busy ? "working" : connectionProblem != nil ? "attention" : "ready"
+        guard signalState != state else { return }
+        signalState = state
+        signalGeneration += 1
+        let generation = signalGeneration
+        signalTask?.cancel()
+        let tokenRequest = URLRequest(url: baseURL.appendingPathComponent("api/session"), timeoutInterval: 3)
+        signalTask = URLSession.shared.dataTask(with: tokenRequest) { [weak self] data, _, _ in
+            DispatchQueue.main.async {
+                guard let self, self.expanded, self.signalGeneration == generation,
+                      let data, let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: String], let token = object["token"] else { return }
+                var request = URLRequest(url: baseURL.appendingPathComponent("api/signal"), timeoutInterval: 4)
+                request.httpMethod = "POST"
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                request.setValue(token, forHTTPHeaderField: "X-Clippy-Session")
+                request.httpBody = try? JSONSerialization.data(withJSONObject: ["state": state])
+                self.signalTask = URLSession.shared.dataTask(with: request) { [weak self] data, response, _ in
+                    DispatchQueue.main.async {
+                        guard let self, self.expanded, self.signalGeneration == generation,
+                              (response as? HTTPURLResponse)?.statusCode == 200,
+                              let data, let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: String], let pattern = object["pattern"] else { return }
+                        self.composerSignal.choose(pattern, motion: object["motion"] ?? "follow")
+                    }
+                }
+                self.signalTask?.resume()
+            }
+        }
+        signalTask?.resume()
+    }
     private func setConnection(_ problem: String?) {
         guard problem != connectionProblem else { return }
         let resting = connectionProblem ?? "Ready"
@@ -996,15 +1200,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         setExpanded(true)
         showCaption(text)
     }
-    private func showCaption(_ text: String) {
+    private func showCaption(_ text: String, live: Bool = false) {
+        if live && captionDismissed { return }
+        if !live { captionDismissed = false }
+        guard !text.isEmpty else { captions.orderOut(nil); return }
         let screen = island.screen ?? NSScreen.main ?? NSScreen.screens[0]
-        let width = min(860, screen.visibleFrame.width - 80)
-        let trimmed = String(text.prefix(500))
-        let estimated = (trimmed as NSString).boundingRect(with: NSSize(width: width - 36, height: 100), options: [.usesLineFragmentOrigin], attributes: [.font: NSFont.systemFont(ofSize: 16)]).height
-        let height = min(100, max(42, ceil(estimated) + 24))
-        captions.setFrame(NSRect(x: screen.frame.midX - width / 2, y: screen.visibleFrame.minY + 24, width: width, height: height), display: true)
-        captionText.frame = NSRect(x: 18, y: 12, width: width - 36, height: height - 24)
-        captionText.stringValue = trimmed
+        let size = ReplyCardLayout.size(text: text, available: screen.visibleFrame.size)
+        captions.setFrame(NSRect(x: screen.visibleFrame.midX - size.width / 2, y: screen.visibleFrame.minY + 24, width: size.width, height: size.height), display: true)
+        replyCard.show(text, live: live)
         captions.orderFrontRegardless()
     }
     @objc private func toggleVoice() {
@@ -1041,12 +1244,57 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         history = []
         previous = nil
         attachedImage = nil
-        captureButton.title = "Screen"
+        screenshotIndicator.stringValue = ""
+        updateCaptureButton()
         prompt.stringValue = ""
         setStatus("Ready")
     }
 
-    @objc private func providerChanged() { setProvider(providerControl.indexOfSelectedItem == 1 ? .claude : .gpt) }
+    @objc private func providerChanged() {
+        guard !busy, !selectionEditor.automaticRunning else { return }
+        let menu = NSMenu(); menu.autoenablesItems = false
+        for (value, title) in [("gpt", "Codex"), ("claude", "Claude"), ("both", "Both")] {
+            let item = NSMenuItem(title: title, action: #selector(selectChatProvider(_:)), keyEquivalent: "")
+            item.target = self; item.representedObject = value
+            item.state = (compareBoth ? value == "both" : !chatSettings.isAuto && value == chatProvider.rawValue) ? .on : .off
+            if value == "both" { item.toolTip = "Compare text answers and edits · optional screenshot · no Draw or voice" }
+            menu.addItem(item)
+        }
+        menu.popUp(positioning: nil, at: NSPoint(x: providerControl.frame.minX, y: providerControl.frame.minY), in: islandView)
+    }
+    @objc private func selectChatProvider(_ item: NSMenuItem) {
+        guard let value = item.representedObject as? String else { return }
+        compareBoth = value == "both"; chatSettings.isAuto = false
+        UserDefaults.standard.set(compareBoth, forKey: "chatCompareBoth")
+        if let selected = AIProvider(rawValue: value) {
+            chatProvider = selected; UserDefaults.standard.set(value, forKey: "chatProvider")
+        }
+        updateProviderControl(); pollServer()
+    }
+    private func easelIcon() -> NSImage {
+        let image = NSImage(size: NSSize(width: 20, height: 20), flipped: false) { _ in
+            NSColor.white.setStroke()
+            let canvas = NSBezierPath(roundedRect: NSRect(x: 3.5, y: 7, width: 13, height: 9), xRadius: 1, yRadius: 1)
+            canvas.lineWidth = 1.25
+            canvas.stroke()
+            let stand = NSBezierPath()
+            stand.lineWidth = 1.25
+            stand.lineCapStyle = .round
+            for (from, to) in [(NSPoint(x: 10, y: 16), NSPoint(x: 10, y: 19)),
+                               (NSPoint(x: 2, y: 6), NSPoint(x: 18, y: 6)),
+                               (NSPoint(x: 6, y: 6), NSPoint(x: 3, y: 1)),
+                               (NSPoint(x: 14, y: 6), NSPoint(x: 17, y: 1)),
+                               (NSPoint(x: 10, y: 6), NSPoint(x: 10, y: 2))] {
+                stand.move(to: from)
+                stand.line(to: to)
+            }
+            stand.stroke()
+            return true
+        }
+        image.isTemplate = true
+        image.accessibilityDescription = "Draw on an easel"
+        return image
+    }
     private func mascot(_ name: String, description: String) -> NSImage? {
         guard let url = Bundle.main.url(forResource: name, withExtension: "png"), let source = NSImage(contentsOf: url) else { return nil }
         let height: CGFloat = 24, size = NSSize(width: height * source.size.width / max(source.size.height, 1), height: height)
@@ -1058,10 +1306,135 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         return image
     }
     private func updateProviderControl() {
-        providerControl.selectItem(at: provider == .claude ? 1 : 0)
-        // Standard and Fast are Codex service tiers.
-        tierPicker.isEnabled = provider == .gpt
-        tierPicker.toolTip = provider == .gpt ? "GPT-6.1 Terra · Low reasoning. Fast uses more Codex allowance." : "Standard and Fast only apply to GPT."
+        let name = compareBoth ? "Both" : chatSettings.isAuto ? "Auto" : chatProvider == .claude ? "Claude" : "Codex"
+        providerControl.image = compareBoth ? NSImage(systemSymbolName: "square.split.2x1", accessibilityDescription: "Both providers") : chatSettings.isAuto ? NSImage(systemSymbolName: "sparkles", accessibilityDescription: "Auto chat model")
+            : mascot(chatProvider == .claude ? "mascot-claude" : "mascot-gpt", description: name)
+        providerControl.setAccessibilityLabel("Chat provider: \(name). Choose Codex, Claude or Both")
+        providerControl.toolTip = "Chat: \(name) · choose Codex, Claude or Both"
+        updateDrawingSettings()
+    }
+    private func updateModelCaption() {
+        if let openingGreeting {
+            modelCaption.title = openingGreeting
+            modelCaption.setAccessibilityLabel("\(openingGreeting) Choose chat model and reasoning effort")
+            return
+        }
+        modelCaption.title = compareBoth ? "Codex + Claude · Text comparison" : chatSettings.isAuto ? autoRouteCaption ?? chatSettings.caption(for: chatProvider.rawValue)
+            : chatSettings.caption(for: chatProvider.rawValue)
+        modelCaption.setAccessibilityLabel("\(modelCaption.title). Choose chat model and reasoning effort")
+    }
+    private func updateDrawingSettings() {
+        updateModelCaption()
+        let settings = drawingSettings.request(for: provider.rawValue)
+        if let data = try? JSONSerialization.data(withJSONObject: settings), let json = String(data: data, encoding: .utf8) {
+            webView?.evaluateJavaScript("window.clippyVoice?.setDrawingSettings(\(json)); void 0;")
+        }
+    }
+    private func beginOpeningGreeting() {
+        endOpeningGreeting()
+        openingGreeting = openingGreetings.next()
+        updateModelCaption()
+        let started = ProcessInfo.processInfo.systemUptime
+        let timer = Timer(timeInterval: 0.05, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            guard self.expanded else { self.endOpeningGreeting(); return }
+            let frame = OpeningCaptionFrame.at(ProcessInfo.processInfo.systemUptime - started,
+                reducedMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+            if !frame.greeting && self.openingGreeting != nil {
+                self.openingGreeting = nil
+                self.updateModelCaption()
+            }
+            self.modelCaption.alphaValue = frame.opacity
+            if frame.finished { self.endOpeningGreeting() }
+        }
+        openingCaptionTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+    private func endOpeningGreeting() {
+        openingCaptionTimer?.invalidate(); openingCaptionTimer = nil
+        openingGreeting = nil
+        modelCaption.alphaValue = 1
+        updateModelCaption()
+    }
+    @objc private func showModelSettings() {
+        guard expanded, !busy, !composerTransitioning, menuTrackingDepth == 0 else { return }
+        endOpeningGreeting()
+        modelMenuLatched = true
+        composerSurface.updateHover(at: nil)
+        let menu = NSMenu(); menu.autoenablesItems = false
+        let heading = NSMenuItem(title: "Chat model", action: nil, keyEquivalent: "")
+        heading.isEnabled = false; menu.addItem(heading)
+        let auto = NSMenuItem(title: "Auto", action: #selector(selectAutoChat), keyEquivalent: "")
+        auto.target = self; auto.state = chatSettings.isAuto ? .on : .off
+        auto.toolTip = "Decisions chooses Astra, Terra, Opus or Sonnet and its supported reasoning effort for each chat prompt"
+        menu.addItem(auto)
+        if compareBoth {
+            for p in ["gpt", "claude"] {
+                let item = NSMenuItem(title: p == "gpt" ? "Codex model & effort" : "Claude model & effort", action: nil, keyEquivalent: "")
+                let choices = NSMenu(); choices.autoenablesItems = false
+                addModelOptions(to: choices, chat: true, comparisonProvider: p)
+                item.submenu = choices; menu.addItem(item)
+            }
+        } else { addModelOptions(to: menu, chat: true) }
+        menu.addItem(.separator())
+        let draw = NSMenuItem(title: "Draw settings", action: nil, keyEquivalent: "")
+        let drawMenu = NSMenu(); drawMenu.autoenablesItems = false
+        addModelOptions(to: drawMenu, chat: false)
+        draw.submenu = drawMenu; menu.addItem(draw)
+        menu.popUp(positioning: nil, at: NSPoint(x: modelCaption.frame.minX, y: modelCaption.frame.minY), in: islandView)
+    }
+    private func addModelOptions(to menu: NSMenu, chat: Bool, comparisonProvider: String? = nil) {
+        let settings = chat ? chatSettings.manual : drawingSettings
+        let currentProvider = comparisonProvider.flatMap { AIProvider(rawValue: $0) } ?? (chat ? chatProvider : provider)
+        let current = settings.model(for: currentProvider.rawValue)
+        for model in settings.models where comparisonProvider == nil || model.provider == comparisonProvider {
+            let item = NSMenuItem(title: model.name, action: chat ? #selector(selectChatModel(_:)) : #selector(selectDrawingModel(_:)), keyEquivalent: "")
+            item.target = self; item.representedObject = model.id
+            item.state = current.id == model.id && (!chat || !chatSettings.isAuto) ? .on : .off
+            menu.addItem(item)
+        }
+        menu.addItem(.separator())
+        let heading = NSMenuItem(title: chat && chatSettings.isAuto ? "Reasoning: Auto (Decisions)" : "Reasoning effort", action: nil, keyEquivalent: "")
+        heading.isEnabled = false; menu.addItem(heading)
+        if chat && chatSettings.isAuto { return }
+        for effort in current.efforts {
+            let item = NSMenuItem(title: DrawingPreferences.effortTitle(effort), action: chat ? #selector(selectChatEffort(_:)) : #selector(selectDrawingEffort(_:)), keyEquivalent: "")
+            item.target = self; item.representedObject = comparisonProvider.map { "\($0):\(effort)" } ?? effort
+            item.state = settings.effort(for: currentProvider.rawValue) == effort ? .on : .off
+            menu.addItem(item)
+        }
+    }
+    @objc private func selectAutoChat() {
+        compareBoth = false; UserDefaults.standard.set(false, forKey: "chatCompareBoth")
+        chatSettings.isAuto = true; autoRouteCaption = nil
+        updateProviderControl(); pollServer()
+    }
+    @objc private func selectChatModel(_ item: NSMenuItem) {
+        guard let id = item.representedObject as? String,
+              let model = chatSettings.manual.models.first(where: { $0.id == id }),
+              let selected = AIProvider(rawValue: model.provider) else { return }
+        chatSettings.isAuto = false; chatProvider = selected
+        chatSettings.manual.select(model: id, provider: model.provider)
+        UserDefaults.standard.set(model.provider, forKey: "chatProvider")
+        updateProviderControl(); pollServer()
+    }
+    @objc private func selectChatEffort(_ item: NSMenuItem) {
+        guard let effort = item.representedObject as? String, !chatSettings.isAuto else { return }
+        let parts = effort.split(separator: ":").map(String.init)
+        chatSettings.manual.select(effort: parts.last ?? effort, provider: parts.count == 2 ? parts[0] : chatProvider.rawValue)
+        updateDrawingSettings()
+    }
+    @objc private func selectDrawingModel(_ item: NSMenuItem) {
+        guard let id = item.representedObject as? String,
+              let model = drawingSettings.models.first(where: { $0.id == id }),
+              let selected = AIProvider(rawValue: model.provider) else { return }
+        drawingSettings.select(model: id, provider: model.provider)
+        setProvider(selected); updateDrawingSettings()
+    }
+    @objc private func selectDrawingEffort(_ item: NSMenuItem) {
+        guard let effort = item.representedObject as? String else { return }
+        drawingSettings.select(effort: effort, provider: provider.rawValue)
+        updateDrawingSettings()
     }
     // Remembered across launches, and applies to the next question.
     private func setProvider(_ value: AIProvider) {
@@ -1074,7 +1447,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         // Each backend has its own sign-in, which decides whether the line can be green.
         pollServer()
     }
-    private var statusURL: URL { URL(string: "api/status?provider=\(provider.rawValue)", relativeTo: baseURL)!.absoluteURL }
+    private var statusURL: URL { URL(string: "api/status?provider=\(compareBoth ? "both" : chatSettings.isAuto ? "auto" : chatProvider.rawValue)", relativeTo: baseURL)!.absoluteURL }
     private func checkServer(startIfNeeded: Bool, retries: Int = 12) {
         var request = URLRequest(url: statusURL)
         request.timeoutInterval = 8
@@ -1082,7 +1455,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             DispatchQueue.main.async {
                 guard let self else { return }
                 if let data, let value = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any], value["model"] != nil {
-                    self.setConnection(value["authenticated"] as? Bool == true ? nil : self.provider.signInRequired)
+                    self.setConnection(value["authenticated"] as? Bool == true ? nil : self.compareBoth ? "Sign in to Codex and Claude for Both" : self.chatSettings.isAuto ? "Sign in to Codex or Claude for Auto" : self.chatProvider.signInRequired)
                     self.webView.load(URLRequest(url: baseURL.appendingPathComponent("overlay.html")))
                     self.startHealthMonitor()
                 } else if startIfNeeded && error != nil {
@@ -1092,7 +1465,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { self.checkServer(startIfNeeded: false, retries: retries - 1) }
                 } else {
                     self.setConnection(serverUnavailable)
-                    self.showError("Local server unavailable. Run npm start in the Clippy project.")
+                    self.showError("Local server unavailable. Run npm start in the Clip project.")
                     self.startHealthMonitor()
                 }
             }
@@ -1112,7 +1485,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 guard let data, let value = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any], value["model"] != nil else {
                     self.setConnection(serverUnavailable); return
                 }
-                if value["authenticated"] as? Bool != true { self.setConnection(self.provider.signInRequired) }
+                if value["authenticated"] as? Bool != true { self.setConnection(self.compareBoth ? "Sign in to Codex and Claude for Both" : self.chatSettings.isAuto ? "Sign in to Codex or Claude for Auto" : self.chatProvider.signInRequired) }
                 else { self.setConnection(self.overlayReady ? nil : drawingUnavailable) }
                 if !self.overlayReady { self.webView.load(URLRequest(url: baseURL.appendingPathComponent("overlay.html"))) }
             }
@@ -1134,15 +1507,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         do { try process.run(); ownedServer = process; setStatus("Starting…") }
         catch { showError("Could not start the local server. Run npm start in Terminal.") }
     }
-    @objc private func sendOrCancel() { if busy { cancelRequest() } else { sendPrompt() } }
+    @objc private func sendOrCancel() { if selectionEditor.automaticRunning { cancelTextEdit() } else if busy { cancelRequest() } else { sendPrompt() } }
     @objc private func sendPrompt() {
+        if selectionEditor.automaticRunning { cancelTextEdit(); return }
         let message = prompt.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !message.isEmpty else { island.makeKey(); island.makeFirstResponder(prompt); return }
         guard message.count <= 6000 else { showError("Keep the question under 6,000 characters."); return }
-        generate(message)
+        generate(message, mode: "auto")
     }
-    private func generate(_ message: String) {
+    @objc private func drawPrompt() {
+        let message = prompt.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !message.isEmpty else { island.makeKey(); island.makeFirstResponder(prompt); return }
+        guard message.count <= 6000 else { showError("Keep the prompt under 6,000 characters."); return }
+        generate(message, mode: "draw")
+    }
+    private func generate(_ message: String, mode: String = "chat") {
         guard !busy else { return }
+        if compareBoth && mode != "draw" { selectionEditor.cancel() } else { selectionEditor.cancelAutomatic() }
         if voiceRequested { stopRealtimeVoice() }
         stopDictation(sendTranscript: false)
         speech.stopSpeaking(at: .immediate)
@@ -1158,22 +1539,60 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         responseBuffer = Data()
         responseStatus = 200
         resultReceived = false
+        pendingComparison = compareBoth && mode != "draw"
+        if pendingComparison { comparisonPanel.start() }
+        pendingRequestMode = pendingComparison ? "chat" : mode
+        screenshotIndicator.stringValue = attachedImage == nil ? "" : "Screenshot attached"
+        var selectedSettings = mode == "draw" ? drawingSettings.request(for: provider.rawValue) : chatSettings.request(for: chatProvider.rawValue)
+        selectedSettings["mode"] = mode
+        if mode != "draw" && chatSettings.isAuto { autoRouteCaption = nil; updateDrawingSettings() }
+        let comparing = pendingComparison
+        let comparisonSettings = Dictionary(uniqueKeysWithValues: ["gpt", "claude"].map { p in (p, chatSettings.manual.request(for: p).filter { ["model", "reasoningEffort"].contains($0.key) }) })
+        let automaticDrawing = mode == "auto" && !comparing ? drawingSettings.request(for: provider.rawValue) : nil
         let tokenRequest = URLRequest(url: baseURL.appendingPathComponent("api/session"), timeoutInterval: 10)
         requestTask = URLSession.shared.dataTask(with: tokenRequest) { [weak self] data, _, error in
             DispatchQueue.main.async {
                 guard let self, self.requestGeneration == generation else { return }
                 guard error == nil, let data, let tokenData = (try? JSONSerialization.jsonObject(with: data)) as? [String: String], let token = tokenData["token"] else {
-                    self.finishRequest(); self.showError("Cannot connect to the local Codex server. Try reopening Clippy."); return
+                    self.finishRequest(); self.showError("Cannot connect to the local Codex server. Try reopening Clip."); return
                 }
-                var request = URLRequest(url: baseURL.appendingPathComponent("api/chat"), timeoutInterval: 135)
-                request.httpMethod = "POST"
-                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                request.setValue(token, forHTTPHeaderField: "X-Clippy-Session")
-                let body: [String: Any] = ["message": message, "tier": ["standard", "fast"][self.tierPicker.indexOfSelectedItem], "provider": self.provider.rawValue, "history": Array(self.history.suffix(12)), "previous": self.previous as Any? ?? NSNull(), "image": self.attachedImage as Any? ?? NSNull()]
-                guard let encoded = try? JSONSerialization.data(withJSONObject: body) else { self.finishRequest(); self.showError("Could not prepare the request."); return }
-                request.httpBody = encoded
-                self.requestTask = self.streamingSession.dataTask(with: request)
-                self.requestTask?.resume()
+                self.prepareScreenContext(message: message, token: token, generation: generation) { [weak self] image in
+                    guard let self, self.requestGeneration == generation else { return }
+                    var request = URLRequest(url: baseURL.appendingPathComponent(comparing ? "api/compare" : "api/chat"), timeoutInterval: 135)
+                    request.httpMethod = "POST"
+                    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                    request.setValue(token, forHTTPHeaderField: "X-Clippy-Session")
+                    var body: [String: Any] = ["drawing": automaticDrawing as Any? ?? NSNull(), "message": message, "mode": selectedSettings["mode"]!, "tier": "fast", "provider": selectedSettings["provider"]!, "model": selectedSettings["model"]!, "reasoningEffort": selectedSettings["reasoningEffort"]!, "history": Array(self.history.suffix(12)), "previous": self.previous as Any? ?? NSNull(), "image": image as Any? ?? NSNull()]
+                    if comparing { body = ["task": "chat", "message": message, "image": image as Any? ?? NSNull(), "settings": comparisonSettings] }
+                    guard let encoded = try? JSONSerialization.data(withJSONObject: body) else { self.finishRequest(); self.showError("Could not prepare the request."); return }
+                    request.httpBody = encoded
+                    self.requestTask = self.streamingSession.dataTask(with: request)
+                    self.requestTask?.resume()
+                }
+            }
+        }
+        requestTask?.resume()
+    }
+    private func prepareScreenContext(message: String, token: String, generation: Int, completion: @escaping (String?) -> Void) {
+        if let image = attachedImage { completion(image); return }
+        setStatus("Checking screen context…")
+        var request = URLRequest(url: URL(string: "http://127.0.0.1:4317/api/screen-context")!, timeoutInterval: 4)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(token, forHTTPHeaderField: "X-Clippy-Session")
+        request.httpBody = try? JSONSerialization.data(withJSONObject: ["message": message, "hasImage": false])
+        requestTask = URLSession.shared.dataTask(with: request) { [weak self] data, response, _ in
+            DispatchQueue.main.async {
+                guard let self, self.requestGeneration == generation else { return }
+                let decision = data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+                guard (response as? HTTPURLResponse)?.statusCode == 200, decision?["capture"] as? Bool == true else { completion(nil); return }
+                self.setStatus("Capturing screen…")
+                self.takeScreenshot(automatic: true, isCurrent: { [weak self] in self?.requestGeneration == generation }) { [weak self] image in
+                    guard let self, self.requestGeneration == generation else { return }
+                    self.screenshotIndicator.stringValue = image == nil ? "Screenshot unavailable" : "Screenshot captured"
+                    self.screenshotIndicator.setAccessibilityLabel(self.screenshotIndicator.stringValue)
+                    completion(image)
+                }
             }
         }
         requestTask?.resume()
@@ -1196,12 +1615,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
     private func handle(_ event: [String: Any]) {
         switch event["type"] as? String {
+        case "comparison-status", "comparison-result", "comparison-error":
+            comparisonPanel.receive(event)
+        case "comparison-complete":
+            comparisonPanel.receive(event); resultReceived = true
+            prompt.stringValue = ""; attachedImage = nil; updateCaptureButton(); setStatus("Ready")
+        case "presentation":
+            if let mode = event["mode"] as? String, ["chat", "draw"].contains(mode) { pendingRequestMode = mode }
+        case "route":
+            if let name = event["name"] as? String, let effort = event["reasoningEffort"] as? String {
+                autoRouteCaption = "Auto · \(name) · \(DrawingPreferences.effortTitle(effort))"
+                updateDrawingSettings()
+            }
         case "status": setStatus(event["message"] as? String ?? "Thinking…")
         case "preview":
             guard let result = event["result"] as? [String: Any] else { return }
             previewVisible = true
             render(result, preview: true)
-            setStatus("Drawing…")
+            // Keep the Decisions-selected activity while visual parts stream.
         case "error":
             rollbackPreview()
             resultReceived = true
@@ -1211,11 +1642,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             resultReceived = true
             previewVisible = false
             previous = result
+            lastRequestMode = (event["mode"] as? String).flatMap { ["chat", "draw"].contains($0) ? $0 : nil } ?? pendingRequestMode
             history.append(["role": "user", "content": String(pendingMessage.prefix(4000))])
             history.append(["role": "assistant", "content": String(reply.prefix(4000))])
             history = Array(history.suffix(12))
             attachedImage = nil
-            captureButton.title = "Screen"
+            updateCaptureButton()
             prompt.stringValue = ""
             render(result)
             setExpanded(false)
@@ -1229,6 +1661,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let received = resultReceived
         let status = responseStatus
         let body = responseBuffer
+        if pendingComparison && !received { comparisonPanel.stop(error?.localizedDescription ?? "Comparison failed") }
+        pendingComparison = false
         finishRequest()
         if !received { rollbackPreview() }
         if status >= 400 {
@@ -1238,12 +1672,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         else if !received { showError("Codex ended without a visual. Try again.") }
     }
     private func finishRequest() {
+        if pendingComparison && !resultReceived { comparisonPanel.stop("Request ended") }
         busy = false; requestTask = nil; sendButton.title = ""
         sendButton.image = NSImage(systemSymbolName: "arrow.up", accessibilityDescription: "Send")
-        sendButton.toolTip = "Send · Return"
+        sendButton.toolTip = "Send · Return · automatically choose a visual or text answer"
         sendButton.setAccessibilityLabel("Send")
     }
     private func cancelRequest() {
+        if pendingComparison { comparisonPanel.stop(); pendingComparison = false }
         rollbackPreview()
         requestGeneration += 1
         requestTask?.cancel()
@@ -1261,11 +1697,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private func render(_ result: [String: Any], preview: Bool = false) {
         if overlayReady, let data = try? JSONSerialization.data(withJSONObject: result), let json = String(data: data, encoding: .utf8) {
             webView.evaluateJavaScript("window.clippyRender(\(json), \(preview)); \(preview ? "" : "window.clippyVoice?.setVisual(\(json));") void 0;") { [weak self] _, error in
-                if error != nil { self?.showError("Drawing renderer unavailable. Reopen Clippy after starting the server.") }
+                if error != nil { self?.showError("Drawing renderer unavailable. Reopen Clip after starting the server.") }
             }
         }
         overlay.orderFrontRegardless()
-        if !preview, let reply = result["reply"] as? String { showCaption(reply) }
+        if !preview, !voiceRequested, let reply = result["reply"] as? String { showCaption(reply) }
     }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { /* The module sends ready after clippyRender exists. */ }
     func webView(_ webView: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin, initiatedByFrame frame: WKFrameInfo, type: WKMediaCaptureType, decisionHandler: @escaping (WKPermissionDecision) -> Void) {
@@ -1285,9 +1721,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         switch action {
         case "ready":
             overlayReady = true
+            updateDrawingSettings()
             if connectionProblem == drawingUnavailable { setConnection(nil) }
             if let previous { render(previous) }
-        case "followup": if let text = data["text"] as? String, !text.isEmpty, text.count <= 6000 { generate(text) }
+        case "followup": if let text = data["text"] as? String, !text.isEmpty, text.count <= 6000 { generate(text, mode: lastRequestMode) }
         case "closeOverlay": hideVisuals()
         case "dragOverlay": if let event = NSApp.currentEvent { overlay.performDrag(with: event) }
         case "dictate": startDictation()
@@ -1297,18 +1734,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         case "voiceState":
             guard data["generation"] as? Int == voiceGeneration else { return }
             guard let state = data["state"] as? String else { return }
-            let text = String((data["message"] as? String ?? "").prefix(1500))
+            let text = data["message"] as? String ?? ""
+            guard text.utf16.count <= 64000 else { return }
             if state == "ended" || state == "error" {
                 voiceRequested = false; updateTalkButton()
                 if state == "error" { showError(text) } else { setStatus(text.isEmpty ? "Ready" : text) }
             } else if voiceRequested {
-                if state == "transcript" { showCaption(text) } else { setStatus(text) }
+                if state == "transcript" { showCaption(text, live: true) }
+                else if state == "transcript-start" { captionDismissed = false; captions.orderOut(nil) }
+                else if state == "transcript-cleared" { captions.orderOut(nil) }
+                else { setStatus(String(text.prefix(1500))) }
+            }
+        case "voiceCaptureScreen":
+            guard voiceRequested, data["generation"] as? Int == voiceGeneration,
+                  let id = data["id"] as? String, !id.isEmpty, id.count <= 100 else { return }
+            let generation = voiceGeneration
+            takeScreenshot(automatic: true, isCurrent: { [weak self] in self?.voiceRequested == true && self?.voiceGeneration == generation }) { [weak self] image in
+                guard let self, self.voiceRequested, self.voiceGeneration == generation else { return }
+                self.screenshotIndicator.stringValue = image == nil ? "Screenshot unavailable" : "Screenshot captured"
+                self.screenshotIndicator.setAccessibilityLabel(self.screenshotIndicator.stringValue)
+                self.webView.callAsyncJavaScript("window.clippyVoice.finishScreenCapture(id, image, error)", arguments: ["id": id, "image": image as Any? ?? NSNull(), "error": image == nil ? "Screen capture unavailable. Check Screen Recording access." : NSNull()], in: nil, in: .page) { _ in }
             }
         case "voicePreview":
             if voiceRequested, data["generation"] as? Int == voiceGeneration { overlay.orderFrontRegardless() }
         case "voiceVisual":
             if voiceRequested, data["generation"] as? Int == voiceGeneration, let result = data["result"] as? [String: Any], result["scene"] != nil, result["diagram"] != nil {
-                previous = result; render(result)
+                previous = result; lastRequestMode = "draw"; render(result)
             }
         default: break
         }
@@ -1316,21 +1767,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     @objc private func toggleRealtimeVoice() {
         if voiceRequested { stopRealtimeVoice(); return }
         guard overlayReady else { showError("Wait for the drawing view to finish loading, then try Talk."); return }
-        cancelRequest(); stopDictation(sendTranscript: false); speech.stopSpeaking(at: .immediate)
+        cancelRequest(); selectionEditor.cancel(); stopDictation(sendTranscript: false); speech.stopSpeaking(at: .immediate)
         voiceRequested = true; voiceGeneration += 1
+        screenshotIndicator.stringValue = ""
         overlay.orderFrontRegardless()
         let generation = voiceGeneration
         updateTalkButton(); setStatus("Connecting live voice…")
+        updateDrawingSettings()
         AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
             DispatchQueue.main.async {
                 guard let self, self.voiceRequested, self.voiceGeneration == generation else { return }
                 guard granted else {
                     self.voiceRequested = false; self.updateTalkButton()
-                    self.showError("Allow Clippy microphone access in Privacy & Security to use Talk."); return
+                    self.showError("Allow Clip microphone access in Privacy & Security to use Talk."); return
                 }
                 self.webView.evaluateJavaScript("window.clippyVoice.setMuted(\(!self.voiceEnabled)); window.clippyVoice.setProvider('\(self.provider.rawValue)'); window.clippyVoice.start(\(generation)); void 0;") { [weak self] _, error in
                     guard let self, self.voiceGeneration == generation else { return }
-                    if error != nil { self.stopRealtimeVoice(); self.showError("Live voice could not start. Reopen Clippy and try again.") }
+                    if error != nil { self.stopRealtimeVoice(); self.showError("Live voice could not start. Reopen Clip and try again.") }
                 }
             }
         }
@@ -1348,9 +1801,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
     private func speak(_ text: String) {
         speech.stopSpeaking(at: .immediate)
+        showCaption(text)
         let voices = AVSpeechSynthesisVoice.speechVoices()
         guard let voice = voices.first(where: { $0.language == Locale.current.identifier.replacingOccurrences(of: "_", with: "-") }) ?? voices.first(where: { $0.language.hasPrefix("en") }) ?? voices.first else { return }
-        let utterance = AVSpeechUtterance(string: text)
+        let utterance = AVSpeechUtterance(string: replyCard.text)
         utterance.voice = voice
         speech.speak(utterance)
     }
@@ -1358,40 +1812,80 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) { if !busy && currentStatus == "Speaking" { setStatus("Ready") } }
     func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) { if !busy && !recording && currentStatus == "Speaking" { setStatus("Ready") } }
 
+    private func updateCaptureButton() {
+        let attached = attachedImage != nil
+        captureButton.title = ""
+        captureButton.imagePosition = .imageOnly
+        captureButton.contentTintColor = attached ? .systemBlue : NSColor(white: 0.92, alpha: 1)
+        captureButton.toolTip = attached ? "Screenshot attached · click to remove" : "Attach one screenshot to your next question"
+        captureButton.setAccessibilityLabel(attached ? "Remove screenshot" : "Attach screenshot")
+    }
     @objc private func captureScreen() {
-        guard !busy else { return }
-        if attachedImage != nil { attachedImage = nil; captureButton.title = "Screen"; setStatus("Screen removed"); return }
-        guard CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess() else { showError("Allow Screen Recording in System Settings, then reopen Clippy to attach a screenshot."); return }
+        guard !busy, !captureInProgress else { return }
+        if attachedImage != nil { attachedImage = nil; updateCaptureButton(); screenshotIndicator.stringValue = ""; setStatus("Screen removed"); return }
+        takeScreenshot(automatic: false, isCurrent: { true }) { [weak self] image in
+            guard let self else { return }
+            guard let image else {
+                self.screenshotIndicator.stringValue = "Screenshot unavailable"
+                self.screenshotIndicator.setAccessibilityLabel("Screenshot unavailable")
+                return
+            }
+            self.attachedImage = image
+            self.screenshotIndicator.stringValue = "Screenshot captured"
+            self.screenshotIndicator.setAccessibilityLabel("Screenshot captured")
+            self.updateCaptureButton()
+            if self.voiceRequested {
+                self.webView.callAsyncJavaScript("await window.clippyVoice.shareScreen(image)", arguments: ["image": image], in: nil, in: .page) { [weak self] result in
+                    guard let self else { return }
+                    switch result {
+                    case .success: self.attachedImage = nil; self.updateCaptureButton(); self.setStatus("Screen shared · ask your question")
+                    case .failure: self.showError("Screen attached for a typed question; live sharing failed.")
+                    }
+                }
+            } else { self.setStatus("Screen attached · sent only with your next question") }
+        }
+    }
+    private func takeScreenshot(automatic: Bool, isCurrent: @escaping () -> Bool, completion: @escaping (String?) -> Void) {
+        guard !captureInProgress, isCurrent() else { completion(nil); return }
+        guard CGPreflightScreenCaptureAccess() || (!automatic && CGRequestScreenCaptureAccess()) else {
+            if !automatic { showError("Allow Screen Recording in System Settings, then reopen Clip to attach a screenshot.") }
+            completion(nil); return
+        }
+        captureInProgress = true
+        let restoreComparison = comparisonPanel.hideForCapture()
         let overlayVisible = overlay.isVisible, captionsVisible = captions.isVisible
         island.orderOut(nil); notchBridge.orderOut(nil); shoulderPanel.orderOut(nil); hideDwellRing(); overlay.orderOut(nil); captions.orderOut(nil)
         let target = FileManager.default.temporaryDirectory.appendingPathComponent("clippy-\(UUID().uuidString).png")
-        DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 0.2) { [weak self] in
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
-            process.arguments = ["-x", "-t", "png", "-D", "1", target.path]
-            process.standardError = FileHandle.nullDevice
-            var bytes: Data?
-            do { try process.run(); process.waitUntilExit(); if process.terminationStatus == 0 { bytes = try Data(contentsOf: target) } } catch { }
-            try? FileManager.default.removeItem(at: target)
-            DispatchQueue.main.async {
-                guard let self else { return }
-                self.setExpanded(true)
+        let restore = { [weak self] in
+            guard let self else { return }
+            self.captureInProgress = false
+            self.setExpanded(self.expanded, animated: false)
+            if isCurrent() {
+                restoreComparison()
                 if overlayVisible { self.overlay.orderFrontRegardless() }
                 if captionsVisible { self.captions.orderFrontRegardless() }
-                guard let bytes, let image = NSImage(data: bytes), let bitmap = self.thumbnail(image) else { self.showError("Screen capture failed. Check Screen Recording permission."); return }
-                self.attachedImage = "data:image/png;base64," + bitmap.base64EncodedString()
-                if self.voiceRequested, let image = self.attachedImage {
-                    self.webView.callAsyncJavaScript("await window.clippyVoice.shareScreen(image)", arguments: ["image": image], in: nil, in: .page) { [weak self] result in
-                        guard let self else { return }
-                        switch result {
-                        case .success: self.attachedImage = nil; self.captureButton.title = "Screen"; self.setStatus("Screen shared · ask your question")
-                        case .failure: self.captureButton.title = "Remove screen"; self.showError("Screen attached for a typed question; live sharing failed.")
-                        }
-                    }
-                    return
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+            guard let self, isCurrent() else { restore(); completion(nil); return }
+            DispatchQueue.global(qos: .userInitiated).async {
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+                process.arguments = ["-x", "-t", "png", "-D", "1", target.path]
+                process.standardError = FileHandle.nullDevice
+                var bytes: Data?
+                do {
+                    try process.run()
+                    DispatchQueue.global().asyncAfter(deadline: .now() + 5) { if process.isRunning { process.terminate() } }
+                    process.waitUntilExit()
+                    if process.terminationStatus == 0 { bytes = try Data(contentsOf: target) }
+                } catch { }
+                try? FileManager.default.removeItem(at: target)
+                DispatchQueue.main.async {
+                    restore()
+                    guard isCurrent(), let bytes, let image = NSImage(data: bytes), let bitmap = self.thumbnail(image) else { completion(nil); return }
+                    completion("data:image/png;base64," + bitmap.base64EncodedString())
                 }
-                self.captureButton.title = "Remove screen"
-                self.setStatus("Screen attached · sent only with your next question")
             }
         }
     }

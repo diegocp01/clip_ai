@@ -2,7 +2,7 @@ import { createScene, renderDiagram, sample } from './scene.js';
 import { VoiceConversation } from './voice.js';
 
 const $ = id => document.getElementById(id);
-let current = null, part = null, streaming = false;
+let current = null, part = null, streaming = false, liveVoice = false;
 const viewer = createScene($('scene-host'), selectPart);
 function post(action, extra = {}) { window.webkit?.messageHandlers?.clippy?.postMessage({ action, ...extra }); }
 function hidePart() { part = null; $('part').hidden = true; viewer.clearSelection(); }
@@ -19,11 +19,12 @@ function view(kind) {
 function render(result, preview = false) {
   const preserveCamera = streaming; streaming = preview;
   current = result; $('overlay').hidden = false; $('demo-label').hidden = true;
-  $('visual-title').textContent = (result.title || 'Clippy') + (preview ? ' · Drawing…' : '');
-  $('caption-text').textContent = result.reply || '';
-  const showCaption = Boolean(result.reply) && !window.clippyCaptionManaged;
-  $('caption').hidden = !showCaption;
-  $('overlay').classList.toggle('no-caption', !showCaption);
+  $('visual-title').textContent = (result.title || 'Clip') + (preview ? ' · Drawing…' : '');
+  if(!liveVoice) {
+    $('caption-text').textContent = result.reply || '';
+    $('caption').hidden = !result.reply || Boolean(window.clippyCaptionManaged);
+  }
+  $('overlay').classList.toggle('no-caption', $('caption').hidden);
   const objects = result.scene?.objects || [], diagram = result.diagram || { nodes: [], links: [] };
   const cards = (result.cards || []).slice(0, 3);
   $('cards').replaceChildren();
@@ -44,8 +45,33 @@ function render(result, preview = false) {
 window.clippyRender = render;
 window.clippyRollback = result => { streaming = false; if(result)render(result);else $('overlay').hidden=true; };
 let voiceGeneration = 0;
+const pendingScreens = new Map();
+let screenRequestID = 0;
+function captureScreen({signal}) {
+  if(!window.webkit?.messageHandlers?.clippy) return Promise.reject(new Error('Automatic screen capture requires the native Clip app.'));
+  return new Promise((resolve,reject)=>{
+    const id = String(++screenRequestID);
+    const finish=(image,error)=>{clearTimeout(timer);signal.removeEventListener('abort',abort);pendingScreens.delete(id);error?reject(new Error(error)):resolve(image);};
+    const abort=()=>finish(null,'Voice ended before the screenshot was shared.');
+    const timer=setTimeout(()=>finish(null,'Screen capture timed out.'),10000);
+    if(signal.aborted){abort();return;}
+    signal.addEventListener('abort',abort,{once:true});pendingScreens.set(id,finish);
+    post('voiceCaptureScreen',{id,generation:voiceGeneration});
+  });
+}
 const voice = new VoiceConversation({
-  notify: event => post('voiceState',{...event,generation:voiceGeneration}),
+  captureScreen,
+  notify: event => {
+    if(event.state==='connecting')liveVoice=true;
+    if(['ended','error'].includes(event.state))liveVoice=false;
+    if(event.state==='transcript') {
+      $('caption-text').textContent=event.message;
+      $('caption').hidden=Boolean(window.clippyCaptionManaged)||!event.message;
+    }
+    if(['transcript-start','transcript-cleared'].includes(event.state))$('caption').hidden=true;
+    $('overlay').classList.toggle('no-caption', $('caption').hidden);
+    post('voiceState',{...event,generation:voiceGeneration});
+  },
   render: result => { render(result); post('voiceVisual',{result,generation:voiceGeneration}); },
   preview: result => { render(result,true); post('voicePreview',{generation:voiceGeneration}); },
   rollback: result => window.clippyRollback(result),
@@ -53,9 +79,11 @@ const voice = new VoiceConversation({
 window.clippyVoice = {
   start: generation => {voiceGeneration=generation;return voice.start();}, stop: () => voice.stop(),
   shareScreen: image => voice.shareScreen(image),
+  finishScreenCapture: (id,image,error) => pendingScreens.get(id)?.(image,error),
   setVisual: result => { voice.previous=result; },
   setMuted: value => voice.setMuted(value),
   setProvider: value => voice.setProvider(value),
+  setDrawingSettings: value => voice.setDrawingSettings(value),
 };
 window.addEventListener('pagehide',()=>voice.stop());
 window.clippyHitTest = (x, y) => {

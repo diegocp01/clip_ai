@@ -45,7 +45,7 @@ test('SDK failure never fabricates a result',async()=>{
 });
 test('local HTTP server protects inference and streams validated requests',async t=>{
   let calls=0;
-  const server=createServer({checkAuth:async()=>true,run:async()=>{calls++;return{result,usage:null,elapsedMs:1,model:'gpt-6.1-terra',requestedTier:'standard'};}});
+  const server=createServer({chooseStatus:async()=>null,checkAuth:async()=>true,run:async()=>{calls++;return{result,usage:null,elapsedMs:1,model:'gpt-6.1-terra',requestedTier:'standard'};}});
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
   t.after(()=>server.close());
   const url=`http://127.0.0.1:${server.address().port}`;
@@ -57,17 +57,29 @@ test('local HTTP server protects inference and streams validated requests',async
   const {token}=await(await fetch(url+'/api/session')).json();headers['X-Clippy-Session']=token;
   assert.equal((await fetch(url+'/api/chat',{method:'POST',headers,body:'{"message":""}'})).status,400);
   const response=await fetch(url+'/api/chat',{method:'POST',headers,body:'{"message":"water"}'});
-  assert.equal(response.status,200);assert.equal(JSON.parse((await response.text()).trim()).result.title,'Water');assert.equal(calls,1);
+  assert.equal(response.status,200);assert.equal(JSON.parse((await response.text()).trim().split('\n').at(-1)).result.title,'Water');assert.equal(calls,1);
   assert.equal((await fetch(url+'/%2eenv')).status,403);
 });
 test('disconnect cancels active model generation',async t=>{
   let cancellation;
   const cancelled=new Promise(resolve=>cancellation=resolve);
-  const server=createServer({checkAuth:async()=>true,run:async(_req,{signal,onStatus})=>{onStatus('working');await new Promise(resolve=>signal.addEventListener('abort',()=>{cancellation();resolve();},{once:true}));throw new Error('cancelled');}});
+  const server=createServer({chooseStatus:async()=>null,checkAuth:async()=>true,run:async(_req,{signal,onStatus})=>{onStatus('working');await new Promise(resolve=>signal.addEventListener('abort',()=>{cancellation();resolve();},{once:true}));throw new Error('cancelled');}});
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>server.close());
   const url=`http://127.0.0.1:${server.address().port}`;
   const {token}=await(await fetch(url+'/api/session')).json();const controller=new AbortController();
   const res=await fetch(url+'/api/chat',{method:'POST',headers:{'Content-Type':'application/json','X-Clippy-Session':token},body:'{"message":"x"}',signal:controller.signal});
   const reader=res.body.getReader();await reader.read();controller.abort();
   await Promise.race([cancelled,new Promise((_,reject)=>{const timer=setTimeout(()=>reject(new Error('not cancelled')),2000);timer.unref();})]);
+});
+
+test('drawing selections validate provider and effort and reach the GPT transport',async()=>{
+  const request=normalizeRequest({message:'water',model:'gpt-6.1-sol',reasoningEffort:'high'});
+  let seen;
+  const out=await generate(request,{transport:async args=>{seen=args;return {raw:JSON.stringify(result),usage:null};}});
+  assert.equal(seen.model,'gpt-6.1-sol');assert.equal(seen.reasoningEffort,'high');
+  assert.equal(seen.tier,'fast');assert.equal(out.model,'gpt-6.1-sol');assert.equal(out.reasoningEffort,'high');
+  for(const input of [
+    {model:'claude-opus-5-5'}, {provider:'claude',model:'gpt-6.1-sol'},
+    {model:'arbitrary-model'}, {reasoningEffort:'ultra'}, {reasoningEffort:'--tools'}
+  ])assert.throws(()=>normalizeRequest({message:'test',...input}));
 });

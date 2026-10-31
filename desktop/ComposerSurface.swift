@@ -6,8 +6,6 @@ final class ComposerSurface: NSView {
     private let content: NSView
     private let shell = PetroleumCradle(frame: .zero)
     private let wedges = ComposerWedges(frame: NSRect(origin: .zero, size: ComposerGeometry.size))
-    private let hoverTitle = NSTextField(labelWithString: "")
-    private let hoverDetail = NSTextField(labelWithString: "")
     private var hoveredOption: Int?
     private var expanded = false
     private(set) var currentRadius = ComposerGeometry.cornerRadius
@@ -25,18 +23,6 @@ final class ComposerSurface: NSView {
         oil.mask = clearing
         content.autoresizingMask = [.width, .height]
         shell.autoresizingMask = [.width, .height]
-        hoverTitle.frame = ComposerGeometry.hoverTitle
-        hoverTitle.font = .systemFont(ofSize: 11, weight: .semibold)
-        hoverTitle.textColor = NSColor(calibratedRed: 0.62, green: 1, blue: 0.76, alpha: 1)
-        hoverDetail.frame = ComposerGeometry.hoverDetail
-        hoverDetail.font = .systemFont(ofSize: 10.5)
-        hoverDetail.textColor = NSColor.white.withAlphaComponent(0.85)
-        for label in [hoverTitle, hoverDetail] {
-            label.alignment = .center
-            label.lineBreakMode = .byTruncatingTail
-            label.alphaValue = 0
-            content.addSubview(label)
-        }
         addSubview(content)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -44,7 +30,7 @@ final class ComposerSurface: NSView {
     /// Start from the notch's pure black, then clear it from bottom to top.
     /// The translucent shell underneath stays mounted in both directions.
     func beginMorph() {
-        updateHover(at: nil, details: [])
+        updateHover(at: nil)
         showComposer(true)
         layer?.addSublayer(oil)
     }
@@ -62,7 +48,7 @@ final class ComposerSurface: NSView {
             : [.layerMinXMinYCorner, .layerMaxXMinYCorner, .layerMinXMaxYCorner, .layerMaxXMaxYCorner]
         clearing.colors = [NSColor.white.withAlphaComponent(1 - smoothstep(0.12, 0.72, p)).cgColor,
                            NSColor.white.withAlphaComponent(1 - smoothstep(0.32, 1, p)).cgColor]
-        shell.alphaValue = 0.7 * smoothstep(0.2, 0.8, p)
+        shell.setFinishReveal(smoothstep(0.2, 0.8, p))
         wedges.alphaValue = smoothstep(0.82, 1, p)
         content.alphaValue = smoothstep(0.82, 1, p)
         CATransaction.commit()
@@ -71,7 +57,7 @@ final class ComposerSurface: NSView {
     func endMorph() {
         oil.removeFromSuperlayer()
         oil.contents = nil
-        shell.alphaValue = 0.7
+        shell.setFinishReveal(1)
         wedges.alphaValue = 1
         content.alphaValue = 1
     }
@@ -89,33 +75,32 @@ final class ComposerSurface: NSView {
             addSubview(shell, positioned: .below, relativeTo: content)
             addSubview(wedges, positioned: .above, relativeTo: shell)
         } else {
-            updateHover(at: nil, details: [])
+            updateHover(at: nil)
             wedges.removeFromSuperview()
             shell.removeFromSuperview()
         }
         content.frame = bounds
     }
-    func updateHover(at point: NSPoint?, details: [String]) {
+    func setNotchWidth(_ width: CGFloat?) { shell.setNotchWidth(width) }
+
+    func updateHover(at point: NSPoint?) {
         let index = expanded ? point.flatMap { ComposerGeometry.option(at: $0) } : nil
-        let detail = index.flatMap { details.indices.contains($0) ? details[$0] : nil } ?? ""
-        guard index != hoveredOption || detail != hoverDetail.stringValue else { return }
+        guard index != hoveredOption else { return }
         hoveredOption = index
-        hoverTitle.stringValue = index.map { ComposerGeometry.optionNames[$0] } ?? ""
-        hoverDetail.stringValue = detail
         wedges.select(index)
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.16
-            hoverTitle.animator().alphaValue = index == nil ? 0 : 1
-            hoverDetail.animator().alphaValue = index == nil ? 0 : 1
-        }
     }
 
 }
 
 /// A sandblasted material across the whole shell; the input itself has no box.
-/// The backdrop composites at 70% opacity while controls remain fully opaque.
+/// Keep the native effect at full opacity: translucency comes from its material,
+/// not from blending sharp desktop pixels back over the blurred result.
+/// Only the separate tint/grain finish fades during the morph.
 private final class PetroleumCradle: NSVisualEffectView {
-    private let silhouette = CAShapeLayer()
+    private let finishMask = CAShapeLayer()
+    private let blendMask = CAShapeLayer()
+    private let notchBlend = NotchBlend(frame: .zero)
+    private var maskedSize = NSSize.zero
     private let finish = FrostedFinish(frame: .zero)
 
     override init(frame: NSRect) {
@@ -125,21 +110,69 @@ private final class PetroleumCradle: NSVisualEffectView {
         state = .active
         appearance = NSAppearance(named: .darkAqua)
         wantsLayer = true
-        layer?.mask = silhouette
+        finish.wantsLayer = true
+        finish.layer?.mask = finishMask
         finish.autoresizingMask = [.width, .height]
         finish.frame = bounds
         addSubview(finish)
-        alphaValue = 0.7
+        notchBlend.wantsLayer = true
+        notchBlend.layer?.mask = blendMask
+        notchBlend.autoresizingMask = [.width, .height]
+        notchBlend.frame = bounds
+        addSubview(notchBlend)
+        alphaValue = 1
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    func setNotchWidth(_ width: CGFloat?) { notchBlend.notchWidth = width }
+    func setFinishReveal(_ value: CGFloat) {
+        // Never fade this NSVisualEffectView or an ancestor to tune transparency.
+        // A lower alpha mixes the original, unblurred desktop back into the shell.
+        finish.alphaValue = 0.8 * min(max(value, 0), 1)
+    }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
     override func layout() {
         super.layout()
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        silhouette.frame = bounds
-        silhouette.path = ComposerGeometry.shellPath(in: bounds.insetBy(dx: 0.5, dy: 0.5)).cgPath
+        let path = ComposerGeometry.shellPath(in: bounds.insetBy(dx: 0.5, dy: 0.5))
+        finishMask.frame = bounds
+        finishMask.path = path.cgPath
+        blendMask.frame = bounds
+        blendMask.path = ComposerGeometry.shellPath(in: bounds).cgPath
+        notchBlend.needsDisplay = true
+        // AppKit must mask the backdrop material itself, not just its CALayer.
+        // Reuse the raster mask until the morph changes the view size.
+        if maskedSize != bounds.size, bounds.width > 1, bounds.height > 1 {
+            maskedSize = bounds.size
+            maskImage = NSImage(size: bounds.size, flipped: false) { _ in
+                NSColor.white.setFill()
+                path.fill()
+                return true
+            }
+        }
         CATransaction.commit()
+    }
+}
+
+/// Opaque at the camera seam, then clear outward/downward so the native frost
+/// remains visible. Separate from the finish opacity to meet the real black notch.
+private final class NotchBlend: NSView {
+    var notchWidth: CGFloat? { didSet { if notchWidth != oldValue { needsDisplay = true } } }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    override func draw(_ dirtyRect: NSRect) {
+        guard let width = notchWidth, width > 0, bounds.width > 1,
+              let context = NSGraphicsContext.current?.cgContext else { return }
+        let radius = max(bounds.width * 0.46, width / 2 + 12)
+        let depth = min(bounds.height * 0.45, 90)
+        let core = min((width / 2 + 1) / radius, 0.8)
+        let colors = [CGFloat(1), 1, 0.65, 0.2, 0].map { NSColor.black.withAlphaComponent($0).cgColor }
+        let locations: [CGFloat] = [0, core, core + (1 - core) * 0.32, core + (1 - core) * 0.7, 1]
+        guard let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors as CFArray, locations: locations) else { return }
+        context.saveGState()
+        context.translateBy(x: bounds.midX, y: bounds.maxY)
+        context.scaleBy(x: radius, y: max(depth, 1))
+        context.drawRadialGradient(gradient, startCenter: .zero, startRadius: 0, endCenter: .zero, endRadius: 1, options: [])
+        context.restoreGState()
     }
 }
 
@@ -147,18 +180,18 @@ private final class PetroleumCradle: NSVisualEffectView {
 private final class FrostedFinish: NSView {
     private static let grain = NSImage(size: NSSize(width: 96, height: 96), flipped: false) { _ in
         var seed: UInt64 = 73
-        for _ in 0..<1800 {
+        for _ in 0..<4200 {
             seed = seed &* 6364136223846793005 &+ 1
             let x = CGFloat((seed >> 16) % 192) / 2
             seed = seed &* 6364136223846793005 &+ 1
             let y = CGFloat((seed >> 16) % 192) / 2
-            NSColor(white: (seed >> 8) & 1 == 0 ? 1 : 0, alpha: 0.045).setFill()
+            NSColor(white: (seed >> 8) & 1 == 0 ? 1 : 0, alpha: 0.065).setFill()
             NSRect(x: x, y: y, width: 0.5, height: 0.5).fill()
         }
         return true
     }
     override func draw(_ dirtyRect: NSRect) {
-        NSColor.black.withAlphaComponent(0.12).setFill()
+        NSColor.black.withAlphaComponent(0.08).setFill()
         bounds.fill()
         NSColor(patternImage: Self.grain).setFill()
         bounds.fill()

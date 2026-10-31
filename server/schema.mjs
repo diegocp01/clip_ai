@@ -1,4 +1,6 @@
 import Ajv from 'ajv';
+import { chatSettings } from './chat-settings.mjs';
+import { drawingSettings } from './drawing-settings.mjs';
 
 const string = (maxLength = 1200) => ({ type: 'string', maxLength });
 const number = (minimum, maximum) => ({ type: 'number', minimum, maximum });
@@ -22,8 +24,12 @@ export const resultSchema = object({
 });
 const requestSchema = object({
   message: { ...string(6000), minLength:1 },
+  mode: {type:'string',enum:['chat','draw','auto']},
+  drawing: {anyOf:[{type:'null'},object({provider:{type:'string',enum:['gpt','claude']},model:string(100),reasoningEffort:string(20)})]},
   tier: { type:'string',enum:['standard','fast'] },
   provider: { type:'string',enum:['gpt','claude'] },
+  model: { anyOf:[{type:'null'},string(100)] },
+  reasoningEffort: { anyOf:[{type:'null'},string(20)] },
   history: array(object({ role: {type:'string',enum:['user','assistant']}, content:string(4000) }),12),
   previous: { anyOf:[{type:'null'},resultSchema] },
   image: { anyOf:[{type:'null'},{type:'string',maxLength:7_000_000,pattern:'^data:image/(png|jpeg);base64,[A-Za-z0-9+/=]+$'}] },
@@ -44,12 +50,21 @@ export function assertResult(value) {
 }
 export function normalizeRequest(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Expected a JSON object.');
-  const normalized = {tier:'fast',provider:'gpt',history:[],previous:null,image:null,...value};
+  const normalized = {drawing:null,mode:'draw',tier:'fast',provider:'gpt',model:null,reasoningEffort:null,history:[],previous:null,image:null,...value};
   if (normalized.previous) assertResult(normalized.previous);
   if (!validateRequest(normalized)) throw new Error('Invalid request. Check the message, image size, speed and model settings.');
   if (!normalized.message.trim()) throw new Error('Enter a question first.');
   if (normalized.previous) assertResult(normalized.previous);
-  return normalized;
+  if(normalized.mode==='auto') {
+    if(!normalized.drawing)throw new Error('Automatic presentation needs Draw settings.');
+    drawingSettings(normalized.drawing);
+  } else if(normalized.drawing!==null)throw new Error('Draw settings are only accepted for automatic presentation.');
+  if(normalized.model==='auto') {
+    if(!['chat','auto'].includes(normalized.mode)||![null,'auto'].includes(normalized.reasoningEffort))throw new Error('Auto model and effort are available together for chat only.');
+    return {...normalized,reasoningEffort:'auto'};
+  }
+  const {model,reasoningEffort}=(normalized.mode==='draw'?drawingSettings:chatSettings)(normalized);
+  return {...normalized,model,reasoningEffort};
 }
 export function decodeImage(url) {
   if (!url) return null;

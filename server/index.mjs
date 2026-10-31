@@ -1,4 +1,11 @@
+import {normalizeComparison,runComparison} from './comparison.mjs';
 import http from 'node:http';
+import {chooseScreenContext,normalizeScreenRequest} from './screen-context.mjs';
+import { chooseEditAction } from './edit-decision.mjs';
+import { choosePresentation } from './presentation.mjs';
+import { createSignalDirector,SIGNAL_STATES } from './signal-pattern.mjs';
+import { chooseChatRoute,validateAutoRoute } from './chat-settings.mjs';
+import { chooseLoadingStatus,runWithLoadingStatus } from './decisions.mjs';
 import { randomBytes,timingSafeEqual } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
@@ -12,7 +19,7 @@ import { RealtimeService,VOICE_MODEL } from './realtime.mjs';
 const root=fileURLToPath(new URL('../',import.meta.url));
 const MAX_BODY=8*1024*1024;
 const mime={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml','.png':'image/png'};
-export function createServer({run=generate,runClaude=generateWithClaude,runEdit=editText,checkAuth=authStatus,checkClaude=claudeAuthStatus,voice=new RealtimeService()}={}){
+export function createServer({run=generate,runClaude=generateWithClaude,runEdit=editText,checkAuth=authStatus,checkClaude=claudeAuthStatus,voice=new RealtimeService(),chooseStatus=chooseLoadingStatus,routeChat=chooseChatRoute,routePresentation=choosePresentation,routeEdit=chooseEditAction,routeScreen=chooseScreenContext,directSignal=createSignalDirector()}={}){
   const token=randomBytes(32).toString('hex');
   let active=0;
   const server=http.createServer(async(req,res)=>{
@@ -27,6 +34,38 @@ export function createServer({run=generate,runClaude=generateWithClaude,runEdit=
     if(!hosts.has(req.headers.host)|| (origin&&!hosts.has(origin.replace(/^http:\/\//,''))))return json(403,{error:'Local access only.'});
     let pathname,query;try{const url=new URL(req.url,`http://127.0.0.1:${port}`);pathname=decodeURIComponent(url.pathname);query=url.searchParams;}catch{return json(400,{error:'Invalid path.'});}
     if(req.method==='GET'&&pathname==='/api/session')return json(200,{token});
+    if(req.method==='POST'&&pathname==='/api/signal'){
+      const supplied=Buffer.from(String(req.headers['x-clippy-session']||''));
+      if(supplied.length!==token.length||!timingSafeEqual(supplied,Buffer.from(token)))return json(403,{error:'Refresh your local session.'});
+      if(!req.headers['content-type']?.startsWith('application/json'))return json(415,{error:'Expected application/json.'});
+      try {
+        let size=0;const chunks=[];
+        for await(const chunk of req){size+=chunk.length;if(size>128)return json(413,{error:'Signal request too large.'});chunks.push(chunk);}
+        const body=JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        if(!body || Object.keys(body).length!==1 || !SIGNAL_STATES.includes(body.state))return json(400,{error:'Only a valid signal state is accepted.'});
+        const result=await directSignal(body.state);
+        if(!res.destroyed)return json(200,result);
+      } catch { if(!res.destroyed)return json(400,{error:'Invalid signal request.'}); }
+      return;
+    }
+    if(req.method==='POST'&&pathname==='/api/screen-context') {
+      const supplied=Buffer.from(String(req.headers['x-clippy-session']||''));
+      if(supplied.length!==token.length||!timingSafeEqual(supplied,Buffer.from(token)))return json(403,{error:'Refresh your local session.'});
+      if(!req.headers['content-type']?.startsWith('application/json'))return json(415,{error:'Expected application/json.'});
+      if(active>=2)return json(429,{error:'Two requests are already running.'});
+      active++;
+      const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),3500);
+      const disconnect=()=>{if(!res.writableEnded)controller.abort();};res.on('close',disconnect);
+      try {
+        let size=0;const chunks=[];
+        for await(const chunk of req){size+=chunk.length;if(size>25000)return json(413,{error:'Context request too large.'});chunks.push(chunk);}
+        const body=normalizeScreenRequest(JSON.parse(Buffer.concat(chunks).toString('utf8')));
+        const capture=!body.hasImage&&await routeScreen(body,{signal:controller.signal})===true;
+        if(!res.destroyed)json(200,{capture:!controller.signal.aborted&&capture});
+      }catch {if(!res.destroyed)json(200,{capture:false});}
+      finally{active--;clearTimeout(timer);res.off('close',disconnect);}
+      return;
+    }
     if(req.method==='GET'&&pathname==='/api/realtime/status')return json(200,{configured:await voice.ready().catch(()=>false),model:VOICE_MODEL});
     if(req.method==='POST'&&['/api/realtime/call','/api/realtime/stop'].includes(pathname)){
       const supplied=Buffer.from(String(req.headers['x-clippy-session']||''));
@@ -52,8 +91,32 @@ export function createServer({run=generate,runClaude=generateWithClaude,runEdit=
       finally{clearTimeout(timeout);res.off('close',disconnect);}
       return;
     }
+    if(req.method==='GET'&&pathname==='/api/status'&&query.get('provider')==='both'){const signedIn=await Promise.all([checkAuth(),checkClaude()]);return json(200,{provider:'both',model:'both',authenticated:signedIn.some(Boolean),providers:{gpt:signedIn[0],claude:signedIn[1]}});}
+    if(req.method==='GET'&&pathname==='/api/status'&&query.get('provider')==='auto'){const signedIn=await Promise.all([checkAuth(),checkClaude()]);return json(200,{provider:'auto',model:'auto',authenticated:signedIn.some(Boolean)});}
     if(req.method==='GET'&&pathname==='/api/status'&&query.get('provider')==='claude')return json(200,{provider:'claude',model:CLAUDE_MODEL,reasoningEffort:CLAUDE_EFFORT,authenticated:await checkClaude(),auth:'Claude',note:'Uses your Claude plan through the Claude CLI.'});
     if(req.method==='GET'&&pathname==='/api/status')return json(200,{provider:'gpt',model:MODEL,reasoningEffort:REASONING_EFFORT,defaultTier:'fast',authenticated:await checkAuth(),auth:'ChatGPT',tiers:['standard','fast'],note:'Uses your Codex allowance. Fast mode requires account access and consumes more usage.'});
+    if(req.method==='POST'&&pathname==='/api/compare') {
+      const supplied=Buffer.from(String(req.headers['x-clippy-session']||''));
+      if(supplied.length!==token.length||!timingSafeEqual(supplied,Buffer.from(token)))return json(403,{error:'Refresh your local session.'});
+      if(!req.headers['content-type']?.startsWith('application/json'))return json(415,{error:'Expected application/json.'});
+      if(active)return json(429,{error:'Both needs two available request slots. Wait or cancel the active request.'});
+      active+=2;
+      const controller=new AbortController(),timer=setTimeout(()=>controller.abort(Error('Comparison timed out.')),120000);
+      const disconnect=()=>{if(!res.writableEnded)controller.abort();};res.on('close',disconnect);
+      const send=event=>{if(!res.destroyed&&!res.writableEnded)res.write(JSON.stringify(event)+'\n');};
+      try {
+        let size=0;const chunks=[];
+        for await(const chunk of req){size+=chunk.length;if(size>MAX_BODY)return json(413,{error:'Comparison request too large.'});chunks.push(chunk);}
+        const request=normalizeComparison(JSON.parse(Buffer.concat(chunks).toString('utf8')));
+        controller.signal.throwIfAborted();
+        res.writeHead(200,{'Content-Type':'application/x-ndjson; charset=utf-8'});
+        await runComparison(request,{run,runClaude,runEdit,checkAuth,checkClaude,routeEdit,signal:controller.signal,send});
+      }catch(error){
+        const message=controller.signal.aborted?'Comparison cancelled or timed out.':String(error.message||error).slice(0,1600);
+        if(!res.headersSent&&!res.destroyed)json(400,{error:message});else send({type:'error',message});
+      }finally{clearTimeout(timer);res.off('close',disconnect);active-=2;res.end();}
+      return;
+    }
     if(req.method==='POST'&&['/api/chat','/api/edit'].includes(pathname)){
       const editing=pathname==='/api/edit';
       const supplied=Buffer.from(String(req.headers['x-clippy-session']||''));
@@ -66,8 +129,10 @@ export function createServer({run=generate,runClaude=generateWithClaude,runEdit=
         for await(const chunk of req){size+=chunk.length;if(size>MAX_BODY){json(413,{error:'Image/request too large (8 MB limit).'});return;}chunks.push(chunk);}
         request=(editing?normalizeEditRequest:normalizeRequest)(JSON.parse(Buffer.concat(chunks).toString('utf8')));
       }catch(e){if(!res.writableEnded)json(400,{error:e.message});return;}
-      const claude=request.provider==='claude';
-      if(claude?!await checkClaude():!await checkAuth())return json(401,{error:claude?'Sign in to Claude first: run claude auth login in Terminal.':'Sign in to Codex with ChatGPT first: run codex login in Terminal.'});
+      const automaticPresentation=!editing&&request.mode==='auto';
+      let auto=!editing&&request.mode==='chat'&&request.model==='auto';
+      let claude=request.provider==='claude';
+      if(!auto&&!automaticPresentation&&(claude?!await checkClaude():!await checkAuth()))return json(401,{error:claude?'Sign in to Claude first: run claude auth login in Terminal.':'Sign in to Codex with ChatGPT first: run codex login in Terminal.'});
       if(active>=2)return json(429,{error:'Two requests are already running.'});
       active++;
       const controller=new AbortController();
@@ -76,7 +141,43 @@ export function createServer({run=generate,runClaude=generateWithClaude,runEdit=
       res.on('close',disconnect);
       res.writeHead(200,{'Content-Type':'application/x-ndjson; charset=utf-8','X-Accel-Buffering':'no'});
       const send=event=>{if(!res.destroyed&&!res.writableEnded)res.write(JSON.stringify(event)+'\n');};
-      try{const output=await (editing?runEdit:claude?runClaude:run)(request,{signal:controller.signal,onStatus:message=>send({type:'status',message}),onPreview:result=>send({type:'preview',result})});send({type:'result',provider:request.provider,...output});}
+      try {
+        if(editing&&request.action==='auto') {
+          send({type:'status',message:'Choosing edit…'});
+          const choice=await routeEdit(request,{signal:controller.signal});
+          controller.signal.throwIfAborted();
+          const action=choice==='rewrite'?'rewrite':'proofread';
+          request={...request,action};
+          send({type:'edit-route',action,source:['proofread','rewrite'].includes(choice)?'decisions':'fallback'});
+          send({type:'status',message:action==='rewrite'?'Rewriting…':'Proofreading…'});
+        }
+        if(automaticPresentation) {
+          send({type:'status',message:'Choosing response…'});
+          const choice=await routePresentation(request,{signal:controller.signal});
+          controller.signal.throwIfAborted();
+          const mode=choice==='draw'?'draw':'chat';
+          request={...request,...(mode==='draw'?request.drawing:{}),mode,drawing:null};
+          claude=request.provider==='claude';
+          auto=mode==='chat'&&request.model==='auto';
+          send({type:'presentation',mode,source:['chat','draw'].includes(choice)?'decisions':'fallback'});
+          if(!auto&&(claude?!await checkClaude():!await checkAuth()))throw new Error(`Sign in to ${claude?'Claude':'Codex'} to use the selected ${mode==='draw'?'Draw':'chat'} model.`);
+          controller.signal.throwIfAborted();
+        }
+        if(auto) {
+          send({type:'status',message:'Choosing model…'});
+          const route=validateAutoRoute(await routeChat(request,{signal:controller.signal}));
+          controller.signal.throwIfAborted();
+          claude=route.provider==='claude';
+          if(claude?!await checkClaude():!await checkAuth())throw new Error(`Auto chose ${route.name}, but ${claude?'Claude':'Codex'} is not signed in. Sign in or choose another model manually.`);
+          controller.signal.throwIfAborted();
+          request={...request,provider:route.provider,model:route.model,reasoningEffort:route.reasoningEffort};
+          send({type:'route',...route});
+        }
+        const options={signal:controller.signal,onStatus:message=>send({type:'status',message}),onPreview:result=>send({type:'preview',result})};
+        const output=editing ? await runEdit(request,options)
+          : await runWithLoadingStatus(claude?runClaude:run,request,options,{chooseStatus:automaticPresentation&&request.mode==='draw'?async()=>'Drawing…':chooseStatus});
+        send({type:'result',provider:request.provider,mode:request.mode,...output});
+      }
       catch(e){send({type:'error',message:controller.signal.aborted?(controller.signal.reason?.message||'Request cancelled.') : String(e.message||e).slice(0,1600)});}
       finally{clearTimeout(timer);res.off('close',disconnect);active--;res.end();}
       return;
@@ -98,5 +199,5 @@ if(process.argv[1]===fileURLToPath(import.meta.url)){
   const port=Number(process.env.CLIPPY_PORT||4317);
   const server=createServer();
   server.on('error',error=>{console.error(error.code==='EADDRINUSE'?`Port ${port} is in use. Set CLIPPY_PORT to another port.`:error.message);process.exitCode=1;});
-  server.listen(port,'127.0.0.1',()=>console.log(`Clippy is ready at http://127.0.0.1:${port}`));
+  server.listen(port,'127.0.0.1',()=>console.log(`Clip is ready at http://127.0.0.1:${port}`));
 }

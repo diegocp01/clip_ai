@@ -46,7 +46,7 @@ test('the CLI runs with no tools, MCP, settings or saved sessions',()=>{
   assert.equal(value('--model'),CLAUDE_MODEL);
   assert.equal(value('--effort'),'low');
   assert.equal(JSON.parse(value('--json-schema')).properties.scene.type,'object');
-  assert.match(value('--system-prompt'),/You are Clippy/);
+  assert.match(value('--system-prompt'),/You are Clip/);
   assert.match(value('--system-prompt'),/normalized 0\.\.1/);
 });
 test('the environment keeps the login but drops API keys and the parent session',()=>{
@@ -109,7 +109,7 @@ test('cancelling stops the CLI',async()=>{
 
 test('the server routes each provider to its own runner and sign-in check',async t=>{
   const calls=[];
-  const server=createServer({
+  const server=createServer({chooseStatus:async()=>null,
     run:async(r,o)=>{calls.push('gpt');o.onStatus('codex');return {result:visual,provider:'gpt'};},
     runClaude:async(r,o)=>{calls.push('claude');o.onStatus('claude');return {result:visual,provider:'claude'};},
     checkAuth:async()=>false,checkClaude:async()=>true,
@@ -132,7 +132,7 @@ test('the server routes each provider to its own runner and sign-in check',async
   assert.equal((await send('gemini')).status,400);
   assert.deepEqual(calls,['claude']);
 
-  const signedIn=createServer({run:async()=>({result:visual}),checkAuth:async()=>true,voice:{ready:async()=>false,closeAll:async()=>{}}});
+  const signedIn=createServer({chooseStatus:async()=>null,run:async()=>({result:visual}),checkAuth:async()=>true,voice:{ready:async()=>false,closeAll:async()=>{}}});
   await new Promise(resolve=>signedIn.listen(0,'127.0.0.1',resolve));
   t.after(()=>new Promise(resolve=>signedIn.close(resolve)));
   const other=`http://127.0.0.1:${signedIn.address().port}`;
@@ -149,7 +149,7 @@ test('the server routes each provider to its own runner and sign-in check',async
   assert.equal(claudeStatus.model,CLAUDE_MODEL);
 });
 test('a signed-out Claude gets its own sign-in message',async t=>{
-  const server=createServer({run:async()=>({}),runClaude:async()=>({}),checkAuth:async()=>true,checkClaude:async()=>false,voice:{ready:async()=>false,closeAll:async()=>{}}});
+  const server=createServer({chooseStatus:async()=>null,run:async()=>({}),runClaude:async()=>({}),checkAuth:async()=>true,checkClaude:async()=>false,voice:{ready:async()=>false,closeAll:async()=>{}}});
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
   t.after(()=>new Promise(resolve=>server.close(resolve)));
   const base=`http://127.0.0.1:${server.address().port}`;
@@ -157,4 +157,21 @@ test('a signed-out Claude gets its own sign-in message',async t=>{
   const response=await fetch(base+'/api/chat',{method:'POST',headers:{'Content-Type':'application/json','X-Clippy-Session':token},body:JSON.stringify({message:'hi',provider:'claude'})});
   assert.equal(response.status,401);
   assert.match((await response.json()).error,/claude auth login/);
+});
+
+test('selected Claude model and reasoning effort reach CLI arguments',async()=>{
+  const fake=fakeClaude([success({structured_output:visual})]);
+  const out=await generateWithClaude(request({model:'claude-opus-5-5',reasoningEffort:'max'}),{spawnImpl:fake.spawn,env:{}});
+  assert.equal(fake.args[fake.args.indexOf('--model')+1],'claude-opus-5-5');
+  assert.equal(fake.args[fake.args.indexOf('--effort')+1],'max');
+  assert.equal(out.model,'claude-opus-5-5');assert.equal(out.reasoningEffort,'max');
+});
+
+test('Claude chat uses chat instructions and preserves maximum effort without visual previews',async()=>{
+  const result={...visual,scene:{objects:[]},reply:'Hello'};
+  const fake=fakeClaude([delta(JSON.stringify(result)),success({structured_output:result})]);
+  await generateWithClaude(request({mode:'chat',model:'claude-opus-5-5',reasoningEffort:'max'}),{spawnImpl:fake.spawn,env:{HOME:'/h'},onPreview:()=>assert.fail('no chat visual preview')});
+  const value=flag=>fake.args[fake.args.indexOf(flag)+1];
+  assert.equal(value('--model'),'claude-opus-5-5');assert.equal(value('--effort'),'max');
+  assert.match(value('--system-prompt'),/This is chat, not Draw/);
 });

@@ -9,6 +9,23 @@ func smoothstep(_ from: CGFloat, _ to: CGFloat, _ x: CGFloat) -> CGFloat {
     return t * t * (3 - 2 * t)
 }
 
+/// Shared luminous finish: a bright core, translucent shoulders and fading tips.
+/// Geometry and animation belong to the caller.
+enum SignalFinish {
+    static func apply(to layer: CAGradientLayer, tint: NSColor, core: NSColor,
+                      glowRadius: CGFloat = 5, glowOpacity: Float = 1) {
+        layer.startPoint = CGPoint(x: 0, y: 0.5)
+        layer.endPoint = CGPoint(x: 1, y: 0.5)
+        layer.colors = [tint.withAlphaComponent(0), tint.withAlphaComponent(0.6), core,
+                        tint.withAlphaComponent(0.6), tint.withAlphaComponent(0)].map(\.cgColor)
+        layer.locations = [0, 0.3, 0.5, 0.7, 1]
+        layer.shadowColor = tint.cgColor
+        layer.shadowOffset = .zero
+        layer.shadowRadius = glowRadius
+        layer.shadowOpacity = glowOpacity
+    }
+}
+
 /// A damped spring stepped once per display frame.
 struct Spring {
     var value: CGFloat = 0
@@ -37,9 +54,13 @@ struct SignalBar {
     private var sway = Spring(stiffness: 120, damping: 14)
     private var split = Spring(stiffness: 200, damping: 20)
     private var look = Spring(stiffness: 70, damping: 11)
+    var pattern: String? = nil
+    /// The notch hover's opening round, fitted inside the hold that opens the composer.
+    private var quickRound: Bool { pattern == nil && time < SignalBar.firstRound }
     /// How long the eyes have been open, if they are.
     private var eyesOpen: CGFloat? {
-        if time < SignalBar.firstRound { return time > SignalBar.firstSweep ? time - SignalBar.firstSweep : nil }
+        if let pattern { return pattern == "eyes" ? time.truncatingRemainder(dividingBy: 4.8) : nil }
+        if quickRound { return time > SignalBar.firstSweep ? time - SignalBar.firstSweep : nil }
         let phase = (time - SignalBar.firstRound).truncatingRemainder(dividingBy: SignalBar.sweepTime + SignalBar.eyesTime)
         return phase > SignalBar.sweepTime ? phase - SignalBar.sweepTime : nil
     }
@@ -47,14 +68,15 @@ struct SignalBar {
     /// Two quick closes while the eyes are open: 1 is shut.
     var blink: CGFloat {
         guard let open = eyesOpen else { return 0 }
-        let first = (open - 0.28) / 0.05, second = (open - 1.3) / 0.07
+        let first = quickRound ? (open - 0.28) / 0.05 : (open - 1.3) / 0.07
+        let second = quickRound ? (open - 1.3) / 0.07 : (open - 2.4) / 0.07
         return min(exp(-first * first) + exp(-second * second), 1)
     }
     /// `pointer` runs from -1 at the island's left edge to 1 at its right.
-    mutating func step(_ dt: CGFloat, pointer: CGFloat) {
+    mutating func step(_ dt: CGFloat, pointer: CGFloat, swayScale: CGFloat = 1) {
         time += dt
         split.target = isEyes ? 1 : 0
-        sway.target = isEyes ? 0 : sin(time * 2 * .pi / 0.8)
+        sway.target = isEyes ? 0 : sin(time * 2 * .pi / (quickRound ? 0.8 : 2.4)) * swayScale
         look.target = min(max(pointer, -1), 1)
         split.step(dt); sway.step(dt); look.step(dt)
     }
@@ -67,6 +89,17 @@ struct SignalBar {
         let y = line.midY - height / 2
         return (CGRect(x: center - gap - width / 2, y: y, width: width, height: height),
                 CGRect(x: center + gap - width / 2, y: y, width: width, height: height))
+    }
+}
+
+/// A soft light that eases after the pointer, the same at any frame rate.
+struct CursorGlow {
+    private(set) var position = CGPoint.zero
+    mutating func jump(to point: CGPoint) { position = point }
+    mutating func follow(_ point: CGPoint, dt: CGFloat) {
+        let ease = 1 - exp(-dt * 14)
+        position.x += (point.x - position.x) * ease
+        position.y += (point.y - position.y) * ease
     }
 }
 

@@ -111,6 +111,19 @@ _ = hold.update(inside: true, dt: 0.5)
 hold.disarm()
 expect(!hold.update(inside: true, dt: 2), "Opening some other way must use up the hold")
 
+// The light eases after the pointer instead of snapping to it, the same at any frame rate.
+var glow = CursorGlow()
+glow.jump(to: CGPoint(x: 100, y: 50))
+expect(glow.position == CGPoint(x: 100, y: 50), "The light must start at the pointer")
+glow.follow(CGPoint(x: 200, y: 50), dt: 1.0 / 60)
+expect(glow.position.x > 100 && glow.position.x < 130, "The light must trail the pointer")
+for _ in 0..<60 { glow.follow(CGPoint(x: 200, y: 50), dt: 1.0 / 60) }
+expect(abs(glow.position.x - 200) < 0.5, "The light must catch up within a second")
+var fast = CursorGlow(), slow = CursorGlow()
+for _ in 0..<12 { fast.follow(CGPoint(x: 100, y: 0), dt: 1.0 / 120) }
+for _ in 0..<3 { slow.follow(CGPoint(x: 100, y: 0), dt: 1.0 / 30) }
+expect(abs(fast.position.x - slow.position.x) < 0.01, "The light must move the same at any frame rate")
+
 // Within the first second, the line moves both ways, splits into eyes that look at the pointer, and blinks.
 let barLine = CGRect(x: 51.5, y: 4, width: 130, height: 2)
 let barBounds = CGRect(x: 0, y: 0, width: 233, height: 44)
@@ -148,9 +161,9 @@ print("Native island layout checks passed (notched, shifted, external, and missi
 
 // Opening/closing shares the final top edge, and every composer control stays visible.
 let composerBounds = NSRect(origin: .zero, size: ComposerGeometry.size)
-let controls = [ComposerGeometry.input, ComposerGeometry.send, ComposerGeometry.collapse,
+let controls = [ComposerGeometry.modelCaption, ComposerGeometry.input, ComposerGeometry.send, ComposerGeometry.collapse,
                 ComposerGeometry.screen, ComposerGeometry.talk, ComposerGeometry.voice,
-                ComposerGeometry.tier, ComposerGeometry.more, ComposerGeometry.provider]
+                ComposerGeometry.draw, ComposerGeometry.more, ComposerGeometry.provider]
 for (i, control) in controls.enumerated() {
     expect(composerBounds.contains(control), "Composer control must fit inside the surface")
     let shell = ComposerGeometry.shellPath(in: composerBounds)
@@ -179,6 +192,10 @@ for source in morphSources {
 }
 let composerLayout = IslandLayout(screen: external, safeTop: 0, leftArea: nil, rightArea: nil, expanded: true)
 expect(!composerLayout.statusFrame.intersects(ComposerGeometry.provider), "Status text must not run under the model toggle")
+for frame in [composerLayout.statusFrame, composerLayout.activityFrame, composerLayout.lineFrame] {
+    expect(composerBounds.contains(frame), "Busy/error/audio status must fit the shorter composer")
+    expect(!frame.intersects(ComposerGeometry.input), "Status must not cover the typing area")
+}
 print("Composer bounds, clean camera boundary, continuous morph and reversal checks passed.")
 
 // Hover sectors belong to one option and never cover the typing controls.
@@ -186,7 +203,7 @@ for (index, frame) in ComposerGeometry.optionFrames.enumerated() {
     expect(ComposerGeometry.option(at: NSPoint(x: frame.midX, y: frame.midY)) == index,
            "Each circular option must highlight its own wedge")
 }
-for frame in [ComposerGeometry.input, ComposerGeometry.send, ComposerGeometry.collapse] {
+for frame in [ComposerGeometry.input, ComposerGeometry.send, ComposerGeometry.modelCaption] {
     for point in [NSPoint(x: frame.minX, y: frame.minY), NSPoint(x: frame.midX, y: frame.midY),
                   NSPoint(x: frame.maxX - 0.1, y: frame.maxY - 0.1)] {
         expect(ComposerGeometry.option(at: point) == nil, "Typing and Send must not highlight an option")
@@ -196,3 +213,166 @@ for point in [NSPoint(x: -1, y: 100), NSPoint(x: 480, y: 0), NSPoint(x: 240, y: 
     expect(ComposerGeometry.option(at: point) == nil, "Leaving the shell clears the option")
 }
 print("Composer hover sectors and central input exclusion passed.")
+
+// Selection persistence and provider isolation use the same catalog as the server.
+let models = try JSONDecoder().decode([DrawingModel].self, from: Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[1])))
+let suite = "clippy-model-tests-\(UUID().uuidString)"
+let preferences = UserDefaults(suiteName: suite)!
+defer { preferences.removePersistentDomain(forName: suite) }
+let choices = DrawingPreferences(models: models, defaults: preferences)
+expect(choices.model(for: "gpt").id == "gpt-6.1-terra", "GPT default must stay Terra")
+choices.select(model: "gpt-6.1-sol", provider: "gpt")
+choices.select(effort: "high", provider: "gpt")
+expect(choices.model(for: "claude").id == "claude-sonnet-5-5", "Provider selections must stay independent")
+choices.select(model: "claude-opus-5-5", provider: "gpt")
+expect(choices.model(for: "gpt").id == "gpt-6.1-sol", "Reject cross-provider models")
+choices.select(effort: "invalid", provider: "gpt")
+expect(choices.effort(for: "gpt") == "high", "Reject unsupported efforts")
+let restored = DrawingPreferences(models: models, defaults: preferences)
+expect(restored.request(for: "gpt")["model"] == "gpt-6.1-sol" && restored.request(for: "gpt")["reasoningEffort"] == "high", "Model and effort must survive a relaunch")
+restored.select(model: "gpt-6.1-terra", provider: "gpt")
+expect(restored.effort(for: "gpt") == "low", "Each model keeps its own effort")
+print("Drawing model and effort preferences passed.")
+
+// Selection counts describe words rather than whitespace runs or punctuation.
+expect(SelectionSummary.wordCount("Hello, world!\nOne more word.") == 5, "Count words across lines and punctuation")
+expect(SelectionSummary.wordCount("   \n!!! 🙂") == 0, "Whitespace, punctuation and emoji are not words")
+expect(SelectionSummary.wordCount("café déjà vu") == 3, "Count accented words")
+expect(SelectionSummary.label(for: 1) == "1 word | selected text", "Use singular for one word")
+expect(SelectionSummary.label(for: 12) == "12 words | selected text", "Use requested badge wording")
+expect(SelectionSummary.label(for: 0) == nil, "Hide the empty selection badge")
+expect(composerBounds.contains(ComposerGeometry.selectionIndicator), "Selection badge stays inside composer")
+expect(!ComposerGeometry.selectionIndicator.intersects(ComposerGeometry.input), "Selection badge must not cover input")
+for frame in ComposerGeometry.optionFrames + [ComposerGeometry.send] {
+    expect(!ComposerGeometry.selectionIndicator.intersects(frame), "Selection badge must not overlap controls")
+}
+let sourceElement = AXUIElementCreateApplication(123)
+let selection = SelectionSummary.Snapshot(pid: 123, element: sourceElement, range: CFRange(location: 0, length: 5), text: "hello")
+let duplicate = SelectionSummary.Snapshot(pid: 123, element: sourceElement, range: CFRange(location: 0, length: 5), text: "hello")
+let moved = SelectionSummary.Snapshot(pid: 123, element: sourceElement, range: CFRange(location: 9, length: 5), text: "hello")
+let changed = SelectionSummary.Snapshot(pid: 123, element: sourceElement, range: CFRange(location: 0, length: 5), text: "Hallo")
+expect(selection.fingerprint == duplicate.fingerprint, "Reopening the same selection has a stable duplicate identity")
+expect(selection.fingerprint != moved.fingerprint, "The same words elsewhere are a new selection")
+expect(selection.fingerprint != changed.fingerprint, "Changed selected text is eligible for another edit")
+expect(!selection.fingerprint.contains("hello"), "Duplicate identity retains no plaintext selection")
+expect(SelectionSummary.readSelection(pid: ProcessInfo.processInfo.processIdentifier) == nil, "Never capture Clip's own prompt")
+print("Selected-text word counting, badge geometry and selection identity passed.")
+
+let chatModels = try JSONDecoder().decode([DrawingModel].self, from: Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[2])))
+let chat = ChatPreferences(models: chatModels, defaults: preferences)
+let drawBefore = choices.request(for: "gpt")
+expect(chat.isAuto, "Chat defaults to Auto before the user makes a selection")
+expect(chat.request(for: "gpt")["model"] == "auto" && chat.request(for: "gpt")["reasoningEffort"] == "auto", "Auto owns both model and effort")
+expect(chat.request(for: "gpt")["mode"] == "chat", "Auto is chat only")
+expect(choices.request(for: "gpt") == drawBefore, "Auto must not mutate Draw preferences")
+chat.isAuto = false
+expect(!ChatPreferences(models: chatModels, defaults: preferences).isAuto, "An explicit manual choice survives relaunch")
+chat.manual.select(model: "gpt-6-astra", provider: "gpt")
+chat.manual.select(effort: "ultra", provider: "gpt")
+expect(chat.request(for: "gpt")["reasoningEffort"] == "ultra", "Chat supports all GPT reasoning efforts")
+expect(choices.request(for: "gpt") == drawBefore, "Manual chat selections must not mutate Draw")
+chat.isAuto = true
+let restoredChat = ChatPreferences(models: chatModels, defaults: preferences)
+expect(restoredChat.isAuto && restoredChat.manual.effort(for: "gpt") == "ultra", "Auto and manual settings persist independently")
+expect(choices.request(for: "gpt") == drawBefore, "Restoring chat must not mutate Draw")
+print("Chat Auto persistence and Draw isolation passed.")
+
+assert(ComposerSignal.stripFrame.maxY <= ComposerGeometry.size.height)
+assert(!ComposerSignal.stripFrame.intersects(ComposerGeometry.modelCaption))
+assert(!ComposerSignal.stripFrame.intersects(ComposerGeometry.input))
+for pattern in ["line", "eyes", "wave"] {
+    var signal = SignalBar(); signal.pattern = pattern
+    for i in 0..<900 {
+        signal.step(1.0 / 30, pointer: i < 450 ? -1 : 1)
+        let bars = signal.bars(line: CGRect(x: 45, y: 3.75, width: 130, height: 2.5), room: 24)
+        for rect in [bars.left, bars.right] {
+            assert(rect.width > 0 && rect.height > 0)
+            assert(rect.minX >= 0 && rect.maxX <= 220 && rect.minY >= 0 && rect.maxY <= 10)
+        }
+    }
+    assert(signal.isEyes == (pattern == "eyes"))
+}
+print("Expanded signal stays within its strip and clear of caption/input.")
+
+// Translucency must not attenuate the actual backdrop blur, including mid-morph.
+let frostedSurface = ComposerSurface(content: NSView(frame: .zero))
+frostedSurface.frame = NSRect(origin: .zero, size: ComposerGeometry.size)
+frostedSurface.showComposer(true)
+let material = frostedSurface.subviews.compactMap { $0 as? NSVisualEffectView }.first!
+assert(material.material == .hudWindow && material.blendingMode == .behindWindow)
+assert(material.state == .active)
+for reveal: CGFloat in [0, 0.2, 0.5, 0.8, 1] {
+    frostedSurface.setMorph(reveal: reveal, radius: 28, notched: true)
+    assert(material.alphaValue == 1 && frostedSurface.alphaValue == 1)
+}
+frostedSurface.endMorph()
+assert(material.alphaValue == 1)
+assert(material.subviews.first!.alphaValue == 0.8)
+print("Frosted material retains full blur while tint fades independently.")
+
+expect(composerBounds.contains(ComposerGeometry.screenshotIndicator), "Screenshot notice stays inside the composer")
+for frame in ComposerGeometry.optionFrames + [ComposerGeometry.input, ComposerGeometry.selectionIndicator] {
+    expect(!frame.intersects(ComposerGeometry.screenshotIndicator), "Screenshot notice does not overlap input, selection, or controls")
+}
+print("Screenshot notice geometry passed.")
+
+let shortReplySize = ReplyCardLayout.size(text: "A short reply.", available: NSSize(width: 1440, height: 900))
+let longReplySize = ReplyCardLayout.size(text: String(repeating: "A full paragraph remains readable. ", count: 200), available: NSSize(width: 1440, height: 900))
+assert(shortReplySize.width >= 240 && shortReplySize.width <= 640 && shortReplySize.height >= 64)
+assert(longReplySize.height > shortReplySize.height && longReplySize.height <= 342)
+let narrowReplySize = ReplyCardLayout.size(text: "Readable", available: NSSize(width: 360, height: 600))
+assert(narrowReplySize.width <= 312)
+print("Reply cards fit short, long and narrow-screen answers without limiting text.")
+
+// Reopening and relaunching should feel fresh without an API or context access.
+var greetings = OpeningGreeting(defaults: preferences)
+var seenGreetings = Set<String>()
+for _ in OpeningGreeting.phrases {
+    let line = greetings.next()
+    expect(!line.isEmpty && line.split(whereSeparator: { $0.isWhitespace }).count <= 5, "Opening greetings must contain at most five words")
+    expect(seenGreetings.insert(line).inserted, "A greeting deck must not repeat before exhaustion")
+}
+let lastGreeting = preferences.string(forKey: "lastOpeningGreeting")
+var relaunchedGreetings = OpeningGreeting(defaults: preferences)
+expect(relaunchedGreetings.next() != lastGreeting, "Relaunch must not repeat the last greeting")
+expect(OpeningCaptionFrame.at(2, reducedMotion: false).greeting, "Keep the greeting readable before fading")
+expect(OpeningCaptionFrame.at(3.8, reducedMotion: false).opacity < 1, "Greeting fades slowly")
+expect(!OpeningCaptionFrame.at(4.6, reducedMotion: false).greeting, "Restore the selector during its fade in")
+expect(OpeningCaptionFrame.at(5, reducedMotion: false).finished, "Always finish with the model selector")
+expect(OpeningCaptionFrame.at(3.3, reducedMotion: true).finished && OpeningCaptionFrame.at(3.3, reducedMotion: true).opacity == 1, "Reduced motion restores the selector without fading")
+print("Opening greeting variety, five-word limit and fade timing passed.")
+
+let attentionBounds = NSRect(origin: .zero, size: ComposerGeometry.size)
+expect(ComposerAttention.pointer(NSPoint(x: 40, y: 170), in: attentionBounds) != nil, "Pointer tracking includes the whole bowl, not just the signal strip")
+expect(ComposerAttention.pointer(NSPoint(x: 10, y: 10), in: attentionBounds) == nil, "Points outside the curved shell do not attract the signal")
+expect(ComposerAttention.pointer(NSPoint(x: -30, y: 170), in: attentionBounds) == nil, "Outside-screen motion is ignored")
+var follows = ComposerAttention()
+for _ in 0..<90 { follows.step(1.0 / 30, pointer: NSPoint(x: -1, y: 0.6)) }
+expect(follows.horizontal < -0.9 && follows.vertical > 0.5, "Follow reacts to horizontal and vertical pointer movement")
+for _ in 0..<90 { follows.step(1.0 / 30, pointer: NSPoint(x: 1, y: -0.6)) }
+expect(follows.horizontal > 0.9 && follows.vertical < -0.5, "Follow changes direction with the pointer")
+for mode in ["wander", "drift_left", "drift_right"] {
+    var a = ComposerAttention(), b = ComposerAttention(); a.mode = mode; b.mode = mode
+    var minX: CGFloat = 10, maxX: CGFloat = -10
+    var bodies = ["line", "eyes", "wave"].map { pattern -> SignalBar in var bar = SignalBar(); bar.pattern = pattern; return bar }
+    for _ in 0..<900 {
+        a.step(1.0 / 30, pointer: NSPoint(x: -1, y: -1)); b.step(1.0 / 30, pointer: NSPoint(x: 1, y: 1))
+        expect(abs(a.horizontal - b.horizontal) < 0.00001 && abs(a.vertical - b.vertical) < 0.00001, "Independent behavior must ignore the actual mouse")
+        minX = min(minX, a.horizontal); maxX = max(maxX, a.horizontal)
+        for index in bodies.indices {
+            bodies[index].step(1.0 / 30, pointer: a.horizontal, swayScale: 0.4)
+            let line = CGRect(x: 45 + a.horizontal * 10, y: 3.75 + a.vertical * 0.7, width: 130, height: 2.5)
+            let pair = bodies[index].bars(line: line, room: 24)
+            expect(NSRect(x: 0, y: 0, width: 220, height: 10).contains(pair.left) && NSRect(x: 0, y: 0, width: 220, height: 10).contains(pair.right), "Independent motion stays within its strip")
+        }
+    }
+    expect(maxX - minX > 1, "Independent motion must travel without pointer input")
+}
+var transitions = ComposerAttention()
+for _ in 0..<90 { transitions.step(1.0 / 30, pointer: NSPoint(x: 1, y: 0)) }
+let beforeSwitch = transitions.horizontal
+transitions.mode = "wander"; transitions.step(1.0 / 30, pointer: NSPoint(x: -1, y: 0))
+expect(abs(transitions.horizontal - beforeSwitch) < 0.1, "Changing attention mode must not snap the signal")
+transitions.mode = "follow"; transitions.step(1.0 / 30, pointer: nil)
+expect(!transitions.following, "Follow mode wanders when the mouse leaves")
+print("Composer mouse attention, autonomous motion, bounds and smooth switching passed.")

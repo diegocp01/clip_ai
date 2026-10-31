@@ -2,25 +2,26 @@ import AppKit
 
 /// Expanded-only metrics. The compact signal/hover geometry is independent.
 enum ComposerGeometry {
-    static let size = NSSize(width: 480, height: 238)
+    static let size = NSSize(width: 480, height: 200)
     static let cornerRadius: CGFloat = 28
-    static let prompt = NSRect(x: 90, y: 112, width: 300, height: 68)
-    static let input = NSRect(x: 106, y: 135, width: 226, height: 22)
-    static let send = NSRect(x: 342, y: 128, width: 36, height: 36)
-    static let collapse = NSRect(x: 420, y: 194, width: 28, height: 28)
-    static let screen = NSRect(x: 52, y: 88, width: 36, height: 36)
-    static let talk = NSRect(x: 110, y: 40, width: 36, height: 36)
-    static let voice = NSRect(x: 182, y: 16, width: 36, height: 36)
-    static let tier = NSRect(x: 334, y: 40, width: 36, height: 36)
-    static let provider = NSRect(x: 262, y: 16, width: 36, height: 36)
-    static let more = NSRect(x: 392, y: 88, width: 36, height: 36)
+    static let modelCaption = NSRect(x: 110, y: 176, width: 260, height: 14)
+    static let prompt = NSRect(x: 90, y: 112, width: 300, height: 56)
+    static let selectionIndicator = NSRect(x: 106, y: 112, width: 226, height: 16)
+    static let screenshotIndicator = NSRect(x: 128, y: 99, width: 204, height: 12)
+    static let input = NSRect(x: 106, y: 134, width: 226, height: 22)
+    static let send = NSRect(x: 342, y: 127, width: 36, height: 36)
+    static let screen = NSRect(x: 36, y: 116, width: 36, height: 36)
+    static let talk = NSRect(x: 80, y: 62, width: 36, height: 36)
+    static let voice = NSRect(x: 144, y: 28, width: 36, height: 36)
+    static let provider = NSRect(x: 222, y: 14, width: 36, height: 36)
+    static let draw = NSRect(x: 300, y: 28, width: 36, height: 36)
+    static let more = NSRect(x: 364, y: 62, width: 36, height: 36)
+    static let collapse = NSRect(x: 408, y: 116, width: 36, height: 36)
 
-    static let optionFrames = [screen, talk, voice, provider, tier, more]
-    static let optionNames = ["Screen", "Talk", "Voice", "Model", "Reasoning", "More"]
-    static let hoverTitle = NSRect(x: 90, y: 113, width: 300, height: 16)
-    static let hoverDetail = NSRect(x: 70, y: 94, width: 340, height: 16)
+    static let optionFrames = [screen, talk, voice, provider, draw, more, collapse]
+    static let optionNames = ["Screen", "Talk", "Voice", "Model", "Draw", "More", "Collapse"]
     static let optionCenter = NSPoint(x: size.width / 2, y: size.height)
-    static let innerRing = NSRect(x: 45, y: 78, width: 390, height: 320)
+    static let innerRing = NSRect(x: 45, y: 80, width: 390, height: 240)
 
     /// Split the lower ring midway between neighboring option centers.
     /// The central typing area never participates in hover selection.
@@ -46,7 +47,7 @@ enum ComposerGeometry {
         return path
     }
     static func option(at point: NSPoint) -> Int? {
-        guard !prompt.contains(point), !collapse.contains(point),
+        guard !prompt.contains(point), !screenshotIndicator.contains(point), !modelCaption.contains(point),
               shellPath(in: NSRect(origin: .zero, size: size)).contains(point),
               !NSBezierPath(ovalIn: innerRing).contains(point) else { return nil }
         let angle = atan2(point.x - optionCenter.x, optionCenter.y - point.y)
@@ -177,11 +178,11 @@ struct IslandLayout {
         let center = notch?.midX ?? screen.midX
         let top = screen.maxY - max(safeTop, notch == nil ? 4 : 0)
         frame = NSRect(x: center - width / 2, y: top - height, width: width, height: height)
-        statusFrame = expanded ? NSRect(x: 210, y: 199, width: 195, height: 20)
+        statusFrame = expanded ? NSRect(x: 144, y: 174, width: 235, height: 20)
                                : NSRect(x: 26, y: 2, width: textWidth, height: 18)
-        activityFrame = expanded ? NSRect(x: 180, y: 199, width: 24, height: 20)
+        activityFrame = expanded ? NSRect(x: 116, y: 174, width: 24, height: 20)
                                  : NSRect(x: 8, y: 1, width: 24, height: 20)
-        if expanded { lineFrame = NSRect(x: 193, y: 202, width: 3, height: 14) }
+        if expanded { lineFrame = NSRect(x: 129, y: 177, width: 3, height: 14) }
         else if awake { lineFrame = NSRect(x: 10, y: 3, width: width - 20, height: 2) }
         else { lineFrame = NSRect(x: content == .idle || content == .loading ? (width - 3) / 2 : 12, y: (height - 14) / 2, width: 3, height: 14) }
         wakeArea = NSRect(x: 0, y: 0, width: width, height: height)
