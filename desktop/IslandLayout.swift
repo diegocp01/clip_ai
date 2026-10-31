@@ -85,6 +85,16 @@ enum ComposerGeometry {
     }
 }
 
+/// The one dismiss control for anything on screen floats just below the island.
+enum DismissGeometry {
+    static let size: CGFloat = 30
+    static let gap: CGFloat = 8
+    /// Centered on the camera when there is one, so it doesn't drift with the resting island.
+    static func frame(under island: NSRect, centeredOn center: CGFloat?) -> NSRect {
+        NSRect(x: (center ?? island.midX) - size / 2, y: island.minY - gap - size, width: size, height: size)
+    }
+}
+
 /// What the collapsed island shows, which decides how much room it takes.
 enum IslandContent: Equatable {
     case loading

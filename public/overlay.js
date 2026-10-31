@@ -43,7 +43,7 @@ function render(result, preview = false) {
   if (!hasScene && !hasDiagram) { $('diagram-frame').hidden = true; $('fit').hidden = true; }
 }
 window.clippyRender = render;
-window.clippyRollback = result => { streaming = false; if(result)render(result);else $('overlay').hidden=true; };
+window.clippyRollback = result => { streaming = false; if(result)render(result);else{$('overlay').hidden=true;post('visualCleared');} };
 let voiceGeneration = 0;
 const pendingScreens = new Map();
 let screenRequestID = 0;
@@ -102,7 +102,6 @@ window.clippyHitTest = (x, y) => {
 $('scene-tab').addEventListener('click', () => view('scene'));
 $('diagram-tab').addEventListener('click', () => view('diagram'));
 $('fit').addEventListener('click', () => viewer.reset());
-$('close').addEventListener('click', () => { $('overlay').hidden = true; post('closeOverlay'); });
 $('part-close').addEventListener('click', hidePart);
 $('part-ask').addEventListener('click', () => {
   if (!part) return;

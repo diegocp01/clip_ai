@@ -28,12 +28,8 @@ final class ComparisonPanel: NSObject, NSWindowDelegate {
         window.appearance = NSAppearance(named: .darkAqua)
         let glass = NSView(frame: NSRect(x: 0, y: 0, width: 840, height: 300))
         window.contentView = glass
-        let close = NSButton(image: NSImage(systemSymbolName: "xmark", accessibilityDescription: "Dismiss comparison")!, target: self, action: #selector(dismissPanel))
-        close.isBordered = false; close.contentTintColor = .secondaryLabelColor
-        close.frame = NSRect(x: 810, y: 272, width: 26, height: 26); close.autoresizingMask = [.minXMargin, .minYMargin]
-        close.setAccessibilityLabel("Dismiss comparison"); glass.addSubview(close)
         stopButton = NSButton(title: "Stop", target: self, action: #selector(cancel))
-        stopButton.frame = NSRect(x: 744, y: 272, width: 58, height: 26)
+        stopButton.frame = NSRect(x: 772, y: 272, width: 58, height: 26)
         stopButton.isBordered = false; stopButton.font = .systemFont(ofSize: 11)
         stopButton.autoresizingMask = [.minXMargin, .minYMargin]; glass.addSubview(stopButton)
         let stack = NSStackView(); stack.orientation = .horizontal; stack.distribution = .fillEqually; stack.spacing = 14
@@ -117,7 +113,8 @@ final class ComparisonPanel: NSObject, NSWindowDelegate {
         let frame = panel.frame
         panel.setFrame(NSRect(x: frame.minX, y: frame.maxY - height, width: frame.width, height: height), display: true)
     }
-    @objc private func dismissPanel() { panel?.close() }
+    var isVisible: Bool { panel?.isVisible == true }
+    func dismiss() { panel?.close() }
     func stop(_ reason: String = "Cancelled") {
         for provider in pending { statuses[provider]?.stringValue = reason }
         pending.removeAll(); stopButton?.isEnabled = false; stopButton?.isHidden = true

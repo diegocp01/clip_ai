@@ -25,6 +25,27 @@ final class IslandView: NSView {
     override func accessibilityPerformPress() -> Bool { onExpand?(); return true }
 }
 
+final class DismissButton: NSButton {
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        title = ""
+        image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Dismiss")?.withSymbolConfiguration(.init(pointSize: 11, weight: .semibold))
+        imagePosition = .imageOnly
+        isBordered = false
+        contentTintColor = NSColor.white.withAlphaComponent(0.85)
+        wantsLayer = true
+        layer?.cornerRadius = frame.width / 2
+        layer?.backgroundColor = NSColor.black.withAlphaComponent(0.82).cgColor
+        layer?.borderWidth = 0.75
+        layer?.borderColor = NSColor.white.withAlphaComponent(0.18).cgColor
+        toolTip = "Dismiss"
+        setAccessibilityLabel("Dismiss what's on screen")
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    // The app is rarely active, and a click here should work on the first try.
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+}
+
 final class ActivityMark: NSView {
     private var timer: Timer?
     private var phase: CGFloat = 0
@@ -65,6 +86,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var webView: WKWebView!
     private var captions: FloatingPanel!
     private var replyCard: ReplyCard!
+    private var dismissPanel: FloatingPanel!
+    private var drawingOnScreen = false
     private var captionDismissed = false
     private var statusItem: NSStatusItem!
     private var statusLabel: NSTextField!
@@ -206,7 +229,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         keyboardMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .leftMouseDown, .rightMouseDown]) { [weak self] event in
             guard let self, self.menuTrackingDepth == 0 else { return event }
             if event.type != .keyDown {
-                if self.expanded, let window = event.window, window !== self.island,
+                if self.expanded, let window = event.window, window !== self.island, window !== self.dismissPanel,
                    window.level.rawValue < NSWindow.Level.popUpMenu.rawValue,
                    !self.island.frame.contains(window.convertPoint(toScreen: event.locationInWindow)) {
                     self.setExpanded(false)
@@ -521,7 +544,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private func startOverlayHitTesting() {
         // The transparent WebView has a rectangular native surface. Test its
         // actual drawn objects so the empty area behaves like the desktop.
-        let timer = Timer(timeInterval: 0.05, repeats: true) { [weak self] _ in self?.updateOverlayHitTesting(); if self?.frameTimer == nil { self?.updatePointer() } }
+        let timer = Timer(timeInterval: 0.05, repeats: true) { [weak self] _ in self?.updateOverlayHitTesting(); self?.updateDismissButton(); if self?.frameTimer == nil { self?.updatePointer() } }
         hitTestTimer = timer
         RunLoop.main.add(timer, forMode: .common)
     }
@@ -632,11 +655,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         captions.ignoresMouseEvents = false
         captions.hasShadow = true
         replyCard = ReplyCard(frame: .zero)
-        replyCard.onDismiss = { [weak self] in
-            self?.captionDismissed = true; self?.captions.orderOut(nil)
-            self?.speech.stopSpeaking(at: .immediate)
-        }
         captions.contentView = replyCard
+        buildDismissButton()
+    }
+    // One X under the notch closes whatever is on screen, instead of one on each output.
+    private func buildDismissButton() {
+        let size = DismissGeometry.size
+        dismissPanel = panel(NSRect(x: 0, y: 0, width: size, height: size), level: island.level)
+        dismissPanel.title = "Clip dismiss"
+        dismissPanel.becomesKeyOnlyIfNeeded = true
+        let button = DismissButton(frame: NSRect(x: 0, y: 0, width: size, height: size))
+        button.target = self
+        button.action = #selector(dismissOutputs)
+        dismissPanel.contentView = button
+    }
+    @objc private func dismissOutputs() {
+        if captions.isVisible { captionDismissed = true }
+        hideVisuals()
+        comparisonPanel.dismiss()
+        updateDismissButton()
+    }
+    private func updateDismissButton() {
+        let showing = captions.isVisible || comparisonPanel.isVisible || (overlay.isVisible && drawingOnScreen)
+        guard showing, island.isVisible, !captureInProgress, !composerTransitioning else {
+            if dismissPanel.isVisible { dismissPanel.orderOut(nil) }
+            return
+        }
+        dismissPanel.setFrame(DismissGeometry.frame(under: island.frame, centeredOn: wakeEnds?.rest.notchFrame?.midX), display: false)
+        if !dismissPanel.isVisible { dismissPanel.orderFrontRegardless() }
     }
     private func buildMenu() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -1224,6 +1270,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         if !voiceEnabled { speech.stopSpeaking(at: .immediate) }
     }
     @objc private func hideVisuals() {
+        drawingOnScreen = false
         overlay.ignoresMouseEvents = true
         if voiceRequested {
             // Keep WebKit's live media document visible while hiding its marks.
@@ -1698,6 +1745,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         if let previous { render(previous) } else if !voiceRequested { overlay.orderOut(nil) }
     }
     private func render(_ result: [String: Any], preview: Bool = false) {
+        drawingOnScreen = true
         if overlayReady, let data = try? JSONSerialization.data(withJSONObject: result), let json = String(data: data, encoding: .utf8) {
             webView.evaluateJavaScript("window.clippyRender(\(json), \(preview)); \(preview ? "" : "window.clippyVoice?.setVisual(\(json));") void 0;") { [weak self] _, error in
                 if error != nil { self?.showError("Drawing renderer unavailable. Reopen Clip after starting the server.") }
@@ -1729,6 +1777,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             if let previous { render(previous) }
         case "followup": if let text = data["text"] as? String, !text.isEmpty, text.count <= 6000 { generate(text, mode: lastRequestMode) }
         case "closeOverlay": hideVisuals()
+        case "visualCleared": drawingOnScreen = false
         case "dragOverlay": if let event = NSApp.currentEvent { overlay.performDrag(with: event) }
         case "dictate": startDictation()
         case "stopDictation": stopDictation(sendTranscript: true)
@@ -1759,7 +1808,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 self.webView.callAsyncJavaScript("window.clippyVoice.finishScreenCapture(id, image, error)", arguments: ["id": id, "image": image as Any? ?? NSNull(), "error": image == nil ? "Screen capture unavailable. Check Screen Recording access." : NSNull()], in: nil, in: .page) { _ in }
             }
         case "voicePreview":
-            if voiceRequested, data["generation"] as? Int == voiceGeneration { overlay.orderFrontRegardless() }
+            if voiceRequested, data["generation"] as? Int == voiceGeneration { drawingOnScreen = true; overlay.orderFrontRegardless() }
         case "voiceVisual":
             if voiceRequested, data["generation"] as? Int == voiceGeneration, let result = data["result"] as? [String: Any], result["scene"] != nil, result["diagram"] != nil {
                 previous = result; lastRequestMode = "draw"; render(result)
@@ -1857,7 +1906,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         captureInProgress = true
         let restoreComparison = comparisonPanel.hideForCapture()
         let overlayVisible = overlay.isVisible, captionsVisible = captions.isVisible
-        island.orderOut(nil); notchBridge.orderOut(nil); shoulderPanel.orderOut(nil); hideDwellRing(); overlay.orderOut(nil); captions.orderOut(nil)
+        island.orderOut(nil); notchBridge.orderOut(nil); shoulderPanel.orderOut(nil); hideDwellRing(); dismissPanel.orderOut(nil); overlay.orderOut(nil); captions.orderOut(nil)
         let target = FileManager.default.temporaryDirectory.appendingPathComponent("clippy-\(UUID().uuidString).png")
         let restore = { [weak self] in
             guard let self else { return }

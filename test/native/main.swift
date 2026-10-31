@@ -317,6 +317,16 @@ for frame in ComposerGeometry.optionFrames + [ComposerGeometry.input, ComposerGe
 }
 print("Screenshot notice geometry passed.")
 
+// The dismiss control floats just below the island, centered on the camera when there is one.
+let dismissUnder = DismissGeometry.frame(under: NSRect(x: 762, y: 1073, width: 209, height: 34), centeredOn: 855)
+expect(dismissUnder.midX == 855, "The X must center on the camera, not the off-center resting island")
+expect(dismissUnder.maxY == 1073 - DismissGeometry.gap, "The X must sit right under the island")
+expect(dismissUnder.width == DismissGeometry.size && dismissUnder.height == DismissGeometry.size, "The X must stay round")
+let dismissComposer = DismissGeometry.frame(under: NSRect(x: 615, y: 840, width: 480, height: 233), centeredOn: 855)
+expect(dismissComposer.maxY < 840 && dismissComposer.midX == 855, "With the composer open, the X must sit under it")
+let dismissFloating = DismissGeometry.frame(under: NSRect(x: 100, y: 500, width: 30, height: 22), centeredOn: nil)
+expect(dismissFloating.midX == 115 && dismissFloating.maxY < 500, "Without a camera, the X must center on the pill")
+
 let shortReplySize = ReplyCardLayout.size(text: "A short reply.", available: NSSize(width: 1440, height: 900))
 let longReplySize = ReplyCardLayout.size(text: String(repeating: "A full paragraph remains readable. ", count: 200), available: NSSize(width: 1440, height: 900))
 assert(shortReplySize.width >= 240 && shortReplySize.width <= 640 && shortReplySize.height >= 64)
