@@ -68,9 +68,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var pointerOnIsland = false
     private var gooPanel: FloatingPanel!
     private let gooFill = CAShapeLayer()
-    private let gooInnerMask = CAShapeLayer()
     private let gooRimMask = CAShapeLayer()
-    private let gooInnerGlow = CAGradientLayer()
     private let gooRimGlow = CAGradientLayer()
     private var wake = Spring(stiffness: 150, damping: 17)
     private var tipX = Spring(stiffness: 210, damping: 20)
@@ -308,21 +306,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         host.onExpand = islandView.onExpand
         gooPanel.contentView = host
         gooFill.fillColor = NSColor.black.cgColor
-        gooInnerMask.fillColor = NSColor.white.cgColor
         gooRimMask.fillColor = nil
         gooRimMask.strokeColor = NSColor.white.cgColor
-        gooRimMask.lineWidth = 2
+        gooRimMask.lineWidth = 3
         gooRimMask.shadowColor = NSColor.white.cgColor
         gooRimMask.shadowOffset = .zero
         gooRimMask.shadowRadius = 5
         gooRimMask.shadowOpacity = 1
-        gooInnerGlow.type = .radial
-        gooInnerGlow.colors = [signalGreen.withAlphaComponent(0.45).cgColor, signalGreen.withAlphaComponent(0).cgColor]
-        gooInnerGlow.mask = gooInnerMask
         gooRimGlow.type = .radial
         gooRimGlow.colors = [signalGreen.cgColor, signalGreen.withAlphaComponent(0).cgColor]
         gooRimGlow.mask = gooRimMask
-        for layer in [gooFill, gooInnerGlow, gooRimGlow] { host.layer?.addSublayer(layer) }
+        // The black covers the rim's inner half, so the liquid stays solid and only its outside glows.
+        for layer in [gooRimGlow, gooFill] { host.layer?.addSublayer(layer) }
     }
     @objc private func collapseIsland() { setExpanded(false) }
     @objc private func showIslandOptions(_ sender: NSButton) {
@@ -700,17 +695,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         let local = CGRect(origin: .zero, size: bounds.size)
-        for layer in [gooFill, gooInnerGlow, gooRimGlow] { layer.frame = local }
-        gooInnerMask.frame = local; gooRimMask.frame = local
+        for layer in [gooRimGlow, gooFill] { layer.frame = local }
+        gooRimMask.frame = local
         gooFill.path = fill
-        gooInnerMask.path = liquid
         gooRimMask.path = liquid
         let focus = (tip ?? .zero).applying(toPanel)
         let unit = CGPoint(x: focus.x / max(local.width, 1), y: focus.y / max(local.height, 1))
-        gooInnerGlow.startPoint = unit
-        gooInnerGlow.endPoint = CGPoint(x: unit.x + 26 / max(local.width, 1), y: unit.y + 26 / max(local.height, 1))
         gooRimGlow.startPoint = unit
-        gooRimGlow.endPoint = CGPoint(x: unit.x + 48 / max(local.width, 1), y: unit.y + 48 / max(local.height, 1))
+        gooRimGlow.endPoint = CGPoint(x: unit.x + 60 / max(local.width, 1), y: unit.y + 60 / max(local.height, 1))
         CATransaction.commit()
     }
     @objc private func reposition() { setExpanded(expanded); positionOverlay() }
