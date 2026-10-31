@@ -5,9 +5,9 @@ import {createServer} from '../server/index.mjs';
 import {VoiceConversation} from '../public/voice.js';
 const sdp='v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n';
 
-test('voice config limits capabilities to drawing and uses live audio with interruption',()=>{
+test('voice config limits capabilities to drawing and screenshots with live audio interruption',()=>{
  const config=voiceConfiguration();
- assert.equal(config.model,'gpt-realtime-2.1');assert.deepEqual(config.tools.map(t=>t.name),['draw_visual']);
+ assert.equal(config.model,'gpt-realtime-2.1');assert.deepEqual(config.tools.map(t=>t.name),['draw_visual','capture_screen']);
  assert.equal(config.audio.input.turn_detection.interrupt_response,true);assert.deepEqual(config.output_modalities,['audio']);
 });
 test('voice service keeps key on server, limits sessions and hangs up known calls only',async()=>{
@@ -135,4 +135,53 @@ test('voice drawing failures report shown:false so the voice can continue verbal
  f.voice.fetch=async path=>path==='/api/chat'?new Response(JSON.stringify({type:'error',message:'Drawing model unavailable'})+'\n'):Response.json({stopped:true});
  await f.voice.draw(s,{name:'draw_visual',call_id:'failed',arguments:JSON.stringify({prompt:'Explain molecule structure'})});
  const output=f.sent.find(e=>e.item?.type==='function_call_output');assert.equal(JSON.parse(output.item.output).shown,false);assert.equal(f.sent.at(-1).type,'response.create');f.voice.stop();
+});
+
+const screenshotCall={type:'function_call',name:'capture_screen',call_id:'screen-one',arguments:JSON.stringify({reason:'Explain the visible error'})};
+const screenshot='data:image/png;base64,iVBORw0KGgo=';
+test('voice captures once per turn, attaches image before reporting success, and deduplicates',async()=>{
+ const f=clientFixture();let captures=0;f.voice.captureScreen=async()=>{captures++;return screenshot;};f.voice.prepareScreen=async image=>image;
+ await f.voice.start();const s=f.voice.session;
+ f.voice.handle(s,{type:'response.done',response:{status:'completed',output:[screenshotCall]}});await new Promise(r=>setImmediate(r));
+ assert.equal(captures,1);assert.equal(s.screen,screenshot);
+ const imageIndex=f.sent.findIndex(e=>e.item?.content?.some(c=>c.type==='input_image'));
+ const outputIndex=f.sent.findIndex(e=>e.item?.type==='function_call_output');assert.ok(imageIndex>=0&&outputIndex>imageIndex);
+ assert.deepEqual(JSON.parse(f.sent[outputIndex].item.output),{captured:true});
+ await f.voice.capture(s,screenshotCall);assert.equal(captures,1);
+ await f.voice.capture(s,{...screenshotCall,call_id:'loop'});assert.equal(captures,1);
+ f.voice.handle(s,{type:'input_audio_buffer.speech_started'});f.voice.handle(s,{type:'input_audio_buffer.speech_stopped'});
+ await f.voice.capture(s,{...screenshotCall,call_id:'next-turn'});assert.equal(captures,2);f.voice.stop();
+});
+test('unavailable or invalid voice capture never sends an image or claims success',async()=>{
+ for(const invalid of [false,true]){
+  const f=clientFixture();f.voice.captureScreen=async()=>{if(invalid)assert.fail();throw Error('Screen permission unavailable');};await f.voice.start();const s=f.voice.session;
+  await f.voice.capture(s,invalid?{...screenshotCall,arguments:JSON.stringify({reason:'Screen',command:'run'})}:screenshotCall);
+  assert.equal(f.sent.some(e=>e.item?.content?.some(c=>c.type==='input_image')),false);
+  assert.equal(JSON.parse(f.sent.find(e=>e.item?.type==='function_call_output').item.output).captured,false);f.voice.stop();
+ }
+});
+test('ending voice during screen capture prevents late image sharing',async()=>{
+ const f=clientFixture();let resolve,captureSignal;f.voice.captureScreen=({signal})=>{captureSignal=signal;return new Promise(r=>resolve=r);};f.voice.prepareScreen=async image=>image;
+ await f.voice.start();const s=f.voice.session;const work=f.voice.capture(s,screenshotCall);f.voice.stop();resolve(screenshot);await work;
+ assert.equal(captureSignal.aborted,true);assert.equal(f.sent.some(e=>e.item?.content?.some(c=>c.type==='input_image')),false);assert.equal(s.screen,null);
+});
+test('cancelled voice responses never dispatch screenshot capture',async()=>{
+ const f=clientFixture();f.voice.captureScreen=()=>assert.fail();await f.voice.start();
+ f.voice.handle(f.voice.session,{type:'response.done',response:{status:'cancelled',output:[screenshotCall]}});await new Promise(r=>setImmediate(r));f.voice.stop();
+});
+
+
+test('a combined voice tool response waits for screenshot before drawing and resumes once',async()=>{
+ const f=clientFixture();await f.voice.start();const s=f.voice.session;
+ const image='data:image/png;base64,aGVsbG8=';let release;
+ f.voice.captureScreen=()=>new Promise(resolve=>release=()=>resolve(image));f.voice.prepareScreen=async value=>value;
+ f.voice.handle(s,{type:'response.done',response:{status:'completed',output:[
+  {type:'function_call',name:'draw_visual',call_id:'drawing',arguments:JSON.stringify({prompt:'Explain the visible chart'})},
+  {type:'function_call',name:'capture_screen',call_id:'screen',arguments:JSON.stringify({reason:'User asks about their visible chart'})}
+ ]}});
+ assert.equal(f.requests.some(r=>r.path==='/api/chat'),false);
+ release();await new Promise(r=>setImmediate(r));
+ assert.equal(JSON.parse(f.requests.find(r=>r.path==='/api/chat').opts.body).image,image);
+ assert.equal(f.sent.filter(e=>e.type==='response.create').length,1);
+ f.voice.stop();
 });

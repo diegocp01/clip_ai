@@ -392,3 +392,9 @@ frostedSurface.endMorph()
 assert(material.alphaValue == 1)
 assert(material.subviews.first!.alphaValue == 0.8)
 print("Frosted material retains full blur while tint fades independently.")
+
+expect(composerBounds.contains(ComposerGeometry.screenshotIndicator), "Screenshot notice stays inside the composer")
+for frame in ComposerGeometry.optionFrames + [ComposerGeometry.input, ComposerGeometry.selectionIndicator] {
+    expect(!frame.intersects(ComposerGeometry.screenshotIndicator), "Screenshot notice does not overlap input, selection, or controls")
+}
+print("Screenshot notice geometry passed.")

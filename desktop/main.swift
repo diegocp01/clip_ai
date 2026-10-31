@@ -103,6 +103,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var menuTrackingDepth = 0
     private var prompt: NSTextField!
     private var selectionIndicator: NSTextField!
+    private var screenshotIndicator: NSTextField!
+    private var captureInProgress = false
     private var selectionReadGeneration = 0
     private var selectionReadPending = false
     private var selectionOwnsOpening = false
@@ -348,6 +350,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         selectionIndicator.isHidden = true
         selectionIndicator.toolTip = "Selected text is automatically proofread or rewritten when you open Clip."
         islandView.addSubview(selectionIndicator)
+        screenshotIndicator = NSTextField(labelWithString: "")
+        screenshotIndicator.frame = ComposerGeometry.screenshotIndicator
+        screenshotIndicator.font = .systemFont(ofSize: 9, weight: .light)
+        screenshotIndicator.textColor = NSColor.white.withAlphaComponent(0.65)
+        screenshotIndicator.alignment = .center
+        screenshotIndicator.setAccessibilityLabel("Screenshot status")
+        islandView.addSubview(screenshotIndicator)
+        expandedControls.append(screenshotIndicator)
         collapseButton = button("Collapse island", frame: ComposerGeometry.collapse, action: #selector(collapseIsland), symbol: "chevron.up", iconOnly: true)
         collapseButton.toolTip = "Make smaller · Esc or ⌃⌥Space"
         modelCaption = NSButton(title: "", target: self, action: #selector(showModelSettings))
@@ -1113,7 +1123,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let text = text == "Ready" ? connectionProblem ?? text : text
         currentStatus = text
         statusLabel.stringValue = text
-        let working = ["Choosing edit", "Choosing response", "Choosing model", "Thinking", "Drawing", "Replying", "Explaining", "Summarizing", "Translating", "Solving", "Exploring", "Speaking", "Listening", "Proofreading", "Rewriting"].contains { text.contains($0) }
+        let working = ["Checking screen", "Capturing screen", "Choosing edit", "Choosing response", "Choosing model", "Thinking", "Drawing", "Replying", "Explaining", "Summarizing", "Translating", "Solving", "Exploring", "Speaking", "Listening", "Proofreading", "Rewriting"].contains { text.contains($0) }
         let problem = text == connectionProblem || text.contains("failed") || text.contains("unavailable")
         refreshComposerSignal()
         activityMark.active = talking
@@ -1220,6 +1230,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         history = []
         previous = nil
         attachedImage = nil
+        screenshotIndicator.stringValue = ""
         updateCaptureButton()
         prompt.stringValue = ""
         setStatus("Ready")
@@ -1457,6 +1468,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         responseStatus = 200
         resultReceived = false
         pendingRequestMode = mode
+        screenshotIndicator.stringValue = attachedImage == nil ? "" : "Screenshot attached"
         var selectedSettings = mode == "draw" ? drawingSettings.request(for: provider.rawValue) : chatSettings.request(for: chatProvider.rawValue)
         selectedSettings["mode"] = mode
         if mode != "draw" && chatSettings.isAuto { autoRouteCaption = nil; updateDrawingSettings() }
@@ -1468,15 +1480,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 guard error == nil, let data, let tokenData = (try? JSONSerialization.jsonObject(with: data)) as? [String: String], let token = tokenData["token"] else {
                     self.finishRequest(); self.showError("Cannot connect to the local Codex server. Try reopening Clip."); return
                 }
-                var request = URLRequest(url: baseURL.appendingPathComponent("api/chat"), timeoutInterval: 135)
-                request.httpMethod = "POST"
-                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                request.setValue(token, forHTTPHeaderField: "X-Clippy-Session")
-                let body: [String: Any] = ["drawing": automaticDrawing as Any? ?? NSNull(), "message": message, "mode": selectedSettings["mode"]!, "tier": "fast", "provider": selectedSettings["provider"]!, "model": selectedSettings["model"]!, "reasoningEffort": selectedSettings["reasoningEffort"]!, "history": Array(self.history.suffix(12)), "previous": self.previous as Any? ?? NSNull(), "image": self.attachedImage as Any? ?? NSNull()]
-                guard let encoded = try? JSONSerialization.data(withJSONObject: body) else { self.finishRequest(); self.showError("Could not prepare the request."); return }
-                request.httpBody = encoded
-                self.requestTask = self.streamingSession.dataTask(with: request)
-                self.requestTask?.resume()
+                self.prepareScreenContext(message: message, token: token, generation: generation) { [weak self] image in
+                    guard let self, self.requestGeneration == generation else { return }
+                    var request = URLRequest(url: baseURL.appendingPathComponent("api/chat"), timeoutInterval: 135)
+                    request.httpMethod = "POST"
+                    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                    request.setValue(token, forHTTPHeaderField: "X-Clippy-Session")
+                    let body: [String: Any] = ["drawing": automaticDrawing as Any? ?? NSNull(), "message": message, "mode": selectedSettings["mode"]!, "tier": "fast", "provider": selectedSettings["provider"]!, "model": selectedSettings["model"]!, "reasoningEffort": selectedSettings["reasoningEffort"]!, "history": Array(self.history.suffix(12)), "previous": self.previous as Any? ?? NSNull(), "image": image as Any? ?? NSNull()]
+                    guard let encoded = try? JSONSerialization.data(withJSONObject: body) else { self.finishRequest(); self.showError("Could not prepare the request."); return }
+                    request.httpBody = encoded
+                    self.requestTask = self.streamingSession.dataTask(with: request)
+                    self.requestTask?.resume()
+                }
+            }
+        }
+        requestTask?.resume()
+    }
+    private func prepareScreenContext(message: String, token: String, generation: Int, completion: @escaping (String?) -> Void) {
+        if let image = attachedImage { completion(image); return }
+        setStatus("Checking screen context…")
+        var request = URLRequest(url: URL(string: "http://127.0.0.1:4317/api/screen-context")!, timeoutInterval: 4)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(token, forHTTPHeaderField: "X-Clippy-Session")
+        request.httpBody = try? JSONSerialization.data(withJSONObject: ["message": message, "hasImage": false])
+        requestTask = URLSession.shared.dataTask(with: request) { [weak self] data, response, _ in
+            DispatchQueue.main.async {
+                guard let self, self.requestGeneration == generation else { return }
+                let decision = data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+                guard (response as? HTTPURLResponse)?.statusCode == 200, decision?["capture"] as? Bool == true else { completion(nil); return }
+                self.setStatus("Capturing screen…")
+                self.takeScreenshot(automatic: true, isCurrent: { [weak self] in self?.requestGeneration == generation }) { [weak self] image in
+                    guard let self, self.requestGeneration == generation else { return }
+                    self.screenshotIndicator.stringValue = image == nil ? "Screenshot unavailable" : "Screenshot captured"
+                    self.screenshotIndicator.setAccessibilityLabel(self.screenshotIndicator.stringValue)
+                    completion(image)
+                }
             }
         }
         requestTask?.resume()
@@ -1616,6 +1655,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             } else if voiceRequested {
                 if state == "transcript" { showCaption(text) } else { setStatus(text) }
             }
+        case "voiceCaptureScreen":
+            guard voiceRequested, data["generation"] as? Int == voiceGeneration,
+                  let id = data["id"] as? String, !id.isEmpty, id.count <= 100 else { return }
+            let generation = voiceGeneration
+            takeScreenshot(automatic: true, isCurrent: { [weak self] in self?.voiceRequested == true && self?.voiceGeneration == generation }) { [weak self] image in
+                guard let self, self.voiceRequested, self.voiceGeneration == generation else { return }
+                self.screenshotIndicator.stringValue = image == nil ? "Screenshot unavailable" : "Screenshot captured"
+                self.screenshotIndicator.setAccessibilityLabel(self.screenshotIndicator.stringValue)
+                self.webView.callAsyncJavaScript("window.clippyVoice.finishScreenCapture(id, image, error)", arguments: ["id": id, "image": image as Any? ?? NSNull(), "error": image == nil ? "Screen capture unavailable. Check Screen Recording access." : NSNull()], in: nil, in: .page) { _ in }
+            }
         case "voicePreview":
             if voiceRequested, data["generation"] as? Int == voiceGeneration { overlay.orderFrontRegardless() }
         case "voiceVisual":
@@ -1630,6 +1679,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         guard overlayReady else { showError("Wait for the drawing view to finish loading, then try Talk."); return }
         cancelRequest(); stopDictation(sendTranscript: false); speech.stopSpeaking(at: .immediate)
         voiceRequested = true; voiceGeneration += 1
+        screenshotIndicator.stringValue = ""
         overlay.orderFrontRegardless()
         let generation = voiceGeneration
         updateTalkButton(); setStatus("Connecting live voice…")
@@ -1680,39 +1730,69 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         captureButton.setAccessibilityLabel(attached ? "Remove screenshot" : "Attach screenshot")
     }
     @objc private func captureScreen() {
-        guard !busy else { return }
-        if attachedImage != nil { attachedImage = nil; updateCaptureButton(); setStatus("Screen removed"); return }
-        guard CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess() else { showError("Allow Screen Recording in System Settings, then reopen Clip to attach a screenshot."); return }
+        guard !busy, !captureInProgress else { return }
+        if attachedImage != nil { attachedImage = nil; updateCaptureButton(); screenshotIndicator.stringValue = ""; setStatus("Screen removed"); return }
+        takeScreenshot(automatic: false, isCurrent: { true }) { [weak self] image in
+            guard let self else { return }
+            guard let image else {
+                self.screenshotIndicator.stringValue = "Screenshot unavailable"
+                self.screenshotIndicator.setAccessibilityLabel("Screenshot unavailable")
+                return
+            }
+            self.attachedImage = image
+            self.screenshotIndicator.stringValue = "Screenshot captured"
+            self.screenshotIndicator.setAccessibilityLabel("Screenshot captured")
+            self.updateCaptureButton()
+            if self.voiceRequested {
+                self.webView.callAsyncJavaScript("await window.clippyVoice.shareScreen(image)", arguments: ["image": image], in: nil, in: .page) { [weak self] result in
+                    guard let self else { return }
+                    switch result {
+                    case .success: self.attachedImage = nil; self.updateCaptureButton(); self.setStatus("Screen shared · ask your question")
+                    case .failure: self.showError("Screen attached for a typed question; live sharing failed.")
+                    }
+                }
+            } else { self.setStatus("Screen attached · sent only with your next question") }
+        }
+    }
+    private func takeScreenshot(automatic: Bool, isCurrent: @escaping () -> Bool, completion: @escaping (String?) -> Void) {
+        guard !captureInProgress, isCurrent() else { completion(nil); return }
+        guard CGPreflightScreenCaptureAccess() || (!automatic && CGRequestScreenCaptureAccess()) else {
+            if !automatic { showError("Allow Screen Recording in System Settings, then reopen Clip to attach a screenshot.") }
+            completion(nil); return
+        }
+        captureInProgress = true
         let overlayVisible = overlay.isVisible, captionsVisible = captions.isVisible
         island.orderOut(nil); notchBridge.orderOut(nil); gooPanel.orderOut(nil); hideDwellRing(); overlay.orderOut(nil); captions.orderOut(nil)
         let target = FileManager.default.temporaryDirectory.appendingPathComponent("clippy-\(UUID().uuidString).png")
-        DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 0.2) { [weak self] in
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
-            process.arguments = ["-x", "-t", "png", "-D", "1", target.path]
-            process.standardError = FileHandle.nullDevice
-            var bytes: Data?
-            do { try process.run(); process.waitUntilExit(); if process.terminationStatus == 0 { bytes = try Data(contentsOf: target) } } catch { }
-            try? FileManager.default.removeItem(at: target)
-            DispatchQueue.main.async {
-                guard let self else { return }
-                self.setExpanded(true)
+        let restore = { [weak self] in
+            guard let self else { return }
+            self.captureInProgress = false
+            self.setExpanded(self.expanded, animated: false)
+            if isCurrent() {
                 if overlayVisible { self.overlay.orderFrontRegardless() }
                 if captionsVisible { self.captions.orderFrontRegardless() }
-                guard let bytes, let image = NSImage(data: bytes), let bitmap = self.thumbnail(image) else { self.showError("Screen capture failed. Check Screen Recording permission."); return }
-                self.attachedImage = "data:image/png;base64," + bitmap.base64EncodedString()
-                if self.voiceRequested, let image = self.attachedImage {
-                    self.webView.callAsyncJavaScript("await window.clippyVoice.shareScreen(image)", arguments: ["image": image], in: nil, in: .page) { [weak self] result in
-                        guard let self else { return }
-                        switch result {
-                        case .success: self.attachedImage = nil; self.updateCaptureButton(); self.setStatus("Screen shared · ask your question")
-                        case .failure: self.updateCaptureButton(); self.showError("Screen attached for a typed question; live sharing failed.")
-                        }
-                    }
-                    return
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+            guard let self, isCurrent() else { restore(); completion(nil); return }
+            DispatchQueue.global(qos: .userInitiated).async {
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+                process.arguments = ["-x", "-t", "png", "-D", "1", target.path]
+                process.standardError = FileHandle.nullDevice
+                var bytes: Data?
+                do {
+                    try process.run()
+                    DispatchQueue.global().asyncAfter(deadline: .now() + 5) { if process.isRunning { process.terminate() } }
+                    process.waitUntilExit()
+                    if process.terminationStatus == 0 { bytes = try Data(contentsOf: target) }
+                } catch { }
+                try? FileManager.default.removeItem(at: target)
+                DispatchQueue.main.async {
+                    restore()
+                    guard isCurrent(), let bytes, let image = NSImage(data: bytes), let bitmap = self.thumbnail(image) else { completion(nil); return }
+                    completion("data:image/png;base64," + bitmap.base64EncodedString())
                 }
-                self.updateCaptureButton()
-                self.setStatus("Screen attached · sent only with your next question")
             }
         }
     }
