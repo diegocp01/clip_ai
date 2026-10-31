@@ -282,18 +282,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         for layer in [sensingLine, sensingEye, statusLine] { signalHost.layer?.addSublayer(layer) }
         islandView.addSubview(signalHost, positioned: .below, relativeTo: statusLabel)
         buildGoo()
-        let promptSurface = NSView(frame: ComposerGeometry.prompt)
-        promptSurface.wantsLayer = true
-        promptSurface.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.045).cgColor
-        promptSurface.layer?.cornerRadius = ComposerGeometry.cornerRadius
-        promptSurface.layer?.borderWidth = 0.5
-        promptSurface.layer?.borderColor = NSColor.white.withAlphaComponent(0.12).cgColor
-        islandView.addSubview(promptSurface)
-        expandedControls.append(promptSurface)
-        let promptField = ComposerPrompt(frame: ComposerGeometry.input)
-        promptField.focusSurface = promptSurface
-        prompt = promptField
-        prompt.placeholderString = "Ask me anything…"
+        prompt = NSTextField(frame: ComposerGeometry.input)
+        prompt.placeholderString = ""
         prompt.setAccessibilityLabel("Ask Clippy")
         prompt.font = .systemFont(ofSize: 14)
         prompt.textColor = .white
@@ -317,7 +307,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         voiceButton.contentTintColor = .systemBlue
         voiceButton.toolTip = "Spoken replies on · click to mute"
         sendButton = button("Send", frame: ComposerGeometry.send, action: #selector(sendOrCancel), symbol: "arrow.up", iconOnly: true)
-        sendButton.layer?.backgroundColor = NSColor.systemBlue.cgColor
+        sendButton.layer?.backgroundColor = NSColor.clear.cgColor
+        sendButton.layer?.borderWidth = 0
+        sendButton.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 18, weight: .thin)
         sendButton.contentTintColor = .white
         sendButton.toolTip = "Send · Return"
         tierPicker = NSPopUpButton(frame: ComposerGeometry.tier)
