@@ -35,7 +35,7 @@ test('missing credential and API failures create no active session',async()=>{
 test('voice HTTP requests require local session and reject client configuration overrides',async t=>{
  let count=0;
  const voice={ready:async()=>true,closeAll:async()=>{},close:async()=>{},create:async offer=>{count++;assert.equal(offer,sdp);return{id:'test',sdp,model:'gpt-realtime-2.1'};}};
- const server=createServer({voice,checkAuth:async()=>true});await new Promise(r=>server.listen(0,'127.0.0.1',r));t.after(()=>server.close());
+ const server=createServer({chooseStatus:async()=>null,voice,checkAuth:async()=>true});await new Promise(r=>server.listen(0,'127.0.0.1',r));t.after(()=>server.close());
  const url=`http://127.0.0.1:${server.address().port}`;
  const headers={'Content-Type':'application/json'};
  assert.equal((await fetch(url+'/api/realtime/call',{method:'POST',headers,body:JSON.stringify({sdp})})).status,403);

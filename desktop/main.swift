@@ -41,11 +41,11 @@ final class ActivityMark: NSView {
         }
     }
     override func draw(_ dirtyRect: NSRect) {
-        coral.withAlphaComponent(0.12).setFill()
+        NSColor.white.withAlphaComponent(0.12).setFill()
         NSBezierPath(ovalIn: bounds.insetBy(dx: 1, dy: 0)).fill()
         for i in 0..<4 {
             let height: CGFloat = active ? 4 + abs(sin(phase + CGFloat(i) * 0.85)) * 10 : [5, 10, 13, 7][i]
-            coral.withAlphaComponent(active ? 1 : 0.8).setFill()
+            NSColor.white.withAlphaComponent(active ? 1 : 0.8).setFill()
             NSBezierPath(roundedRect: NSRect(x: 4 + CGFloat(i) * 4, y: (bounds.height - height) / 2, width: 2, height: height), xRadius: 1, yRadius: 1).fill()
         }
     }
@@ -972,7 +972,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let text = text == "Ready" ? connectionProblem ?? text : text
         currentStatus = text
         statusLabel.stringValue = text
-        let working = ["Thinking", "Drawing", "Speaking", "Listening", "Proofreading", "Rewriting"].contains { text.contains($0) }
+        let working = ["Thinking", "Drawing", "Replying", "Explaining", "Summarizing", "Translating", "Solving", "Exploring", "Speaking", "Listening", "Proofreading", "Rewriting"].contains { text.contains($0) }
         let problem = text == connectionProblem || text.contains("failed") || text.contains("unavailable")
         activityMark.active = talking
         statusLabel.toolTip = text
@@ -1283,7 +1283,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             guard let result = event["result"] as? [String: Any] else { return }
             previewVisible = true
             render(result, preview: true)
-            setStatus("Drawing…")
+            // Keep the Decisions-selected activity while visual parts stream.
         case "error":
             rollbackPreview()
             resultReceived = true

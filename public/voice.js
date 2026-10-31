@@ -81,12 +81,13 @@ export class VoiceConversation {
       if(item.name!=='draw_visual'||s.drawing||s.drawCount>=12)throw new Error('Drawing unavailable or another drawing is still running.');
       const args=JSON.parse(item.arguments);
       if(!args||Object.keys(args).length!==1||typeof args.prompt!=='string'||!args.prompt.trim()||args.prompt.length>6000)throw new Error('Invalid drawing request.');
-      s.drawing=true;ownsDrawing=true;s.drawCount++;this.emit('drawing',this.provider==='claude'?'Drawing with Claude…':'Drawing with GPT…');
+      s.drawing=true;ownsDrawing=true;s.drawCount++;this.emit('drawing','Thinking…');
       const response=await this.post(s,'/api/chat',{message:args.prompt,tier:'fast',provider:this.provider,...this.drawingSettings[this.provider],history:[],previous:this.previous,image:s.screen});
       let result;
       for await(const event of readEvents(response)){
         if(this.session!==s)return;
         if(event.type==='error')throw new Error(event.message);
+        if(event.type==='status')this.emit('drawing',event.message);
         if(event.type==='preview'){s.previewing=true;this.preview(event.result);}
         if(event.type==='result')result=event.result;
       }

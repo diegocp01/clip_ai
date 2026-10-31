@@ -39,7 +39,7 @@ export function claudeMessage(request) {
 }
 export function generateWithClaude(request,options={}) {
   const {model,reasoningEffort,name}=drawingSettings({...request,provider:'claude'});
-  return runClaudeStructured(claudeMessage(request),{model,effort:reasoningEffort,...options,instructions:VISUAL_INSTRUCTIONS,schema:resultSchema,validate:assertResult,status:`Drawing with ${name}…`,tier:request.tier??'fast'});
+  return runClaudeStructured(claudeMessage(request),{model,effort:reasoningEffort,...options,instructions:VISUAL_INSTRUCTIONS,schema:resultSchema,validate:assertResult,status:`Thinking with ${name}…`,tier:request.tier??'fast'});
 }
 export async function runClaudeStructured(message,{signal,onStatus=()=>{},onPreview,env=claudeEnvironment(),spawnImpl=spawn,model=CLAUDE_MODEL,effort=CLAUDE_EFFORT,instructions,schema,validate=x=>x,status,tier=null}={}) {
   const started=Date.now();

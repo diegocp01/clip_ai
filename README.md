@@ -27,13 +27,19 @@ The primary interface is the black island at the top of your display. Rest the p
 
 Use the island to ask a question, dictate on-device, or attach one screenshot. Select text in another app and press Control-Option-D to proofread or Control-D to rewrite; both use the selected model (GPT-6.1 Sol or Claude Sonnet 5.5, each at high effort) and replace the selection automatically. Generated 3D objects and diagrams appear in a transparent floating overlay above your other apps. Select a labeled part to ask a follow-up. See [desktop/README.md](desktop/README.md) for shortcuts and controls.
 
-Sign in with ChatGPT using the bundled Codex CLI. Your account needs access to `gpt-6.1-terra` for visuals and `gpt-6.1-sol` for text editing. Codex visuals and text editing use your ChatGPT login. Optional realtime voice uses a separate OpenAI API key and API billing.
+Sign in with ChatGPT using the bundled Codex CLI. Your account needs access to `gpt-6.1-terra` for visuals and `gpt-6.1-sol` for text editing. Codex visuals and text editing use your ChatGPT login. Realtime voice and contextual loading labels use a separate OpenAI API key and API billing.
 
 ## What uses AI
 
 Typed and dictated questions, explicitly attached images, prior answers and the previous scene are sent to Codex. Codex generates validated scene data rather than host-executable JavaScript. Complete visual parts appear progressively as the response streams; the final answer is committed only after full validation. The app renders 3D primitives with Three.js and diagrams with SVG. Optional local dictation uses on-device recognition. Talk uses GPT-Realtime-2.1 over WebRTC for streaming speech, turn detection and interruptions; the speaker button mutes replies. Audio is sent to OpenAI only after you start Talk. End, Escape or Quit stops the microphone. Typed replies can still use installed system voices.
 
 Each model turn uses a read-only, tool-disabled, ephemeral Codex session. Personal Codex configuration, tools and environment API keys are excluded. Screenshots are temporarily written for Codex image input, then removed. Streaming requests use a temporary Codex home linked only to the existing file-based login, with personal configuration excluded; the temporary home is removed after the request. Conversation context is held in the running client, not a project chat database. The Codex service processes prompts and images; this is not offline inference.
+
+## Contextual loading labels
+
+For composer requests (GPT or Claude), [OpenAI Decisions](https://developers.openai.com/api/docs/guides/decisions) with `gpt-6-luna` chooses a short activity label: “hi” → “Replying…”, a visual request → “Drawing…”, or a rewrite → “Rewriting…”. It receives only the submitted prompt and whether an image is attached; screenshot contents, conversation history, and the previous scene are not sent to Decisions. The existing ignored `.env.local` API key is used server-side. This is separately billed API usage, including when Claude answers.
+
+Generation starts immediately with “Thinking…” while label selection runs in parallel. Missing credentials, refusal, invalid output, or a 2.5-second timeout keep the neutral label. Completion, cancellation, and disconnect abort the label request; late responses cannot replace the final state. These decisions choose display copy only: they do not route requests, choose models, or control animations. Selected-text edit shortcuts keep their existing explicit action labels. The native speaking waveform is white.
 
 ## Live voice
 
