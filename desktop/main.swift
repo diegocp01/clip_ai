@@ -107,6 +107,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private let selectionReadQueue = DispatchQueue(label: "clippy.selection-summary", qos: .userInitiated)
     private var expandedControls = [NSView]()
     private var sendButton: NSButton!
+    private var sendHovered = false
     private var micButton: NSButton!
     private var talkButton: NSButton!
     private var voiceRequested = false
@@ -482,6 +483,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         hitTestTimer = timer
         RunLoop.main.add(timer, forMode: .common)
     }
+    private func updateSendHover(at point: NSPoint?) {
+        let hovered = expanded && sendButton.isEnabled && point.map {
+            hypot($0.x - ComposerGeometry.send.midX, $0.y - ComposerGeometry.send.midY) <= ComposerGeometry.send.width / 2
+        } == true
+        guard hovered != sendHovered else { return }
+        sendHovered = hovered
+        let reduced = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        let duration = reduced ? 0 : 0.18
+        let frame = hovered && !reduced ? ComposerGeometry.send.insetBy(dx: -1, dy: -1).offsetBy(dx: 0, dy: 1.5) : ComposerGeometry.send
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = duration
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            sendButton.animator().frame = frame
+        }
+        CATransaction.begin()
+        CATransaction.setDisableActions(reduced)
+        CATransaction.setAnimationDuration(duration)
+        sendButton.layer?.backgroundColor = NSColor.white.withAlphaComponent(hovered ? 0.11 : 0).cgColor
+        sendButton.layer?.borderColor = NSColor.white.withAlphaComponent(hovered ? 1 : 0.65).cgColor
+        sendButton.layer?.shadowColor = NSColor.white.cgColor
+        sendButton.layer?.shadowOffset = .zero
+        sendButton.layer?.shadowRadius = 5
+        sendButton.layer?.shadowOpacity = hovered ? 0.2 : 0
+        CATransaction.commit()
+    }
     private func updatePointer() {
         guard !composerTransitioning else { return }
         let now = CACurrentMediaTime()
@@ -505,6 +531,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                     modelMenuLatched = false
                 }
             }
+            updateSendHover(at: point)
             composerSurface.updateHover(at: point)
             return
         }
@@ -657,6 +684,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let sourceFrame = island.frame
         let sourceRadius = composerTransitioning ? composerSurface.currentRadius : (islandView.layer?.cornerRadius ?? 10)
         let sourceReveal = composerReveal
+        if !value { updateSendHover(at: nil) }
         expanded = value
         if changed {
             if value { composerSignal.signal = signalBar }
