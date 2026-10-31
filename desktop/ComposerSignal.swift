@@ -1,10 +1,44 @@
 import AppKit
 
+/// Pointer attention is independent of the chosen shape. Raw pointer coordinates
+/// never leave this local animation state.
+struct ComposerAttention {
+    static let modes = ["follow", "wander", "drift_left", "drift_right"]
+    var mode = "follow" { didSet { if mode != oldValue { time = 0 } } }
+    private(set) var time: CGFloat = 0
+    private var x = Spring(stiffness: 32, damping: 11)
+    private var y = Spring(stiffness: 32, damping: 11)
+    private(set) var following = false
+    var horizontal: CGFloat { x.value }
+    var vertical: CGFloat { y.value }
+    static func pointer(_ point: NSPoint, in bounds: NSRect) -> NSPoint? {
+        guard bounds.width > 0, bounds.height > 0, ComposerGeometry.shellPath(in: bounds).contains(point) else { return nil }
+        return NSPoint(x: min(1, max(-1, (point.x - bounds.midX) / (bounds.width / 2))),
+                       y: min(1, max(-1, (point.y - bounds.midY) / (bounds.height / 2))))
+    }
+    mutating func step(_ dt: CGFloat, pointer: NSPoint?) {
+        time += dt
+        following = mode == "follow" && pointer != nil
+        if following, let pointer {
+            x.target = pointer.x; y.target = pointer.y
+        } else {
+            switch mode {
+            case "drift_left": x.target = -sin(time * 0.55) * 0.85
+            case "drift_right": x.target = sin(time * 0.55) * 0.85
+            default: x.target = sin(time * 0.47) * 0.65 + sin(time * 1.13) * 0.2
+            }
+            y.target = sin(time * 0.7) * 0.4
+        }
+        x.step(dt); y.step(dt)
+    }
+}
+
 /// The same spring-driven signal as the compact notch, in a slim strip above the caption.
 /// Decisions selects a name; all geometry, blinking, motion and pointer response stay local.
 final class ComposerSignal: NSView {
     static let stripFrame = NSRect(x: 130, y: 190, width: 220, height: 10)
     var signal = SignalBar()
+    private var attention = ComposerAttention()
     private let bars = [CAGradientLayer(), CAGradientLayer()]
     private let wave = CAShapeLayer()
     private var waveMix = Spring(stiffness: 40, damping: 12)
@@ -41,8 +75,9 @@ final class ComposerSignal: NSView {
         if let motionObserver { NSWorkspace.shared.notificationCenter.removeObserver(motionObserver) }
     }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
-    func choose(_ pattern: String) {
-        guard ["line", "eyes", "wave"].contains(pattern) else { return }
+    func choose(_ pattern: String, motion: String = "follow") {
+        guard ["line", "eyes", "wave"].contains(pattern), ComposerAttention.modes.contains(motion) else { return }
+        attention.mode = motion
         signal.pattern = pattern
         waveMix.target = pattern == "wave" ? 1 : 0
     }
@@ -59,13 +94,18 @@ final class ComposerSignal: NSView {
     private func step() {
         let now = CACurrentMediaTime(), dt = CGFloat(min(now - lastFrame, 1.0 / 20))
         lastFrame = now
-        let pointer = convert(window?.mouseLocationOutsideOfEventStream ?? .zero, from: nil)
-        signal.step(dt, pointer: (pointer.x - bounds.midX) / max(bounds.width / 2, 1))
+        let parent = superview
+        let position = parent?.convert(window?.mouseLocationOutsideOfEventStream ?? .zero, from: nil)
+        let pointer = position.flatMap { point in parent.flatMap { ComposerAttention.pointer(point, in: $0.bounds) } }
+        attention.step(dt, pointer: pointer)
+        signal.step(dt, pointer: attention.horizontal, swayScale: attention.following ? 0.15 : 0.4)
         waveMix.step(dt)
         render(staticLine: false)
     }
     private func render(staticLine: Bool) {
-        let line = CGRect(x: bounds.midX - 65, y: bounds.midY - 1.25, width: 130, height: 2.5)
+        let dx: CGFloat = staticLine ? 0 : attention.horizontal * 10
+        let dy: CGFloat = staticLine ? 0 : attention.vertical * 0.7
+        let line = CGRect(x: bounds.midX - 65 + dx, y: bounds.midY - 1.25 + dy, width: 130, height: 2.5)
         let pair = staticLine ? (left: line, right: line) : signal.bars(line: line, room: 24)
         let blend = staticLine ? 0 : min(max(waveMix.value, 0), 1)
         CATransaction.begin(); CATransaction.setDisableActions(true)

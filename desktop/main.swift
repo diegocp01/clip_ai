@@ -1181,7 +1181,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                         guard let self, self.expanded, self.signalGeneration == generation,
                               (response as? HTTPURLResponse)?.statusCode == 200,
                               let data, let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: String], let pattern = object["pattern"] else { return }
-                        self.composerSignal.choose(pattern)
+                        self.composerSignal.choose(pattern, motion: object["motion"] ?? "follow")
                     }
                 }
                 self.signalTask?.resume()
