@@ -1650,7 +1650,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: node)
         process.arguments = [project + "/server/index.mjs"]
-        process.currentDirectoryURL = URL(fileURLWithPath: project)
+        // Every backend resource is resolved from its absolute module path. Avoid
+        // making Node enumerate a protected checkout while resolving process.cwd().
+        process.currentDirectoryURL = URL(fileURLWithPath: "/", isDirectory: true)
         var env = ProcessInfo.processInfo.environment
         env["PATH"] = URL(fileURLWithPath: node).deletingLastPathComponent().path + ":/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
         if let codex = config["codex"] { env["CLIPPY_CODEX_BIN"] = codex }
