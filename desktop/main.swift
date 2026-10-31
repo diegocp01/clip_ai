@@ -332,7 +332,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         sendButton.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 18, weight: .thin)
         sendButton.contentTintColor = .white
         sendButton.toolTip = "Send · Return"
-        let drawButton = button("Draw", frame: ComposerGeometry.draw, action: #selector(sendPrompt), symbol: "easel", iconOnly: true)
+        let drawButton = button("Draw", frame: ComposerGeometry.draw, action: #selector(sendPrompt), symbol: "paintbrush.pointed", iconOnly: true)
+        drawButton.image = easelIcon()
         drawButton.toolTip = "Draw your prompt · type an idea, then click Draw"
         providerControl = button("Model", frame: ComposerGeometry.provider, action: #selector(providerChanged), symbol: "cpu", iconOnly: true)
         updateProviderControl()
@@ -1059,6 +1060,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     @objc private func providerChanged() { setProvider(provider == .gpt ? .claude : .gpt) }
+    private func easelIcon() -> NSImage {
+        let image = NSImage(size: NSSize(width: 20, height: 20), flipped: false) { _ in
+            NSColor.white.setStroke()
+            let canvas = NSBezierPath(roundedRect: NSRect(x: 3.5, y: 7, width: 13, height: 9), xRadius: 1, yRadius: 1)
+            canvas.lineWidth = 1.25
+            canvas.stroke()
+            let stand = NSBezierPath()
+            stand.lineWidth = 1.25
+            stand.lineCapStyle = .round
+            for (from, to) in [(NSPoint(x: 10, y: 16), NSPoint(x: 10, y: 19)),
+                               (NSPoint(x: 2, y: 6), NSPoint(x: 18, y: 6)),
+                               (NSPoint(x: 6, y: 6), NSPoint(x: 3, y: 1)),
+                               (NSPoint(x: 14, y: 6), NSPoint(x: 17, y: 1)),
+                               (NSPoint(x: 10, y: 6), NSPoint(x: 10, y: 2))] {
+                stand.move(to: from)
+                stand.line(to: to)
+            }
+            stand.stroke()
+            return true
+        }
+        image.isTemplate = true
+        image.accessibilityDescription = "Draw on an easel"
+        return image
+    }
     private func mascot(_ name: String, description: String) -> NSImage? {
         guard let url = Bundle.main.url(forResource: name, withExtension: "png"), let source = NSImage(contentsOf: url) else { return nil }
         let height: CGFloat = 24, size = NSSize(width: height * source.size.width / max(source.size.height, 1), height: height)
