@@ -82,7 +82,7 @@ export class VoiceConversation {
       const args=JSON.parse(item.arguments);
       if(!args||Object.keys(args).length!==1||typeof args.prompt!=='string'||!args.prompt.trim()||args.prompt.length>6000)throw new Error('Invalid drawing request.');
       s.drawing=true;ownsDrawing=true;s.drawCount++;this.emit('drawing','Thinking…');
-      const response=await this.post(s,'/api/chat',{message:args.prompt,tier:'fast',provider:this.provider,...this.drawingSettings[this.provider],history:[],previous:this.previous,image:s.screen});
+      const response=await this.post(s,'/api/chat',{message:args.prompt,mode:'draw',tier:'fast',provider:this.provider,...this.drawingSettings[this.provider],history:[],previous:this.previous,image:s.screen});
       let result;
       for await(const event of readEvents(response)){
         if(this.session!==s)return;

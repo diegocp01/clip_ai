@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { chooseChatRoute,validateAutoRoute } from './chat-settings.mjs';
 import { chooseLoadingStatus,runWithLoadingStatus } from './decisions.mjs';
 import { randomBytes,timingSafeEqual } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
@@ -13,7 +14,7 @@ import { RealtimeService,VOICE_MODEL } from './realtime.mjs';
 const root=fileURLToPath(new URL('../',import.meta.url));
 const MAX_BODY=8*1024*1024;
 const mime={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml','.png':'image/png'};
-export function createServer({run=generate,runClaude=generateWithClaude,runEdit=editText,checkAuth=authStatus,checkClaude=claudeAuthStatus,voice=new RealtimeService(),chooseStatus=chooseLoadingStatus}={}){
+export function createServer({run=generate,runClaude=generateWithClaude,runEdit=editText,checkAuth=authStatus,checkClaude=claudeAuthStatus,voice=new RealtimeService(),chooseStatus=chooseLoadingStatus,routeChat=chooseChatRoute}={}){
   const token=randomBytes(32).toString('hex');
   let active=0;
   const server=http.createServer(async(req,res)=>{
@@ -53,6 +54,7 @@ export function createServer({run=generate,runClaude=generateWithClaude,runEdit=
       finally{clearTimeout(timeout);res.off('close',disconnect);}
       return;
     }
+    if(req.method==='GET'&&pathname==='/api/status'&&query.get('provider')==='auto'){const signedIn=await Promise.all([checkAuth(),checkClaude()]);return json(200,{provider:'auto',model:'auto',authenticated:signedIn.some(Boolean)});}
     if(req.method==='GET'&&pathname==='/api/status'&&query.get('provider')==='claude')return json(200,{provider:'claude',model:CLAUDE_MODEL,reasoningEffort:CLAUDE_EFFORT,authenticated:await checkClaude(),auth:'Claude',note:'Uses your Claude plan through the Claude CLI.'});
     if(req.method==='GET'&&pathname==='/api/status')return json(200,{provider:'gpt',model:MODEL,reasoningEffort:REASONING_EFFORT,defaultTier:'fast',authenticated:await checkAuth(),auth:'ChatGPT',tiers:['standard','fast'],note:'Uses your Codex allowance. Fast mode requires account access and consumes more usage.'});
     if(req.method==='POST'&&['/api/chat','/api/edit'].includes(pathname)){
@@ -67,8 +69,9 @@ export function createServer({run=generate,runClaude=generateWithClaude,runEdit=
         for await(const chunk of req){size+=chunk.length;if(size>MAX_BODY){json(413,{error:'Image/request too large (8 MB limit).'});return;}chunks.push(chunk);}
         request=(editing?normalizeEditRequest:normalizeRequest)(JSON.parse(Buffer.concat(chunks).toString('utf8')));
       }catch(e){if(!res.writableEnded)json(400,{error:e.message});return;}
-      const claude=request.provider==='claude';
-      if(claude?!await checkClaude():!await checkAuth())return json(401,{error:claude?'Sign in to Claude first: run claude auth login in Terminal.':'Sign in to Codex with ChatGPT first: run codex login in Terminal.'});
+      const auto=!editing&&request.mode==='chat'&&request.model==='auto';
+      let claude=request.provider==='claude';
+      if(!auto&&(claude?!await checkClaude():!await checkAuth()))return json(401,{error:claude?'Sign in to Claude first: run claude auth login in Terminal.':'Sign in to Codex with ChatGPT first: run codex login in Terminal.'});
       if(active>=2)return json(429,{error:'Two requests are already running.'});
       active++;
       const controller=new AbortController();
@@ -78,6 +81,16 @@ export function createServer({run=generate,runClaude=generateWithClaude,runEdit=
       res.writeHead(200,{'Content-Type':'application/x-ndjson; charset=utf-8','X-Accel-Buffering':'no'});
       const send=event=>{if(!res.destroyed&&!res.writableEnded)res.write(JSON.stringify(event)+'\n');};
       try {
+        if(auto) {
+          send({type:'status',message:'Choosing model…'});
+          const route=validateAutoRoute(await routeChat(request,{signal:controller.signal}));
+          controller.signal.throwIfAborted();
+          claude=route.provider==='claude';
+          if(claude?!await checkClaude():!await checkAuth())throw new Error(`Auto chose ${route.name}, but ${claude?'Claude':'Codex'} is not signed in. Sign in or choose another model manually.`);
+          controller.signal.throwIfAborted();
+          request={...request,provider:route.provider,model:route.model,reasoningEffort:route.reasoningEffort};
+          send({type:'route',...route});
+        }
         const options={signal:controller.signal,onStatus:message=>send({type:'status',message}),onPreview:result=>send({type:'preview',result})};
         const output=editing ? await runEdit(request,options)
           : await runWithLoadingStatus(claude?runClaude:run,request,options,{chooseStatus});
