@@ -101,8 +101,8 @@ private final class HabitRing: NSView {
             (complete ? mint : NSColor.white.withAlphaComponent(hovered == index ? 0.5 : 0.18)).setStroke()
             let arc = NSBezierPath()
             arc.appendArc(withCenter: NSPoint(x: 52, y: 52), radius: HabitRingGeometry.radius,
-                          startAngle: HabitRingGeometry.angle(index) + 21,
-                          endAngle: HabitRingGeometry.angle(index) - 21, clockwise: true)
+                          startAngle: HabitRingGeometry.angle(index) + 15.5,
+                          endAngle: HabitRingGeometry.angle(index) - 15.5, clockwise: true)
             arc.lineWidth = hovered == index ? 13 : 11
             arc.lineCapStyle = .round; arc.stroke()
             if complete {
