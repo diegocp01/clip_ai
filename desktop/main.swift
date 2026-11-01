@@ -573,7 +573,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     @objc private func collapseIsland() { setExpanded(false) }
     @objc private func showIslandOptions(_ sender: NSButton) {
         let menu = NSMenu()
-        for (title, action) in [("New conversation", #selector(newConversation)), ("Dictate on-device", #selector(toggleDictation)), ("Hide drawing", #selector(hideVisuals)), ("Show last drawing", #selector(showLastVisual)), ("Enable text editing…", #selector(enableTextEditing)), ("Cancel text edit", #selector(cancelTextEdit))] {
+        for (title, action) in [("New conversation", #selector(newConversation)), ("Dictate on-device", #selector(toggleDictation)), ("Hide drawing", #selector(hideVisuals)), ("Today’s habits", #selector(focusHabits)), ("Show last drawing", #selector(showLastVisual)), ("Enable text editing…", #selector(enableTextEditing)), ("Cancel text edit", #selector(cancelTextEdit))] {
             let item = menu.addItem(withTitle: title, action: action, keyEquivalent: "")
             item.target = self
         }
@@ -804,6 +804,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let appMenu = NSMenu(title: "Clip")
         let showDrawing = appMenu.addItem(withTitle: "Show last drawing", action: #selector(showLastVisual), keyEquivalent: "d")
         showDrawing.target = self
+        let showHabits = appMenu.addItem(withTitle: "Today’s habits", action: #selector(focusHabits), keyEquivalent: "")
+        showHabits.target = self
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Quit Clip", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appRoot.submenu = appMenu
@@ -1015,6 +1017,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
     private var talking: Bool { voiceRequested || recording || currentStatus == "Speaking" }
     // Resting: a green line. Audio live: the waveform. Anything else to say: text and line.
+    @objc private func focusHabits() { positionHabits(); habitTracker.focus() }
     private func positionHabits() {
         guard !captureInProgress, let screen = island?.screen ?? NSScreen.main else { return }
         let composer = IslandLayout(screen: screen.frame, safeTop: screen.safeAreaInsets.top,

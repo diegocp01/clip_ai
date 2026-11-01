@@ -50,7 +50,7 @@ enum HabitTrackerLayout {
 }
 
 private final class HabitPanel: NSPanel {
-    override var canBecomeKey: Bool { false }
+    override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
 }
 private final class HabitButton: NSButton {
@@ -74,6 +74,7 @@ final class HabitTracker: NSObject {
                             styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         super.init()
         window.title = "Clip habits"
+        window.becomesKeyOnlyIfNeeded = true
         window.isOpaque = false; window.backgroundColor = .clear; window.hasShadow = true
         window.hidesOnDeactivate = false; window.isReleasedWhenClosed = false
         window.level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1)
@@ -133,6 +134,7 @@ final class HabitTracker: NSObject {
         if window.frame != frame { window.setFrame(frame, display: true) }
         if !window.isVisible { refresh(); window.orderFrontRegardless() }
     }
+    func focus() { window.makeKeyAndOrderFront(nil) }
     func hide() { window.orderOut(nil) }
     deinit {
         midnightTimer?.invalidate()
