@@ -142,3 +142,7 @@ Reply text is sent to OpenAI for synthesis using the existing server-side API ke
 ### Native backend startup
 
 The app launches Node with `/` as its working directory and an absolute server entry point. Backend files and credentials continue to resolve relative to their modules in the configured checkout. This avoids a macOS startup stall observed in Node's `process.cwd()` resolution when the working directory was the checkout. Verify from a stopped backend: launch Clip, confirm its child process owns port 4317, and confirm `/api/realtime/status` reports the existing voice configuration. The private `.env.local` belongs in that configured checkout and must stay ignored by Git.
+
+### Daily habits
+
+A small frosted checklist stays left of the composer, whether the notch is closed or open: Meditate, Exercise, Stretch, Read, Journal, Math, and Push ups. Click a row to complete or undo it; Today shows the total. It does not take keyboard focus or close the composer. Progress is saved locally in Clip preferences, resets at local midnight (also refreshed after sleep or a time-zone change), and retains at most 90 days. No network calls or polling loop. On narrow screens it sits below the composer; screenshots taken by Clip temporarily hide it.

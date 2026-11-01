@@ -98,6 +98,7 @@ final class ActivityMark: NSView {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler, URLSessionDataDelegate {
+    private let habitTracker = HabitTracker()
     private var island: FloatingPanel!
     private var notchBridge: FloatingPanel!
     private var islandView: IslandView!
@@ -270,7 +271,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         keyboardMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .leftMouseDown, .rightMouseDown]) { [weak self] event in
             guard let self, self.menuTrackingDepth == 0 else { return event }
             if event.type != .keyDown {
-                if self.expanded, let window = event.window, window !== self.island, window !== self.dismissPanel, window !== self.captions,
+                if self.expanded, let window = event.window, window !== self.island, window !== self.dismissPanel, window !== self.captions, !self.habitTracker.owns(window),
                    window.level.rawValue < NSWindow.Level.popUpMenu.rawValue,
                    !self.island.frame.contains(window.convertPoint(toScreen: event.locationInWindow)) {
                     self.setExpanded(false)
@@ -1014,7 +1015,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
     private var talking: Bool { voiceRequested || recording || currentStatus == "Speaking" }
     // Resting: a green line. Audio live: the waveform. Anything else to say: text and line.
+    private func positionHabits() {
+        guard !captureInProgress, let screen = island?.screen ?? NSScreen.main else { return }
+        let composer = IslandLayout(screen: screen.frame, safeTop: screen.safeAreaInsets.top,
+                                    leftArea: screen.auxiliaryTopLeftArea, rightArea: screen.auxiliaryTopRightArea,
+                                    expanded: true)
+        habitTracker.show(beside: composer.frame, visible: screen.visibleFrame)
+    }
     @discardableResult private func layoutIsland(updateFrame: Bool = true) -> IslandLayout {
+        positionHabits()
         let content: IslandContent = startupLoading && !expanded ? .loading : talking ? .audio : currentStatus == "Ready" ? .idle : .status(textWidth: ceil(statusLabel.cell?.cellSize.width ?? 52))
         let awake = pointerOnIsland && content == .idle && !expanded
         let screen = island?.screen ?? NSScreen.main ?? NSScreen.screens[0]
@@ -2127,6 +2136,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         captureInProgress = true
         let restoreComparison = comparisonPanel.hideForCapture()
         let overlayVisible = overlay.isVisible, captionsVisible = captions.isVisible
+        habitTracker.hide()
         island.orderOut(nil); notchBridge.orderOut(nil); shoulderPanel.orderOut(nil); hideDwellRing(); dismissPanel.orderOut(nil); overlay.orderOut(nil); captions.orderOut(nil)
         let target = FileManager.default.temporaryDirectory.appendingPathComponent("clippy-\(UUID().uuidString).png")
         let restore = { [weak self] in

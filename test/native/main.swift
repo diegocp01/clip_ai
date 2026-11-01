@@ -516,3 +516,39 @@ expect(ReplyVoice.selected(preferences) == "marin", "Unknown saved voice falls b
 preferences.set("cedar", forKey: "replyVoice")
 expect(ReplyVoice.selected(preferences) == "cedar", "Reply voice preference persists")
 print("Reply speech text identity, Unicode chunk limits and voice preferences passed.")
+
+// Local daily progress survives relaunch, supports undo and uses calendar days across DST.
+let habitSuite = "clip.habits.test.\(UUID().uuidString)"
+let habitDefaults = UserDefaults(suiteName: habitSuite)!
+defer { habitDefaults.removePersistentDomain(forName: habitSuite) }
+let habits = HabitStore(defaults: habitDefaults)
+var habitCalendar = Calendar(identifier: .gregorian)
+habitCalendar.timeZone = TimeZone(identifier: "America/New_York")!
+let habitDay = habitCalendar.date(from: DateComponents(year: 2026, month: 11, day: 1, hour: 12))!
+let habitTomorrow = habitCalendar.date(byAdding: .day, value: 1, to: habitDay)!
+expect(habits.completed(on: habitDay, calendar: habitCalendar).isEmpty, "New habits start unchecked")
+habits.toggle("meditate", on: habitDay, calendar: habitCalendar)
+expect(HabitStore(defaults: habitDefaults).completed(on: habitDay, calendar: habitCalendar) == ["meditate"], "Habit selection survives a new store instance")
+expect(habits.completed(on: habitTomorrow, calendar: habitCalendar).isEmpty, "Next day starts empty")
+habits.toggle("meditate", on: habitDay, calendar: habitCalendar)
+expect(habits.completed(on: habitDay, calendar: habitCalendar).isEmpty, "Second click undoes completion")
+for habit in ClipHabit.all { habits.toggle(habit.id, on: habitDay, calendar: habitCalendar) }
+expect(habits.completed(on: habitDay, calendar: habitCalendar).count == 7, "All seven habits can complete independently")
+habits.toggle("unknown", on: habitDay, calendar: habitCalendar)
+expect(habits.completed(on: habitDay, calendar: habitCalendar).count == 7, "Unknown habits cannot enter progress")
+for offset in 1...100 {
+    habits.toggle("read", on: habitCalendar.date(byAdding: .day, value: offset, to: habitDay)!, calendar: habitCalendar)
+}
+expect((habitDefaults.dictionary(forKey: "clip.habits.days.v1") ?? [:]).count == 90, "Saved history stays bounded")
+for origin in [NSPoint.zero, NSPoint(x: -1710, y: 250)] {
+    let visible = NSRect(origin: origin, size: NSSize(width: 1710, height: 1073))
+    let composer = NSRect(x: origin.x + 615, y: origin.y + 860, width: 480, height: 210)
+    let frame = HabitTrackerLayout.frame(beside: composer, visible: visible)
+    expect(visible.contains(frame), "Habit tracker remains on its display")
+    expect(frame.maxX < composer.minX && !frame.intersects(composer), "Habit tracker stays left of the semicircle")
+}
+let narrowVisible = NSRect(x: 0, y: 0, width: 600, height: 800)
+let narrowComposer = NSRect(x: 60, y: 580, width: 480, height: 210)
+let narrowHabits = HabitTrackerLayout.frame(beside: narrowComposer, visible: narrowVisible)
+expect(narrowVisible.contains(narrowHabits) && !narrowHabits.intersects(narrowComposer), "Narrow-screen fallback leaves both controls usable")
+print("Habit persistence, undo, daily rollover, retention and placement checks passed")
