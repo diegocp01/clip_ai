@@ -38,9 +38,9 @@ final class HabitStore {
 }
 
 enum HabitTrackerLayout {
-    static let size = NSSize(width: 148, height: 228)
+    static let size = NSSize(width: 104, height: 104)
     static func frame(beside composer: NSRect, visible: NSRect) -> NSRect {
-        // Use the expanded footprint in both states, so opening Clip never pushes the checklist away.
+        // Use the expanded footprint in both states, so opening Clip never pushes the ring away.
         let x = max(visible.minX + 8, composer.minX - size.width - 12)
         var top = min(visible.maxY - 8, composer.maxY - 8)
         // Very narrow displays cannot fit it beside the composer: keep both usable.
@@ -53,8 +53,68 @@ private final class HabitPanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
 }
+enum HabitRingGeometry {
+    static let radius: CGFloat = 38
+    static func angle(_ index: Int) -> CGFloat { 90 - CGFloat(index) * 360 / 7 }
+    static func center(_ index: Int) -> NSPoint {
+        let radians = angle(index) * .pi / 180
+        return NSPoint(x: 52 + cos(radians) * radius, y: 52 + sin(radians) * radius)
+    }
+    static func index(at point: NSPoint) -> Int? {
+        let dx = point.x - 52, dy = point.y - 52
+        guard (27...51).contains(hypot(dx, dy)) else { return nil }
+        let clockwise = (90 - atan2(dy, dx) * 180 / .pi + 360).truncatingRemainder(dividingBy: 360)
+        return Int((clockwise + 180 / 7).truncatingRemainder(dividingBy: 360) / (360 / 7))
+    }
+}
+
 private final class HabitButton: NSButton {
+    var onHover: ((Bool) -> Void)?
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for area in trackingAreas { removeTrackingArea(area) }
+        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways], owner: self))
+    }
+    override func mouseEntered(with event: NSEvent) { onHover?(true) }
+    override func mouseExited(with event: NSEvent) { onHover?(false) }
+    override func draw(_ dirtyRect: NSRect) {
+        if window?.firstResponder === self {
+            NSColor.white.withAlphaComponent(0.65).setStroke()
+            let focus = NSBezierPath(ovalIn: bounds.insetBy(dx: 2, dy: 2)); focus.lineWidth = 1; focus.stroke()
+        }
+    }
+}
+
+private final class HabitRing: NSView {
+    var done = Set<String>() { didSet { needsDisplay = true } }
+    var hovered: Int? { didSet { needsDisplay = true } }
+    var onToggle: ((Int) -> Void)?
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override func mouseDown(with event: NSEvent) {
+        if let index = HabitRingGeometry.index(at: convert(event.locationInWindow, from: nil)) { onToggle?(index) }
+    }
+    override func draw(_ dirtyRect: NSRect) {
+        let mint = NSColor(calibratedRed: 0.47, green: 0.91, blue: 0.65, alpha: 1)
+        for (index, habit) in ClipHabit.all.enumerated() {
+            let complete = done.contains(habit.id)
+            (complete ? mint : NSColor.white.withAlphaComponent(hovered == index ? 0.5 : 0.18)).setStroke()
+            let arc = NSBezierPath()
+            arc.appendArc(withCenter: NSPoint(x: 52, y: 52), radius: HabitRingGeometry.radius,
+                          startAngle: HabitRingGeometry.angle(index) + 21,
+                          endAngle: HabitRingGeometry.angle(index) - 21, clockwise: true)
+            arc.lineWidth = hovered == index ? 13 : 11
+            arc.lineCapStyle = .round; arc.stroke()
+            if complete {
+                // A tiny check distinguishes completion even without color.
+                let c = HabitRingGeometry.center(index)
+                NSColor.black.withAlphaComponent(0.65).setStroke()
+                let check = NSBezierPath(); check.move(to: NSPoint(x: c.x - 3, y: c.y))
+                check.line(to: NSPoint(x: c.x - 1, y: c.y - 2)); check.line(to: NSPoint(x: c.x + 3, y: c.y + 2))
+                check.lineWidth = 1.2; check.lineCapStyle = .round; check.stroke()
+            }
+        }
+    }
 }
 
 final class HabitTracker: NSObject {
@@ -62,6 +122,7 @@ final class HabitTracker: NSObject {
     private let window: HabitPanel
     private let counter = NSTextField(labelWithString: "0/7")
     private var buttons = [NSButton]()
+    private let ring = HabitRing(frame: NSRect(origin: .zero, size: HabitTrackerLayout.size))
     private var midnightTimer: Timer?
     private var observers = [NSObjectProtocol]()
     private var wakeObserver: NSObjectProtocol?
@@ -82,24 +143,26 @@ final class HabitTracker: NSObject {
         let glass = NSVisualEffectView(frame: NSRect(origin: .zero, size: HabitTrackerLayout.size))
         glass.material = .hudWindow; glass.blendingMode = .behindWindow; glass.state = .active
         glass.appearance = NSAppearance(named: .darkAqua)
-        glass.wantsLayer = true; glass.layer?.cornerRadius = 18; glass.layer?.masksToBounds = true
+        glass.wantsLayer = true; glass.layer?.cornerRadius = 52; glass.layer?.masksToBounds = true
         glass.layer?.borderWidth = 0.5; glass.layer?.borderColor = NSColor.white.withAlphaComponent(0.14).cgColor
         window.contentView = glass
-        let title = NSTextField(labelWithString: "Today")
-        title.font = .systemFont(ofSize: 11, weight: .medium)
-        title.textColor = NSColor.white.withAlphaComponent(0.65)
-        title.frame = NSRect(x: 16, y: 199, width: 70, height: 16); glass.addSubview(title)
-        counter.font = .monospacedDigitSystemFont(ofSize: 10, weight: .medium)
-        counter.textColor = NSColor(calibratedRed: 0.47, green: 0.91, blue: 0.65, alpha: 1)
-        counter.alignment = .right; counter.frame = NSRect(x: 94, y: 199, width: 38, height: 16)
-        glass.addSubview(counter)
-        for (index, habit) in ClipHabit.all.enumerated() {
-            let button = HabitButton(frame: NSRect(x: 13, y: 166 - CGFloat(index) * 25, width: 122, height: 24))
-            button.tag = index; button.title = "  " + habit.title
-            button.font = .systemFont(ofSize: 12, weight: .regular)
-            button.alignment = .left; button.isBordered = false; button.imagePosition = .imageLeading
+        glass.addSubview(ring)
+        ring.onToggle = { [weak self] index in self?.toggle(index) }
+        let title = NSTextField(labelWithString: "today")
+        title.font = .systemFont(ofSize: 8, weight: .regular)
+        title.textColor = NSColor.white.withAlphaComponent(0.45); title.alignment = .center
+        title.frame = NSRect(x: 28, y: 33, width: 48, height: 12); ring.addSubview(title)
+        counter.font = .monospacedDigitSystemFont(ofSize: 15, weight: .light)
+        counter.textColor = NSColor.white.withAlphaComponent(0.9)
+        counter.alignment = .center; counter.frame = NSRect(x: 27, y: 46, width: 50, height: 21)
+        ring.addSubview(counter)
+        for (index, _) in ClipHabit.all.enumerated() {
+            let c = HabitRingGeometry.center(index)
+            let button = HabitButton(frame: NSRect(x: c.x - 12, y: c.y - 12, width: 24, height: 24))
+            button.tag = index; button.title = ""; button.isBordered = false
             button.setButtonType(.toggle); button.target = self; button.action = #selector(toggleHabit(_:))
-            glass.addSubview(button); buttons.append(button)
+            button.onHover = { [weak self] inside in self?.ring.hovered = inside ? index : nil }
+            ring.addSubview(button); buttons.append(button)
         }
         for name in [NSNotification.Name.NSCalendarDayChanged, .NSSystemClockDidChange, .NSSystemTimeZoneDidChange] {
             observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in self?.refresh() })
@@ -108,18 +171,20 @@ final class HabitTracker: NSObject {
         refresh()
     }
     @objc private func toggleHabit(_ sender: NSButton) {
-        store.toggle(ClipHabit.all[sender.tag].id)
+        toggle(sender.tag)
+    }
+    private func toggle(_ index: Int) {
+        store.toggle(ClipHabit.all[index].id)
         refresh()
     }
     private func refresh() {
         let done = store.completed()
+        ring.done = done
         counter.stringValue = "\(done.count)/7"
         counter.setAccessibilityLabel("\(done.count) of 7 habits completed today")
         for (button, habit) in zip(buttons, ClipHabit.all) {
             let checked = done.contains(habit.id)
             button.state = checked ? .on : .off
-            button.image = NSImage(systemSymbolName: checked ? "checkmark.circle.fill" : "circle", accessibilityDescription: nil)?.withSymbolConfiguration(.init(pointSize: 13, weight: .regular))
-            button.contentTintColor = checked ? NSColor(calibratedRed: 0.47, green: 0.91, blue: 0.65, alpha: 1) : NSColor.white.withAlphaComponent(0.8)
             button.setAccessibilityLabel("\(habit.title), \(checked ? "completed" : "not completed") today")
             button.toolTip = checked ? "Undo \(habit.title.lowercased())" : "Complete \(habit.title.lowercased())"
         }

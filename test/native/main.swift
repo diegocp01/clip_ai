@@ -552,3 +552,9 @@ let narrowComposer = NSRect(x: 60, y: 580, width: 480, height: 210)
 let narrowHabits = HabitTrackerLayout.frame(beside: narrowComposer, visible: narrowVisible)
 expect(narrowVisible.contains(narrowHabits) && !narrowHabits.intersects(narrowComposer), "Narrow-screen fallback leaves both controls usable")
 print("Habit persistence, undo, daily rollover, retention and placement checks passed")
+for index in 0..<7 {
+    expect(HabitRingGeometry.index(at: HabitRingGeometry.center(index)) == index, "Each ring segment maps to its own habit")
+}
+expect(HabitRingGeometry.index(at: NSPoint(x: 52, y: 52)) == nil, "Center counter cannot accidentally toggle a habit")
+expect(HabitRingGeometry.index(at: .zero) == nil, "Outside the ring cannot toggle a habit")
+print("Seven-segment habit ring hit testing passed")
