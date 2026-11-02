@@ -345,7 +345,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         island = panel(.zero, level: NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1))
         notchBridge = panel(.zero, level: island.level)
         notchBridge.title = "Clip notch background"
-        notchBridge.backgroundColor = .black
+        notchBridge.backgroundColor = .clear
+        let notchBlack = NSView(frame: .zero)
+        notchBlack.wantsLayer = true; notchBlack.layer?.backgroundColor = NSColor.black.cgColor
+        notchBlack.layer?.cornerRadius = 10; notchBlack.layer?.maskedCorners = [.layerMinXMinYCorner]
+        notchBlack.layer?.masksToBounds = true; notchBridge.contentView = notchBlack
         notchBridge.ignoresMouseEvents = true
         notchBridge.setAccessibilityElement(false)
         island.title = "Clip island"
@@ -1028,7 +1032,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let compact = IslandLayout(screen: screen.frame, safeTop: screen.safeAreaInsets.top,
                                    leftArea: screen.auxiliaryTopLeftArea, rightArea: screen.auxiliaryTopRightArea,
                                    expanded: false, content: content, audioLevel: voiceEnvelope)
-        habitTracker.show(notch: compact.notchFrame, compact: compactFrame ?? compact.frame,
+        let shell = expanded ? IslandLayout(screen: screen.frame, safeTop: screen.safeAreaInsets.top,
+                                            leftArea: screen.auxiliaryTopLeftArea, rightArea: screen.auxiliaryTopRightArea,
+                                            expanded: true).frame : compactFrame ?? compact.frame
+        habitTracker.show(notch: compact.notchFrame, shell: shell,
                           expanded: expanded, visible: screen.visibleFrame)
     }
     @discardableResult private func layoutIsland(updateFrame: Bool = true) -> IslandLayout {
