@@ -540,15 +540,23 @@ for offset in 1...100 {
     habits.toggle("read", on: habitCalendar.date(byAdding: .day, value: offset, to: habitDay)!, calendar: habitCalendar)
 }
 expect((habitDefaults.dictionary(forKey: "clip.habits.days.v1") ?? [:]).count == 90, "Saved history stays bounded")
+// The small ring belongs to the black notch; the list is a separate click-only panel.
 for origin in [NSPoint.zero, NSPoint(x: -1710, y: 250)] {
     let visible = NSRect(origin: origin, size: NSSize(width: 1710, height: 1073))
-    let composer = NSRect(x: origin.x + 615, y: origin.y + 860, width: 480, height: 210)
-    let frame = HabitTrackerLayout.frame(beside: composer, visible: visible)
-    expect(visible.contains(frame), "Habit tracker remains on its display")
-    expect(frame.maxX < composer.minX && !frame.intersects(composer), "Habit tracker stays left of the semicircle")
+    let notch = NSRect(x: origin.x + 762.5, y: origin.y + 1073, width: 185, height: 33.5)
+    for inset: CGFloat in [0, 24, 130] {
+        let compact = NSRect(x: notch.minX - inset, y: notch.minY - 10, width: notch.width + inset + 24, height: notch.height + 10)
+        for expanded in [false, true] {
+            let badge = HabitTrackerLayout.badge(notch: notch, compact: compact, expanded: expanded)
+            expect(badge.width == 32 && badge.height == notch.height, "Habit ring stays menu-bar sized")
+            expect(!badge.intersects(notch), "Habit ring never occupies the physical camera")
+            expect(badge.maxX == (expanded ? notch.minX : compact.minX), "Black habit wing joins the shell without a gap")
+            let list = HabitTrackerLayout.list(under: badge, visible: visible)
+            expect(visible.contains(list) && list.maxY < badge.minY, "Click-open list stays below the notch and inside the display")
+        }
+    }
 }
-let narrowVisible = NSRect(x: 0, y: 0, width: 600, height: 800)
-let narrowComposer = NSRect(x: 60, y: 580, width: 480, height: 210)
-let narrowHabits = HabitTrackerLayout.frame(beside: narrowComposer, visible: narrowVisible)
-expect(narrowVisible.contains(narrowHabits) && !narrowHabits.intersects(narrowComposer), "Narrow-screen fallback leaves both controls usable")
-print("Habit persistence, undo, daily rollover, retention and placement checks passed")
+let externalCompact = NSRect(x: 700, y: 980, width: 30, height: 22)
+let externalBadge = HabitTrackerLayout.badge(notch: nil, compact: externalCompact, expanded: false)
+expect(externalBadge.maxX == externalCompact.minX && externalBadge.maxY == externalCompact.maxY, "External-display habit ring attaches to the virtual notch")
+print("Habit persistence, undo, daily rollover, retention and integrated-notch placement passed")

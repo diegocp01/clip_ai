@@ -38,14 +38,17 @@ final class HabitStore {
 }
 
 enum HabitTrackerLayout {
-    static let size = NSSize(width: 148, height: 228)
-    static func frame(beside composer: NSRect, visible: NSRect) -> NSRect {
-        // Use the expanded footprint in both states, so opening Clip never pushes the checklist away.
-        let x = max(visible.minX + 8, composer.minX - size.width - 12)
-        var top = min(visible.maxY - 8, composer.maxY - 8)
-        // Very narrow displays cannot fit it beside the composer: keep both usable.
-        if x + size.width > composer.minX - 4 { top = min(top, composer.minY - 12) }
-        return NSRect(x: x, y: max(visible.minY + 8, top - size.height), width: size.width, height: size.height)
+    static let size = NSSize(width: 168, height: 236)
+    /// A black wing touches the compact shell/camera cover, never the camera itself.
+    static func badge(notch: NSRect?, compact: NSRect, expanded: Bool) -> NSRect {
+        let right = expanded ? (notch?.minX ?? compact.minX) : compact.minX
+        let top = notch?.maxY ?? compact.maxY
+        let height = notch?.height ?? compact.height
+        return NSRect(x: right - 32, y: top - height, width: 32, height: height)
+    }
+    static func list(under badge: NSRect, visible: NSRect) -> NSRect {
+        let x = min(max(badge.maxX - size.width, visible.minX + 8), visible.maxX - size.width - 8)
+        return NSRect(x: x, y: max(visible.minY + 8, badge.minY - size.height - 8), width: size.width, height: size.height)
     }
 }
 
@@ -56,47 +59,93 @@ private final class HabitPanel: NSPanel {
 private final class HabitButton: NSButton {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 }
+/// One accessible button; individual habits are changed only in the opened list.
+private final class HabitBadge: NSButton {
+    var done = Set<String>() { didSet { needsDisplay = true } }
+    var listOpen = false { didSet { needsDisplay = true } }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override func draw(_ dirtyRect: NSRect) {
+        let mint = NSColor(calibratedRed: 0.48, green: 0.95, blue: 0.66, alpha: 1)
+        let radius = min(10, bounds.height / 2 - 4)
+        let center = NSPoint(x: bounds.midX, y: bounds.midY)
+        for (index, habit) in ClipHabit.all.enumerated() {
+            let complete = done.contains(habit.id)
+            NSGraphicsContext.saveGraphicsState()
+            if complete {
+                let glow = NSShadow(); glow.shadowColor = mint.withAlphaComponent(0.5)
+                glow.shadowBlurRadius = 3; glow.shadowOffset = .zero; glow.set()
+            }
+            mint.withAlphaComponent(complete ? 1 : listOpen ? 0.4 : 0.23).setStroke()
+            let arc = NSBezierPath(), angle = 90 - CGFloat(index) * 360 / 7
+            arc.appendArc(withCenter: center, radius: radius, startAngle: angle + 17, endAngle: angle - 17, clockwise: true)
+            arc.lineWidth = 1.8; arc.lineCapStyle = .round; arc.stroke()
+            NSGraphicsContext.restoreGraphicsState()
+        }
+        if window?.firstResponder === self {
+            NSColor.white.withAlphaComponent(0.65).setStroke()
+            let focus = NSBezierPath(ovalIn: bounds.insetBy(dx: 3, dy: 2)); focus.lineWidth = 0.7; focus.stroke()
+        }
+    }
+}
 
 final class HabitTracker: NSObject {
     private let store: HabitStore
+    private let badgeWindow: HabitPanel
     private let window: HabitPanel
+    private let badge = HabitBadge()
     private let counter = NSTextField(labelWithString: "0/7")
     private var buttons = [NSButton]()
     private var midnightTimer: Timer?
     private var observers = [NSObjectProtocol]()
     private var wakeObserver: NSObjectProtocol?
-    var isVisible: Bool { window.isVisible }
-    func owns(_ candidate: NSWindow) -> Bool { candidate === window }
+    private var visibleFrame = NSRect.zero
+    private(set) var listOpen = false
+    var isVisible: Bool { badgeWindow.isVisible }
+    func owns(_ candidate: NSWindow) -> Bool { candidate === window || candidate === badgeWindow }
+    func contains(_ point: NSPoint) -> Bool { badgeWindow.frame.contains(point) || (listOpen && window.frame.contains(point)) }
     override convenience init() { self.init(store: HabitStore()) }
+    private static func panel(_ size: NSSize, level: Int) -> HabitPanel {
+        let p = HabitPanel(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        p.becomesKeyOnlyIfNeeded = true; p.isOpaque = false; p.backgroundColor = .clear
+        p.hidesOnDeactivate = false; p.isReleasedWhenClosed = false
+        p.level = NSWindow.Level(rawValue: level)
+        p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        return p
+    }
     init(store: HabitStore) {
         self.store = store
-        window = HabitPanel(contentRect: NSRect(origin: .zero, size: HabitTrackerLayout.size),
-                            styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        badgeWindow = Self.panel(NSSize(width: 32, height: 33.5), level: NSWindow.Level.statusBar.rawValue + 2)
+        window = Self.panel(HabitTrackerLayout.size, level: NSWindow.Level.popUpMenu.rawValue)
         super.init()
-        window.title = "Clip habits"
-        window.becomesKeyOnlyIfNeeded = true
-        window.isOpaque = false; window.backgroundColor = .clear; window.hasShadow = true
-        window.hidesOnDeactivate = false; window.isReleasedWhenClosed = false
-        window.level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1)
-        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        badgeWindow.title = "Clip habit ring"; badgeWindow.hasShadow = false
+        let black = NSView(frame: NSRect(origin: .zero, size: badgeWindow.frame.size))
+        black.wantsLayer = true; black.layer?.backgroundColor = NSColor.black.cgColor
+        black.layer?.cornerRadius = 10; black.layer?.maskedCorners = [.layerMinXMinYCorner]
+        black.layer?.masksToBounds = true; badgeWindow.contentView = black
+        badge.frame = black.bounds; badge.autoresizingMask = [.width, .height]
+        badge.title = ""; badge.isBordered = false; badge.target = self; badge.action = #selector(toggleList)
+        black.addSubview(badge)
+        window.title = "Clip habits"; window.hasShadow = true
         let glass = NSVisualEffectView(frame: NSRect(origin: .zero, size: HabitTrackerLayout.size))
         glass.material = .hudWindow; glass.blendingMode = .behindWindow; glass.state = .active
         glass.appearance = NSAppearance(named: .darkAqua)
-        glass.wantsLayer = true; glass.layer?.cornerRadius = 18; glass.layer?.masksToBounds = true
+        glass.wantsLayer = true; glass.layer?.cornerRadius = 16; glass.layer?.masksToBounds = true
         glass.layer?.borderWidth = 0.5; glass.layer?.borderColor = NSColor.white.withAlphaComponent(0.14).cgColor
         window.contentView = glass
         let title = NSTextField(labelWithString: "Today")
-        title.font = .systemFont(ofSize: 11, weight: .medium)
-        title.textColor = NSColor.white.withAlphaComponent(0.65)
-        title.frame = NSRect(x: 16, y: 199, width: 70, height: 16); glass.addSubview(title)
-        counter.font = .monospacedDigitSystemFont(ofSize: 10, weight: .medium)
-        counter.textColor = NSColor(calibratedRed: 0.47, green: 0.91, blue: 0.65, alpha: 1)
-        counter.alignment = .right; counter.frame = NSRect(x: 94, y: 199, width: 38, height: 16)
+        title.font = .systemFont(ofSize: 11, weight: .medium); title.textColor = .secondaryLabelColor
+        title.frame = NSRect(x: 15, y: 207, width: 50, height: 16); glass.addSubview(title)
+        counter.font = .monospacedDigitSystemFont(ofSize: 11, weight: .medium)
+        counter.textColor = NSColor(calibratedRed: 0.48, green: 0.95, blue: 0.66, alpha: 1)
+        counter.alignment = .right; counter.frame = NSRect(x: 95, y: 207, width: 30, height: 16)
         glass.addSubview(counter)
+        let close = HabitButton(frame: NSRect(x: 136, y: 205, width: 20, height: 20))
+        close.title = ""; close.isBordered = false; close.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Close habit list")
+        close.contentTintColor = .secondaryLabelColor; close.target = self; close.action = #selector(closeList)
+        close.setAccessibilityLabel("Close habit list"); glass.addSubview(close)
         for (index, habit) in ClipHabit.all.enumerated() {
-            let button = HabitButton(frame: NSRect(x: 13, y: 166 - CGFloat(index) * 25, width: 122, height: 24))
-            button.tag = index; button.title = "  " + habit.title
-            button.font = .systemFont(ofSize: 12, weight: .regular)
+            let button = HabitButton(frame: NSRect(x: 13, y: 174 - CGFloat(index) * 25, width: 142, height: 24))
+            button.tag = index; button.title = "  " + habit.title; button.font = .systemFont(ofSize: 12)
             button.alignment = .left; button.isBordered = false; button.imagePosition = .imageLeading
             button.setButtonType(.toggle); button.target = self; button.action = #selector(toggleHabit(_:))
             glass.addSubview(button); buttons.append(button)
@@ -107,19 +156,29 @@ final class HabitTracker: NSObject {
         wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in self?.refresh() }
         refresh()
     }
-    @objc private func toggleHabit(_ sender: NSButton) {
-        store.toggle(ClipHabit.all[sender.tag].id)
-        refresh()
+    @objc private func toggleHabit(_ sender: NSButton) { store.toggle(ClipHabit.all[sender.tag].id); refresh() }
+    @objc private func toggleList() { listOpen ? closeList() : openList() }
+    private func openList() {
+        guard !visibleFrame.isEmpty else { return }
+        listOpen = true; refresh(); positionList(); window.orderFrontRegardless()
+    }
+    @objc func closeList() { listOpen = false; refresh(); window.orderOut(nil) }
+    func dismissOutside(_ point: NSPoint) { if listOpen && !contains(point) { closeList() } }
+    private func positionList() {
+        window.setFrame(HabitTrackerLayout.list(under: badgeWindow.frame, visible: visibleFrame), display: true)
     }
     private func refresh() {
         let done = store.completed()
+        badge.done = done; badge.listOpen = listOpen
+        badge.toolTip = "Habits · \(done.count)/7 today · click for checklist"
+        badge.setAccessibilityLabel("Daily habits: \(done.count) of 7 completed. \(listOpen ? "Close" : "Open") checklist")
         counter.stringValue = "\(done.count)/7"
         counter.setAccessibilityLabel("\(done.count) of 7 habits completed today")
         for (button, habit) in zip(buttons, ClipHabit.all) {
             let checked = done.contains(habit.id)
             button.state = checked ? .on : .off
             button.image = NSImage(systemSymbolName: checked ? "checkmark.circle.fill" : "circle", accessibilityDescription: nil)?.withSymbolConfiguration(.init(pointSize: 13, weight: .regular))
-            button.contentTintColor = checked ? NSColor(calibratedRed: 0.47, green: 0.91, blue: 0.65, alpha: 1) : NSColor.white.withAlphaComponent(0.8)
+            button.contentTintColor = checked ? NSColor(calibratedRed: 0.48, green: 0.95, blue: 0.66, alpha: 1) : .labelColor
             button.setAccessibilityLabel("\(habit.title), \(checked ? "completed" : "not completed") today")
             button.toolTip = checked ? "Undo \(habit.title.lowercased())" : "Complete \(habit.title.lowercased())"
         }
@@ -129,13 +188,15 @@ final class HabitTracker: NSObject {
             midnightTimer = timer; RunLoop.main.add(timer, forMode: .common)
         }
     }
-    func show(beside composer: NSRect, visible: NSRect) {
-        let frame = HabitTrackerLayout.frame(beside: composer, visible: visible)
-        if window.frame != frame { window.setFrame(frame, display: true) }
-        if !window.isVisible { refresh(); window.orderFrontRegardless() }
+    func show(notch: NSRect?, compact: NSRect, expanded: Bool, visible: NSRect) {
+        visibleFrame = visible
+        let frame = HabitTrackerLayout.badge(notch: notch, compact: compact, expanded: expanded)
+        if badgeWindow.frame != frame { badgeWindow.setFrame(frame, display: true) }
+        if !badgeWindow.isVisible { refresh(); badgeWindow.orderFrontRegardless() }
+        if listOpen { positionList(); if !window.isVisible { window.orderFrontRegardless() } }
     }
-    func focus() { window.makeKeyAndOrderFront(nil) }
-    func hide() { window.orderOut(nil) }
+    func focus() { openList(); window.makeKeyAndOrderFront(nil) }
+    func hide() { badgeWindow.orderOut(nil); window.orderOut(nil) }
     deinit {
         midnightTimer?.invalidate()
         for observer in observers { NotificationCenter.default.removeObserver(observer) }
