@@ -271,6 +271,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         keyboardMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .leftMouseDown, .rightMouseDown]) { [weak self] event in
             guard let self, self.menuTrackingDepth == 0 else { return event }
             if event.type != .keyDown {
+                self.habitTracker.dismissOutside(NSEvent.mouseLocation)
                 if self.expanded, let window = event.window, window !== self.island, window !== self.dismissPanel, window !== self.captions, !self.habitTracker.owns(window),
                    window.level.rawValue < NSWindow.Level.popUpMenu.rawValue,
                    !self.island.frame.contains(window.convertPoint(toScreen: event.locationInWindow)) {
@@ -279,6 +280,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 return event
             }
             if event.keyCode == 53 {
+                if self.habitTracker.listOpen { self.habitTracker.closeList(); return nil }
                 if self.voiceRequested { self.stopRealtimeVoice() }
                 if self.recording { self.stopDictation(sendTranscript: false) }
                 else if self.busy { self.cancelRequest() }
@@ -288,7 +290,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             return event
         }
         outsideClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
-            guard let self, self.menuTrackingDepth == 0, self.expanded, !self.island.frame.contains(NSEvent.mouseLocation) else { return }
+            guard let self, self.menuTrackingDepth == 0 else { return }
+            self.habitTracker.dismissOutside(NSEvent.mouseLocation)
+            guard self.expanded, !self.habitTracker.contains(NSEvent.mouseLocation), !self.island.frame.contains(NSEvent.mouseLocation) else { return }
             self.setExpanded(false)
         }
         NotificationCenter.default.addObserver(self, selector: #selector(reposition), name: NSApplication.didChangeScreenParametersNotification, object: nil)
@@ -1018,12 +1022,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var talking: Bool { voiceRequested || recording || currentStatus == "Speaking" }
     // Resting: a green line. Audio live: the waveform. Anything else to say: text and line.
     @objc private func focusHabits() { positionHabits(); habitTracker.focus() }
-    private func positionHabits() {
+    private func positionHabits(compactFrame: NSRect? = nil) {
         guard !captureInProgress, let screen = island?.screen ?? NSScreen.main else { return }
-        let composer = IslandLayout(screen: screen.frame, safeTop: screen.safeAreaInsets.top,
-                                    leftArea: screen.auxiliaryTopLeftArea, rightArea: screen.auxiliaryTopRightArea,
-                                    expanded: true)
-        habitTracker.show(beside: composer.frame, visible: screen.visibleFrame)
+        let content: IslandContent = startupLoading ? .loading : talking ? .audio : currentStatus == "Ready" ? .idle : .status(textWidth: ceil(statusLabel.cell?.cellSize.width ?? 52))
+        let compact = IslandLayout(screen: screen.frame, safeTop: screen.safeAreaInsets.top,
+                                   leftArea: screen.auxiliaryTopLeftArea, rightArea: screen.auxiliaryTopRightArea,
+                                   expanded: false, content: content, audioLevel: voiceEnvelope)
+        habitTracker.show(notch: compact.notchFrame, compact: compactFrame ?? compact.frame,
+                          expanded: expanded, visible: screen.visibleFrame)
     }
     @discardableResult private func layoutIsland(updateFrame: Bool = true) -> IslandLayout {
         positionHabits()
@@ -1246,6 +1252,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let t = min(max(wake.value, 0), 1)
         let frame = mix(rest.frame, awake.frame, t)
         if frame != island.frame { island.setFrame(frame, display: true) }
+        positionHabits(compactFrame: frame)
         signalHost.frame = NSRect(origin: .zero, size: frame.size)
         let bead = smoothstep(0, 0.7, t), spread = smoothstep(0.25, 1, t)
         let crossfade = smoothstep(0.3, 0.9, t)
@@ -2035,6 +2042,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                                   expanded: false, content: .audio, audioLevel: voiceEnvelope)
         CATransaction.begin(); CATransaction.setDisableActions(true)
         if island.frame != layout.frame { island.setFrame(layout.frame, display: true) }
+        positionHabits(compactFrame: layout.frame)
         activityMark.frame = layout.activityFrame
         signalHost.frame = islandView.bounds
         CATransaction.commit()
