@@ -1,6 +1,6 @@
 # Clip
 
-A local Mac assistant that lives at the top of the screen and places interactive visuals over your desktop. Text editing uses the Codex SDK; streaming visuals use the bundled Codex app-server with your existing ChatGPT login.
+A local Mac assistant that lives at the top of the screen and places interactive visuals over your desktop. OpenAI Draw uses the Responses API, defaulting to GPT-6.1 Terra, Low reasoning and Fast mode. Chat and editing retain their signed-in Codex/Claude paths; the Draw model picker remains available.
 
 ![Clip's expanded desktop island with a question field, Screen and Talk buttons, and Fast mode selected.](docs/images/clippy-island.jpg)
 
@@ -27,13 +27,13 @@ The primary interface is the black island at the top of your display. Rest the p
 
 Use the island to ask a question, dictate on-device, or attach one screenshot. Select text in another app and press Control-Option-D to proofread or Control-D to rewrite; both use the selected model (GPT-6.1 Sol or Claude Sonnet 5.5, each at high effort) and replace the selection automatically. Generated 3D objects and diagrams appear in a transparent floating overlay above your other apps. Select a labeled part to ask a follow-up. See [desktop/README.md](desktop/README.md) for shortcuts and controls.
 
-Sign in with ChatGPT using the bundled Codex CLI. Your account needs access to `gpt-6.1-terra` for visuals and `gpt-6.1-sol` for text editing. Codex visuals and text editing use your ChatGPT login. Realtime voice and contextual loading labels use a separate OpenAI API key and API billing.
+Sign in with ChatGPT using the bundled Codex CLI for chat and text editing. OpenAI Draw, Realtime voice, TTS and Decisions use the existing local OpenAI API key and API billing. OpenAI Draw does not require a Codex login; Claude Draw uses its existing Claude CLI account. The Draw picker remembers your chosen model and effort, independently of chat.
 
 ## What uses AI
 
-Typed and dictated questions, explicitly attached images, prior answers and the previous scene are sent to Codex. Codex generates validated scene data rather than host-executable JavaScript. Complete visual parts appear progressively as the response streams; the final answer is committed only after full validation. The app renders 3D primitives with Three.js and diagrams with SVG. Optional local dictation uses on-device recognition. Talk uses GPT-Realtime-2.1 over WebRTC for streaming speech, turn detection and interruptions; the speaker button mutes replies. Audio is sent to OpenAI only after you start Talk. End, Escape or Quit stops the microphone. Typed replies can still use installed system voices.
+Typed and dictated questions, explicitly attached images, prior answers and the previous scene go to the selected generation provider. OpenAI Draw sends them to the Responses API with `store: false` and a strict JSON schema, producing validated scene data or sandboxed HTML. Complete visual parts appear progressively as the response streams; the final answer is committed only after full validation. The app renders 3D primitives with Three.js and diagrams with SVG. Optional local dictation uses on-device recognition. Talk uses GPT-Realtime-2.1 over WebRTC for streaming speech, turn detection and interruptions; the speaker button mutes replies. Audio is sent to OpenAI only after you start Talk. End, Escape or Quit stops the microphone. Typed replies can still use installed system voices.
 
-Each model turn uses a read-only, tool-disabled, ephemeral Codex session. Personal Codex configuration, tools and environment API keys are excluded. Screenshots are temporarily written for Codex image input, then removed. Streaming requests use a temporary Codex home linked only to the existing file-based login, with personal configuration excluded; the temporary home is removed after the request. Conversation context is held in the running client, not a project chat database. The Codex service processes prompts and images; this is not offline inference.
+Codex chat and editing turns use read-only, tool-disabled, ephemeral sessions. OpenAI Draw uses tool-free streaming API requests; temporary input images are removed after the request. Personal Codex configuration, tools and environment API keys are excluded. Screenshots are temporarily written for Codex image input, then removed. Streaming requests use a temporary Codex home linked only to the existing file-based login, with personal configuration excluded; the temporary home is removed after the request. Conversation context is held in the running client, not a project chat database. The Codex service processes prompts and images; this is not offline inference.
 
 ## Automatic selected-text editing
 
@@ -69,11 +69,11 @@ API credential, session configuration and native connection to the Listening sta
 
 ## Speed and cost
 
-Model: `gpt-6.1-terra`. Low reasoning and Fast mode are the defaults. Standard and Fast are explicit requested tiers, with no silent model/tier fallback. Access and billing follow your Codex account. The SDK does not make inference free or unlimited. A successful request does not expose independent proof of the server's delivered service tier.
+OpenAI Draw defaults to `gpt-6.1-terra`, Low reasoning and Fast mode. The picker still allows another model and effort. Requests explicitly send `reasoning.effort` and `service_tier`; returned metadata includes the actual served tier and `transport: "openai-api"`. API service capacity can downgrade a Fast request to default; Clip reports the returned tier rather than claiming Fast was served. It does not retry or fall back to a Codex subscription request.
 
-The installed SDK emits completed agent messages, so visual generation uses the app-server `item/agentMessage/delta` stream. This uses the same bundled CLI and login, without a separate inference API key. Every completed part is schema-validated before rendering; errors or cancellation restore the last completed visual.
+OpenAI Draw consumes Responses API text-delta events for both 3D and HTML and validates completed parts before rendering. API errors, refusal, truncated output and cancellation never trigger a second provider request. Claude Draw retains its CLI stream. Errors or cancellation restore the last completed visual.
 
-Official references: [Codex app-server](https://learn.chatgpt.com/docs/app-server), [Codex SDK](https://learn.chatgpt.com/docs/codex-sdk), [speed and eligibility](https://learn.chatgpt.com/docs/agent-configuration/speed).
+Official references: [Responses API structured outputs](https://developers.openai.com/api/docs/guides/structured-outputs), [API Fast mode](https://developers.openai.com/api/docs/guides/fast-mode), [Codex app-server](https://learn.chatgpt.com/docs/app-server), [Codex SDK](https://learn.chatgpt.com/docs/codex-sdk).
 
 ## Checks and evidence
 

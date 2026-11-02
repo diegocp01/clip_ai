@@ -68,7 +68,7 @@ export function createServer({run=generate,runHTML=generateExplanation,runSpeech
         let size=0;const chunks=[];
         for await(const chunk of req){size+=chunk.length;if(size>MAX_BODY)return json(413,{error:'Explanation request too large.'});chunks.push(chunk);}
         const request=normalizeExplanation(JSON.parse(Buffer.concat(chunks).toString('utf8')));
-        if(!(request.provider==='claude'?await checkClaude():await checkAuth()))return json(401,{error:'Sign in to the selected drawing provider first.'});
+        if(request.provider==='claude'&&!await checkClaude())return json(401,{error:'Sign in to the selected drawing provider first.'});
         controller.signal.throwIfAborted();
         res.writeHead(200,{'Content-Type':'application/x-ndjson; charset=utf-8'});
         const output=await runHTML(request,{signal:controller.signal,onStatus:message=>send({type:'status',message}),onPreview:result=>send({type:'preview',result})});
@@ -182,7 +182,7 @@ export function createServer({run=generate,runHTML=generateExplanation,runSpeech
       const automaticPresentation=!editing&&request.mode==='auto';
       let auto=!editing&&request.mode==='chat'&&request.model==='auto';
       let claude=request.provider==='claude';
-      if(!auto&&!automaticPresentation&&(claude?!await checkClaude():!await checkAuth()))return json(401,{error:claude?'Sign in to Claude first: run claude auth login in Terminal.':'Sign in to Codex with ChatGPT first: run codex login in Terminal.'});
+      if(!auto&&!automaticPresentation&&(claude?!await checkClaude():(editing||request.mode==='chat')&&!await checkAuth()))return json(401,{error:claude?'Sign in to Claude first: run claude auth login in Terminal.':'Sign in to Codex with ChatGPT first: run codex login in Terminal.'});
       if(active>=2)return json(429,{error:'Two requests are already running.'});
       active++;
       const controller=new AbortController();
@@ -210,7 +210,7 @@ export function createServer({run=generate,runHTML=generateExplanation,runSpeech
           claude=request.provider==='claude';
           auto=mode==='chat'&&request.model==='auto';
           send({type:'presentation',mode,source:['chat','draw'].includes(choice)?'decisions':'fallback'});
-          if(!auto&&(claude?!await checkClaude():!await checkAuth()))throw new Error(`Sign in to ${claude?'Claude':'Codex'} to use the selected ${mode==='draw'?'Draw':'chat'} model.`);
+          if(!auto&&(claude?!await checkClaude():mode==='chat'&&!await checkAuth()))throw new Error(`Sign in to ${claude?'Claude':'Codex'} to use the selected ${mode==='draw'?'Draw':'chat'} model.`);
           controller.signal.throwIfAborted();
         }
         if(auto) {
