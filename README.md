@@ -1,6 +1,6 @@
 # Clip
 
-A local Mac assistant that lives at the top of the screen and places interactive visuals over your desktop. OpenAI Draw uses the Responses API, defaulting to GPT-6.1 Terra, Low reasoning and Fast mode. Chat and editing retain their signed-in Codex/Claude paths; the Draw model picker remains available.
+A local Mac assistant that lives at the top of the screen and places interactive visuals over your desktop. OpenAI Draw uses the Responses API, defaulting to GPT-6.1 Sol, Low reasoning and Ultrafast mode. Chat and editing retain their signed-in Codex/Claude paths; the Draw model picker remains available.
 
 ![Clip's expanded desktop island with a question field, Screen and Talk buttons, and Fast mode selected.](docs/images/clippy-island.jpg)
 
@@ -69,11 +69,11 @@ API credential, session configuration and native connection to the Listening sta
 
 ## Speed and cost
 
-OpenAI Draw defaults to `gpt-6.1-terra`, Low reasoning and Fast mode. The picker still allows another model and effort. Requests explicitly send `reasoning.effort` and `service_tier`; returned metadata includes the actual served tier and `transport: "openai-api"`. API service capacity can downgrade a Fast request to default; Clip reports the returned tier rather than claiming Fast was served. It does not retry or fall back to a Codex subscription request.
+OpenAI Draw defaults to `gpt-6.1-sol`, Low reasoning and Ultrafast mode. Typed Draw, automatic visuals and native voice Draw use that model’s independent speed setting; other models remain selectable. Terra uses Fast, while explicit Ultrafast requests are accepted only for Sol or Astra. The picker still allows another model and effort. Requests explicitly send `reasoning.effort` and `service_tier`; returned metadata includes the actual served tier and `transport: "openai-api"`. Clip records the actual returned tier rather than claiming a requested speed was served. It does not retry or fall back to a Codex subscription request.
 
 OpenAI Draw consumes Responses API text-delta events for both 3D and HTML and validates completed parts before rendering. API errors, refusal, truncated output and cancellation never trigger a second provider request. Claude Draw retains its CLI stream. Errors or cancellation restore the last completed visual.
 
-Official references: [Responses API structured outputs](https://developers.openai.com/api/docs/guides/structured-outputs), [API Fast mode](https://developers.openai.com/api/docs/guides/fast-mode), [Codex app-server](https://learn.chatgpt.com/docs/app-server), [Codex SDK](https://learn.chatgpt.com/docs/codex-sdk).
+Official references: [Responses API structured outputs](https://developers.openai.com/api/docs/guides/structured-outputs), [API Fast mode](https://developers.openai.com/api/docs/guides/fast-mode), [API Ultrafast mode](https://developers.openai.com/api/docs/guides/ultrafast-mode), [Codex app-server](https://learn.chatgpt.com/docs/app-server), [Codex SDK](https://learn.chatgpt.com/docs/codex-sdk).
 
 ## Checks and evidence
 

@@ -1,6 +1,7 @@
 import {synthesizeSpeech,normalizeSpeech} from './speech.mjs';
 import {generateExplanation,normalizeExplanation,assertExplanation} from './html-explanation.mjs';
 import {chooseDrawFormat} from './draw-format.mjs';
+import {drawingSettings} from './drawing-settings.mjs';
 import {normalizeComparison,runComparison} from './comparison.mjs';
 import http from 'node:http';
 import {chooseScreenContext,normalizeScreenRequest} from './screen-context.mjs';
@@ -206,7 +207,7 @@ export function createServer({run=generate,runHTML=generateExplanation,runSpeech
           const choice=await routePresentation(request,{signal:controller.signal});
           controller.signal.throwIfAborted();
           const mode=choice==='draw'?'draw':'chat';
-          request={...request,...(mode==='draw'?request.drawing:{}),mode,drawing:null,autoScope:mode==='draw'?null:request.autoScope};
+          request={...request,...(mode==='draw'?{...request.drawing,tier:drawingSettings(request.drawing).defaultTier}:{}),mode,drawing:null,autoScope:mode==='draw'?null:request.autoScope};
           claude=request.provider==='claude';
           auto=mode==='chat'&&request.model==='auto';
           send({type:'presentation',mode,source:['chat','draw'].includes(choice)?'decisions':'fallback'});

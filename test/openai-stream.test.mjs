@@ -41,6 +41,15 @@ test('Draw transport honors alternate picker choices, reports the actual served 
   assert.equal(output.serviceTier,'default');
   await assert.rejects(runAPIVisualStream({...base,tier:'ultrafast',fetchImpl:()=>assert.fail()}),/speed/);
 });
+test('Sol and Astra send the actual Ultrafast API tier without substituting a model or effort',async()=>{
+  for(const model of ['gpt-6.1-sol','gpt-6-astra']){
+    const output=await runAPIVisualStream({...base,model,tier:'ultrafast',fetchImpl:async(_url,options)=>{
+      const request=JSON.parse(options.body);assert.equal(request.model,model);assert.equal(request.reasoning.effort,'low');assert.equal(request.service_tier,'ultrafast');
+      return new Response(event(complete('{}','ultrafast')));
+    }});
+    assert.equal(output.serviceTier,'ultrafast');
+  }
+});
 test('HTML generation uses the same API transport and preserves progressive sections and tier metadata',async()=>{
   const html={title:'Quiz',sections:[{html:'<details><summary>2+2?</summary>4</details>'}],summary:'A short quiz.'},previews=[];
   const output=await generateExplanation({message:'Make a quiz',provider:'gpt',model:'gpt-6.1-terra',reasoningEffort:'low',tier:'fast',history:[],previous:null,image:null},{onPreview:x=>previews.push(x),transport:args=>runAPIVisualStream({...args,getKey:base.getKey,fetchImpl:async(_url,options)=>{
@@ -67,11 +76,13 @@ test('cancel before and during the API call aborts without another request',asyn
   await assert.rejects(pending,/Stop/);assert.equal(calls,1);
 });
 test('API Draw works without Codex login while chat still requires it',async t=>{
-  const seen=[],server=createServer({checkAuth:async()=>false,routeDrawFormat:async()=>'3d',chooseStatus:async()=>null,run:async request=>{seen.push(request);return{result:visual};}});
+  const seen=[],server=createServer({checkAuth:async()=>false,routePresentation:async()=>'draw',routeDrawFormat:async()=>'3d',chooseStatus:async()=>null,run:async request=>{seen.push(request);return{result:visual};}});
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>{server.closeAllConnections();return new Promise(r=>server.close(r));});
   const url=`http://127.0.0.1:${server.address().port}`,{token}=await(await fetch(url+'/api/session')).json();
   const send=mode=>fetch(url+'/api/ask',{method:'POST',headers:{'Content-Type':'application/json','X-Clippy-Session':token},body:JSON.stringify({message:'Water',mode})});
   const draw=await send('draw');assert.equal(draw.status,200);assert.equal(JSON.parse((await draw.text()).trim().split('\n').at(-1)).type,'result');
-  assert.equal(seen[0].model,'gpt-6.1-terra');assert.equal(seen[0].reasoningEffort,'low');assert.equal(seen[0].tier,'fast');
-  assert.equal((await send('chat')).status,401);assert.equal(seen.length,1);
+  assert.equal(seen[0].model,'gpt-6.1-sol');assert.equal(seen[0].reasoningEffort,'low');assert.equal(seen[0].tier,'ultrafast');
+  const automatic=await fetch(url+'/api/ask',{method:'POST',headers:{'Content-Type':'application/json','X-Clippy-Session':token},body:JSON.stringify({message:'Water',mode:'auto',model:'auto',tier:'fast',drawing:{provider:'gpt',model:'gpt-6.1-sol',reasoningEffort:'low'}})});
+  await automatic.text();assert.equal(seen[1].model,'gpt-6.1-sol');assert.equal(seen[1].tier,'ultrafast','automatic Draw must use its own speed, not chat Fast');
+  assert.equal((await send('chat')).status,401);assert.equal(seen.length,2);
 });

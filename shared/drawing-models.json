@@ -1,7 +1,7 @@
 [
   {
-    "id": "gpt-6.1-terra",
-    "name": "GPT-6.1 Terra",
+    "id": "gpt-6.1-sol",
+    "name": "GPT-6.1 Sol",
     "provider": "gpt",
     "efforts": [
       "low",
@@ -9,11 +9,12 @@
       "high",
       "xhigh",
       "max"
-    ]
+    ],
+    "defaultTier": "ultrafast"
   },
   {
-    "id": "gpt-6.1-sol",
-    "name": "GPT-6.1 Sol",
+    "id": "gpt-6.1-terra",
+    "name": "GPT-6.1 Terra",
     "provider": "gpt",
     "efforts": [
       "low",
