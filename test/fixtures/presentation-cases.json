@@ -1,0 +1,17 @@
+[
+  {"message":"Create a hyperrealistic fighter jet—detailed metal panels, glowing afterburners, and cinematic lighting above the clouds.","expected":"draw"},
+  {"message":"A fighter jet with detailed metal panels and glowing afterburners above the clouds.","expected":"draw"},
+  {"message":"Draw a fighter jet","expected":"draw"},
+  {"message":"Render a realistic red sports car with cinematic lighting","expected":"draw"},
+  {"message":"Paint a tiny cabin beside a mountain lake at sunset","expected":"draw"},
+  {"message":"How do molecules work?","expected":"draw"},
+  {"message":"Make an interactive quiz showing a question and its hidden answer","expected":"draw"},
+  {"message":"hi","expected":"chat"},
+  {"message":"What is the capital of France?","expected":"chat"},
+  {"message":"Write a prompt for an image generator to create a hyperrealistic fighter jet above the clouds","expected":"chat"},
+  {"message":"Describe a fighter jet above the clouds in one sentence. Text only, no drawing.","expected":"chat"},
+  {"message":"How do I use the Draw button?","expected":"chat"},
+  {"message":"Explain how to draw a fighter jet with a pencil, step by step in words","expected":"chat"},
+  {"message":"Translate 'draw a fighter jet' into Spanish","expected":"chat"},
+  {"message":"How do airplane wings work? Text only, don't draw anything.","expected":"chat"}
+]

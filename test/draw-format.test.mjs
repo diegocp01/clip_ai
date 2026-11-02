@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {chooseDrawFormat} from '../server/draw-format.mjs';
+import {choosePresentation} from '../server/presentation.mjs';
 import {createServer} from '../server/index.mjs';
 import {generate} from '../server/codex.mjs';
 import {assertThreeDResult} from '../server/schema.mjs';
@@ -41,6 +42,34 @@ test('automatic visual choice uses independent Draw settings, while chat never c
   await send({message:'How do airplanes work?',mode:'auto',drawing:{provider:'claude',model:'claude-sonnet-5-5',reasoningEffort:'high'}});
   assert.equal(seen.provider,'claude');assert.equal(seen.model,'claude-sonnet-5-5');assert.equal(seen.visualFormat,'3d');
   await send({message:'Hi',mode:'chat'});assert.equal(formats,1);
+});
+test('creative visual request reaches 3D generation through both decisions with its full prompt and Draw settings',async t=>{
+  const message='Create a hyperrealistic fighter jet—detailed metal panels, glowing afterburners, and cinematic lighting above the clouds.';
+  for(const provider of ['gpt','claude']){
+    let seen;const decisions=[];
+    const fetchImpl=async(_url,options)=>{
+      const body=JSON.parse(options.body),question=body.questions[0];
+      decisions.push(question.name);
+      assert.equal(JSON.parse(body.input).message,message);
+      return Response.json({answers:[{name:question.name,type:'choice',choice:question.name==='presentation'?'draw':'3d'}]});
+    };
+    const generate=async request=>{seen=request;return{result:plane};};
+    const send=await harness(t,{
+      routePresentation:(request,options)=>choosePresentation(request,{...options,getKey:async()=>'test',fetchImpl}),
+      routeDrawFormat:(request,options)=>chooseDrawFormat(request,{...options,getKey:async()=>'test',fetchImpl}),
+      routeChat:()=>assert.fail('Draw must not choose a chat model'),
+      run:provider==='gpt'?generate:()=>assert.fail('wrong Draw provider'),
+      runClaude:provider==='claude'?generate:()=>assert.fail('wrong Draw provider'),
+      runHTML:()=>assert.fail('a fighter jet should reach the 3D generator'),
+    });
+    const model=provider==='gpt'?'gpt-6.1-terra':'claude-sonnet-5-5';
+    const {events}=await send({message,mode:'auto',model:'auto',reasoningEffort:'auto',drawing:{provider,model,reasoningEffort:'low'}});
+    assert.deepEqual(decisions,['presentation','draw_format']);
+    assert.equal(seen.message,message);assert.equal(seen.provider,provider);assert.equal(seen.model,model);
+    assert.equal(seen.mode,'draw');assert.equal(seen.visualFormat,'3d');assert.equal(seen.reasoningEffort,'low');
+    assert.equal(events.at(-1).mode,'draw');assert.equal(events.at(-1).format,'3d');
+    assert.ok(events.at(-1).result.scene.objects.length>0);
+  }
 });
 test('HTML context is validated and retained only for an HTML follow-up',async t=>{
   let seen;
