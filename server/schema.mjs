@@ -1,6 +1,6 @@
 import Ajv from 'ajv';
 import { chatSettings } from './chat-settings.mjs';
-import { drawingSettings } from './drawing-settings.mjs';
+import { drawingSettings,assertDrawingTier } from './drawing-settings.mjs';
 
 const string = (maxLength = 1200) => ({ type: 'string', maxLength });
 const number = (minimum, maximum) => ({ type: 'number', minimum, maximum });
@@ -26,7 +26,7 @@ const requestSchema = object({
   message: { ...string(6000), minLength:1 },
   mode: {type:'string',enum:['chat','draw','auto']},
   drawing: {anyOf:[{type:'null'},object({provider:{type:'string',enum:['gpt','claude']},model:string(100),reasoningEffort:string(20)})]},
-  tier: { type:'string',enum:['standard','fast'] },
+  tier: { type:'string',enum:['standard','fast','ultrafast'] },
   provider: { type:'string',enum:['gpt','claude'] },
   model: { anyOf:[{type:'null'},string(100)] },
   autoScope: {anyOf:[{type:'null'},{type:'string',enum:['all','gpt','claude']}]},
@@ -64,6 +64,7 @@ export function normalizeRequest(value) {
   const normalized = {autoScope:null,drawing:null,mode:'draw',tier:'fast',provider:'gpt',model:null,reasoningEffort:null,history:[],previous:null,image:null,...value};
   if (normalized.previous) assertResult(normalized.previous);
   if (!validateRequest(normalized)) throw new Error('Invalid request. Check the message, image size, speed and model settings.');
+  if(normalized.mode!=='draw'&&normalized.tier==='ultrafast')throw Error('Ultrafast is available for OpenAI Draw only.');
   if (!normalized.message.trim()) throw new Error('Enter a question first.');
   if (normalized.previous) assertResult(normalized.previous);
   if(normalized.mode==='auto') {
@@ -76,8 +77,9 @@ export function normalizeRequest(value) {
     return {...normalized,reasoningEffort:'auto',autoScope:normalized.autoScope??'all'};
   }
   if(normalized.autoScope!==null)throw new Error('Auto scope is only available with Auto chat models.');
-  const {model,reasoningEffort}=(normalized.mode==='draw'?drawingSettings:chatSettings)(normalized);
-  return {...normalized,model,reasoningEffort};
+  const {model,reasoningEffort,defaultTier}=(normalized.mode==='draw'?drawingSettings:chatSettings)(normalized);
+  const tier=normalized.mode==='draw'?assertDrawingTier(value.tier??defaultTier,normalized.provider,model):normalized.tier;
+  return {...normalized,model,reasoningEffort,tier};
 }
 export function decodeImage(url) {
   if (!url) return null;

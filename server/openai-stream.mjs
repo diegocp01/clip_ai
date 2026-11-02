@@ -1,5 +1,6 @@
 import {readFile} from 'node:fs/promises';
 import {voiceKey} from './realtime.mjs';
+import {assertDrawingTier} from './drawing-settings.mjs';
 
 // Direct API transport for OpenAI Draw. Chat keeps its signed-in Codex transport.
 export async function runAPIVisualStream({input,model,reasoningEffort,tier='fast',schema,signal,onText=()=>{},fetchImpl=fetch,getKey=voiceKey}) {
@@ -7,7 +8,7 @@ export async function runAPIVisualStream({input,model,reasoningEffort,tier='fast
   bounded.throwIfAborted();
   const key=await getKey();
   if(!key)throw Error('Draw needs the existing OpenAI API key in .env.local.');
-  if(!['standard','fast'].includes(tier))throw Error('Invalid OpenAI Draw speed.');
+  assertDrawingTier(tier,'gpt',model);
   const content=[];
   for(const item of input){
     if(item.type==='text')content.push({type:'input_text',text:item.text});
@@ -24,7 +25,7 @@ export async function runAPIVisualStream({input,model,reasoningEffort,tier='fast
   const orderedSchema=schema.properties?.scene?{...schema,properties:Object.fromEntries(order.map(name=>[name,schema.properties[name]]))}:schema;
   const response=await fetchImpl('https://api.openai.com/v1/responses',{
     method:'POST',headers:{Authorization:`Bearer ${key}`,'Content-Type':'application/json'},signal:bounded,
-    body:JSON.stringify({model,reasoning:{effort:reasoningEffort},service_tier:tier==='standard'?'default':'fast',store:false,stream:true,max_output_tokens:16000,
+    body:JSON.stringify({model,reasoning:{effort:reasoningEffort},service_tier:tier==='standard'?'default':tier,store:false,stream:true,max_output_tokens:16000,
       input:[{role:'user',content}],text:{format:{type:'json_schema',name:'clip_visual',strict:true,schema:orderedSchema}}}),
   });
   // Never echo upstream bodies: they can contain credentials or submitted context.

@@ -8,7 +8,10 @@ import { createServer } from '../server/index.mjs';
 
 const result={title:'Water',reply:'A schematic water molecule.',cards:[],diagram:{nodes:[],links:[]},scene:{objects:[{id:'oxygen',label:'Oxygen',description:'O',shape:'sphere',color:'#E88570',position:[0,0,0],scale:[1,1,1],rotation:[0,0,0]}]}};
 test('requests reject unexpected fields, large history, invalid speed and executable scene payloads',()=>{
-  assert.equal(normalizeRequest({message:'hello'}).tier,'fast');
+  assert.equal(normalizeRequest({message:'hello'}).tier,'ultrafast');
+  assert.equal(normalizeRequest({message:'hello',mode:'chat'}).tier,'fast');
+  assert.equal(normalizeRequest({message:'hello',model:'gpt-6.1-terra'}).tier,'fast');
+  for(const body of [{mode:'chat',model:'gpt-6.1-sol',tier:'ultrafast'},{mode:'draw',model:'gpt-6.1-terra',tier:'ultrafast'},{mode:'draw',provider:'claude',tier:'ultrafast'}])assert.throws(()=>normalizeRequest({message:'hello',...body}));
   for(const body of [{message:' '},{message:'x',path:'/etc/passwd'},{message:'x',tier:'turbo'},{message:'x',history:Array(13).fill({role:'user',content:'x'})}])assert.throws(()=>normalizeRequest(body));
   assert.throws(()=>assertResult({...result,html:'<script/>'}));
   assert.throws(()=>assertResult({...result,scene:{objects:[{...result.scene.objects[0],shape:'javascript'}]}}));
@@ -31,7 +34,7 @@ test('SDK provider forwards selected model, schema, image and cancellation; clea
   let seen;
   const controller=new AbortController();
   class FakeCodex{constructor(opts){seen={opts};}startThread(opts){seen.thread=opts;return {runStreamed:async(input,options)=>{seen.input=input;seen.options=options;return {events:(async function*(){yield {type:'item.completed',item:{type:'agent_message',text:JSON.stringify(result)}};yield {type:'turn.completed',usage:{output_tokens:10}};})()};}};}}
-  const out=await generate(normalizeRequest({message:'water',tier:'fast',image:'data:image/png;base64,iVBORw0KGgo='}),{signal:controller.signal,transport:null,CodexClass:FakeCodex});
+  const out=await generate(normalizeRequest({message:'water',mode:'chat',model:'gpt-6.1-terra',tier:'fast',image:'data:image/png;base64,iVBORw0KGgo='}),{signal:controller.signal,transport:null,CodexClass:FakeCodex});
   assert.equal(out.result.title,'Water');assert.equal(out.requestedTier,'fast');
   assert.equal(seen.thread.model,'gpt-6.1-terra');assert.equal(seen.thread.sandboxMode,'read-only');
   assert.equal(seen.thread.modelReasoningEffort,'low');
@@ -41,7 +44,7 @@ test('SDK provider forwards selected model, schema, image and cancellation; clea
 });
 test('SDK failure never fabricates a result',async()=>{
   class Failure{startThread(){return{runStreamed:async()=>({events:(async function*(){yield{type:'turn.failed',error:{message:'Tier unavailable'}};})()})};}}
-  await assert.rejects(generate(normalizeRequest({message:'x'}),{transport:null,CodexClass:Failure}),/Tier unavailable/);
+  await assert.rejects(generate(normalizeRequest({message:'x',mode:'chat',model:'gpt-6.1-terra'}),{transport:null,CodexClass:Failure}),/Tier unavailable/);
 });
 test('local HTTP server protects inference and streams validated requests',async t=>{
   let calls=0;
@@ -77,7 +80,7 @@ test('drawing selections validate provider and effort and reach the GPT transpor
   let seen;
   const out=await generate(request,{transport:async args=>{seen=args;return {raw:JSON.stringify(result),usage:null};}});
   assert.equal(seen.model,'gpt-6.1-sol');assert.equal(seen.reasoningEffort,'high');
-  assert.equal(seen.tier,'fast');assert.equal(out.model,'gpt-6.1-sol');assert.equal(out.reasoningEffort,'high');
+  assert.equal(seen.tier,'ultrafast');assert.equal(out.model,'gpt-6.1-sol');assert.equal(out.reasoningEffort,'high');
   for(const input of [
     {model:'claude-opus-5-5'}, {provider:'claude',model:'gpt-6.1-sol'},
     {model:'arbitrary-model'}, {reasoningEffort:'ultra'}, {reasoningEffort:'--tools'}

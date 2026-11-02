@@ -233,7 +233,7 @@ export class VoiceConversation {
       return true;
     } finally {s.pointBusy=false;}
   }
-  setDrawingSettings(value) {if(value && ['gpt','claude'].includes(value.provider))this.drawingSettings[value.provider]={model:value.model,reasoningEffort:value.reasoningEffort};}
+  setDrawingSettings(value) {if(value && ['gpt','claude'].includes(value.provider))this.drawingSettings[value.provider]={model:value.model,reasoningEffort:value.reasoningEffort,...(['standard','fast','ultrafast'].includes(value.tier)?{tier:value.tier}:{})};}
   setProvider(value) {this.provider=value==='claude'?'claude':'gpt';}
   setMuted(value) {this.muted=Boolean(value);if(this.session?.audio)this.session.audio.muted=this.muted;if(this.session?.meter)this.session.meter.muted=this.muted;}
   async hangup(s) {

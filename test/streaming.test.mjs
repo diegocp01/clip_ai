@@ -24,10 +24,10 @@ test('JSON previews arrive before completion at every character boundary and con
  assert.throws(()=>visualPreview('{"scene":{"objects":[{},]}}'));
  assert.throws(()=>previewEmitter()(' '.repeat(2_000_001)),/too large/);
 });
-test('streaming generation forwards Terra low Fast and emits previews before resolving final result',async()=>{
+test('streaming generation preserves explicit Fast on Sol Low and emits previews before resolving final result',async()=>{
  const seen=[];
  const output=await generate({message:'water',tier:'fast',image:null,previous:null,history:[]},{onPreview:r=>seen.push(r),transport:async opts=>{
-  assert.equal(opts.model,'gpt-6.1-terra');assert.equal(opts.reasoningEffort,'low');assert.equal(opts.tier,'fast');assert.equal(opts.env.OPENAI_API_KEY,undefined);
+  assert.equal(opts.model,'gpt-6.1-sol');assert.equal(opts.reasoningEffort,'low');assert.equal(opts.tier,'fast');assert.equal(opts.env.OPENAI_API_KEY,undefined);
   opts.onText(JSON.stringify(visual).slice(0,-20));assert.equal(seen.length,1);
   return {raw:JSON.stringify(visual),usage:null};
  }});

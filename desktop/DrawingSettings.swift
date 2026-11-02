@@ -5,6 +5,7 @@ struct DrawingModel: Decodable {
     let name: String
     let provider: String
     let efforts: [String]
+    let defaultTier: String?
 
     static func bundled(resource: String = "drawing-models") -> [DrawingModel] {
         guard let url = Bundle.main.url(forResource: resource, withExtension: "json"),
@@ -45,8 +46,10 @@ final class DrawingPreferences {
         guard model.efforts.contains(effort) else { return }
         defaults.set(effort, forKey: "\(namespace)Effort.\(model.id)")
     }
-    func request(for provider: String) -> [String: String] {
-        ["provider": provider, "model": model(for: provider).id, "reasoningEffort": effort(for: provider)]
+    func request(for provider: String, includeTier: Bool = false) -> [String: String] {
+        var request = ["provider": provider, "model": model(for: provider).id, "reasoningEffort": effort(for: provider)]
+        if includeTier { request["tier"] = model(for: provider).defaultTier ?? "fast" }
+        return request
     }
     static func effortTitle(_ value: String) -> String {
         ["xhigh": "Extra high", "max": "Maximum"][value] ?? value.capitalized

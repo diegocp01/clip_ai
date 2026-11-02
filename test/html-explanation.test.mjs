@@ -37,9 +37,10 @@ function fixture(fetchImpl){
 }
 test('voice HTML tool uses latest pointer crop, streams, remembers panel, and reports actual summary',async()=>{
  const f=fixture(async(path,options)=>{
-  assert.equal(path,'/api/ask');const request=JSON.parse(options.body);assert.equal(request.image,'shared crop');assert.equal(request.previous,null);
+  assert.equal(path,'/api/ask');const request=JSON.parse(options.body);assert.equal(request.tier,'ultrafast');assert.equal(request.model,'gpt-6.1-sol');assert.equal(request.image,'shared crop');assert.equal(request.previous,null);
   return new Response([JSON.stringify({type:'preview',format:'html',result:{...example,sections:example.sections.slice(0,1)}}),JSON.stringify({type:'result',format:'html',result:example})].join('\n'));
  });
+ f.voice.setDrawingSettings({provider:'gpt',model:'gpt-6.1-sol',reasoningEffort:'low',tier:'ultrafast'});
  const item={name:'show_explanation',call_id:'1',arguments:JSON.stringify({prompt:'Explain the circled tensor'})};
  await f.voice.draw(f.session,item);await f.voice.draw(f.session,item);
  assert.equal(f.previews.length,1);assert.equal(f.rendered.length,1);assert.equal(f.voice.previousHTML.title,'Tokens');

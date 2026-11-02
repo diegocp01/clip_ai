@@ -230,7 +230,9 @@ let suite = "clippy-model-tests-\(UUID().uuidString)"
 let preferences = UserDefaults(suiteName: suite)!
 defer { preferences.removePersistentDomain(forName: suite) }
 let choices = DrawingPreferences(models: models, defaults: preferences)
-expect(choices.model(for: "gpt").id == "gpt-6.1-terra", "GPT default must stay Terra")
+expect(choices.model(for: "gpt").id == "gpt-6.1-sol", "Draw defaults to Sol")
+expect(choices.request(for: "gpt", includeTier: true)["tier"] == "ultrafast", "Draw sends Sol Ultrafast to typed/voice requests")
+expect(choices.request(for: "gpt")["tier"] == nil, "Nested automatic Draw settings retain their validated shape")
 choices.select(model: "gpt-6.1-sol", provider: "gpt")
 choices.select(effort: "high", provider: "gpt")
 expect(choices.model(for: "claude").id == "claude-sonnet-5-5", "Provider selections must stay independent")

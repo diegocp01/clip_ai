@@ -1501,7 +1501,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
     private func updateDrawingSettings() {
         updateModelCaption()
-        let settings = drawingSettings.request(for: provider.rawValue)
+        let settings = drawingSettings.request(for: provider.rawValue, includeTier: true)
         if let data = try? JSONSerialization.data(withJSONObject: settings), let json = String(data: data, encoding: .utf8) {
             webView?.evaluateJavaScript("window.clippyVoice?.setDrawingSettings(\(json)); void 0;")
         }
@@ -1729,7 +1729,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         if pendingComparison { comparisonPanel.start() }
         pendingRequestMode = pendingComparison ? "chat" : mode
         screenshotIndicator.stringValue = attachedImage == nil ? "" : "Screenshot attached"
-        var selectedSettings = mode == "draw" ? drawingSettings.request(for: provider.rawValue) : chatSettings.request(for: chatProvider.rawValue)
+        var selectedSettings = mode == "draw" ? drawingSettings.request(for: provider.rawValue, includeTier: true) : chatSettings.request(for: chatProvider.rawValue)
         selectedSettings["mode"] = mode
         if mode != "draw" && chatSettings.isAuto { autoRouteCaption = nil; updateDrawingSettings() }
         let comparing = pendingComparison
@@ -1748,7 +1748,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                     request.httpMethod = "POST"
                     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
                     request.setValue(token, forHTTPHeaderField: "X-Clippy-Session")
-                    var body: [String: Any] = ["autoScope": selectedSettings["autoScope"] as Any? ?? NSNull(), "drawing": automaticDrawing as Any? ?? NSNull(), "message": message, "mode": selectedSettings["mode"]!, "tier": "fast", "provider": selectedSettings["provider"]!, "model": selectedSettings["model"]!, "reasoningEffort": selectedSettings["reasoningEffort"]!, "history": Array(self.history.suffix(12)), "previous": self.previous as Any? ?? NSNull(), "image": image as Any? ?? NSNull()]
+                    var body: [String: Any] = ["autoScope": selectedSettings["autoScope"] as Any? ?? NSNull(), "drawing": automaticDrawing as Any? ?? NSNull(), "message": message, "mode": selectedSettings["mode"]!, "tier": selectedSettings["tier"] ?? "fast", "provider": selectedSettings["provider"]!, "model": selectedSettings["model"]!, "reasoningEffort": selectedSettings["reasoningEffort"]!, "history": Array(self.history.suffix(12)), "previous": self.previous as Any? ?? NSNull(), "image": image as Any? ?? NSNull()]
                     if comparing { body = ["task": "chat", "message": message, "image": image as Any? ?? NSNull(), "settings": comparisonSettings] }
                     guard let encoded = try? JSONSerialization.data(withJSONObject: body) else { self.finishRequest(); self.showError("Could not prepare the request."); return }
                     request.httpBody = encoded
