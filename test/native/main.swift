@@ -540,6 +540,35 @@ for offset in 1...100 {
     habits.toggle("read", on: habitCalendar.date(byAdding: .day, value: offset, to: habitDay)!, calendar: habitCalendar)
 }
 expect((habitDefaults.dictionary(forKey: "clip.habits.days.v1") ?? [:]).count == 90, "Saved history stays bounded")
+expect((habitDefaults.dictionary(forKey: "clip.habits.history.v1") as? [String: Int])?["2026-11-01"] == 1,
+       "A completed day survives after individual checkbox detail ages out")
+
+// Migrate real saved progress, preserve binary outcomes, and fill offline gaps across DST.
+let historySuite = "clip.habits.history.test.\(UUID().uuidString)"
+let historyDefaults = UserDefaults(suiteName: historySuite)!
+defer { historyDefaults.removePersistentDomain(forName: historySuite) }
+historyDefaults.set(["2026-10-30": ["read", "math"], "2026-10-31": ClipHabit.all.map(\.id)], forKey: "clip.habits.days.v1")
+let historyStore = HabitStore(defaults: historyDefaults)
+let firstWeek = historyStore.history(days: 7, on: habitDay, calendar: habitCalendar)
+expect(firstWeek.count == 7 && firstWeek.prefix(4).allSatisfy { $0.result == nil }, "Dates before known tracking must stay blank")
+expect(firstWeek[4].result == 0 && firstWeek[5].result == 1, "Only all seven counts as one; partial days migrate as zero")
+expect(firstWeek[6].isToday && firstWeek[6].result == 0, "Today is live, not a finalized failure")
+for habit in ClipHabit.all { historyStore.toggle(habit.id, on: habitDay, calendar: habitCalendar) }
+expect(historyStore.history(days: 7, on: habitDay, calendar: habitCalendar).last?.result == 1, "Live all-seven completion appears immediately")
+historyStore.toggle("read", on: habitDay, calendar: habitCalendar)
+expect(historyStore.history(days: 7, on: habitDay, calendar: habitCalendar).last?.result == 0, "Undoing one habit removes today's provisional success")
+historyStore.toggle("read", on: habitDay, calendar: habitCalendar)
+let afterOffline = habitCalendar.date(byAdding: .day, value: 4, to: habitDay)!
+let reopened = HabitStore(defaults: historyDefaults).history(days: 7, on: afterOffline, calendar: habitCalendar)
+expect(reopened[2].result == 1 && !reopened[2].isToday, "All seven finalizes at the next calendar day and survives relaunch")
+expect(reopened[3...5].allSatisfy { $0.result == 0 && !$0.isToday }, "Days missed while the app is closed finalize as zero")
+expect(reopened.map { HabitStore.dayKey($0.date, calendar: habitCalendar) } == ["2026-10-30", "2026-10-31", "2026-11-01", "2026-11-02", "2026-11-03", "2026-11-04", "2026-11-05"], "DST history has one point per local calendar day")
+expect(historyStore.history(days: 30, on: afterOffline, calendar: habitCalendar).count == 30, "Month view has 30 daily points")
+expect((historyDefaults.dictionary(forKey: "clip.habits.history.v1") as? [String: Int])?.values.allSatisfy { $0 == 0 || $0 == 1 } == true, "Final history persists only binary outcomes")
+let later = habitCalendar.date(byAdding: .day, value: 120, to: habitDay)!
+historyStore.rollover(on: later, calendar: habitCalendar)
+expect((historyDefaults.dictionary(forKey: "clip.habits.history.v1") as? [String: Int])?["2026-10-31"] == 1, "Binary history is not trimmed after 90 days")
+print("Binary habit history, migration, live undo, offline gaps, DST and long-term persistence passed")
 // Every ring is inset into an existing black surface, never attached outside it.
 for origin in [NSPoint.zero, NSPoint(x: -1710, y: 250)] {
     let screen = NSRect(origin: origin, size: NSSize(width: 1710, height: 1107))
@@ -558,6 +587,8 @@ for origin in [NSPoint.zero, NSPoint(x: -1710, y: 250)] {
                 expect(!badge.intersects(layout.notchFrame!), "Habit ring must never occupy camera pixels")
                 let list = HabitTrackerLayout.list(under: badge, visible: visible)
                 expect(visible.contains(list) && list.maxY < badge.minY, "Click-open list stays on the same display below the notch")
+                let chart = HabitTrackerLayout.list(under: badge, visible: visible, size: HabitTrackerLayout.historySize)
+                expect(visible.contains(chart) && chart.maxY == list.maxY, "The larger history chart keeps its notch anchor and fits the display")
                 if !expanded, case .status = content {
                     let status = layout.statusFrame.offsetBy(dx: layout.frame.minX, dy: layout.frame.minY)
                     expect(!status.intersects(badge), "Status text cannot overlap the inset ring")
