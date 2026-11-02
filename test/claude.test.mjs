@@ -119,7 +119,7 @@ test('the server routes each provider to its own runner and sign-in check',async
   t.after(()=>new Promise(resolve=>server.close(resolve)));
   const base=`http://127.0.0.1:${server.address().port}`;
   const {token}=await(await fetch(base+'/api/session')).json();
-  const send=provider=>fetch(base+'/api/chat',{method:'POST',headers:{'Content-Type':'application/json','X-Clippy-Session':token},body:JSON.stringify({message:'hi',...(provider?{provider}:{})})});
+  const send=provider=>fetch(base+'/api/chat',{method:'POST',headers:{'Content-Type':'application/json','X-Clippy-Session':token},body:JSON.stringify({message:'hi',mode:'chat',...(provider?{provider}:{})})});
 
   const claude=await send('claude');
   assert.equal(claude.status,200);
@@ -154,7 +154,7 @@ test('a signed-out Claude gets its own sign-in message',async t=>{
   t.after(()=>new Promise(resolve=>server.close(resolve)));
   const base=`http://127.0.0.1:${server.address().port}`;
   const {token}=await(await fetch(base+'/api/session')).json();
-  const response=await fetch(base+'/api/chat',{method:'POST',headers:{'Content-Type':'application/json','X-Clippy-Session':token},body:JSON.stringify({message:'hi',provider:'claude'})});
+  const response=await fetch(base+'/api/chat',{method:'POST',headers:{'Content-Type':'application/json','X-Clippy-Session':token},body:JSON.stringify({message:'hi',mode:'chat',provider:'claude'})});
   assert.equal(response.status,401);
   assert.match((await response.json()).error,/claude auth login/);
 });
