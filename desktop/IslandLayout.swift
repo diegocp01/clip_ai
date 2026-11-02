@@ -127,8 +127,8 @@ struct IslandLayout {
     /// Where the startup light travels: down the left of the camera, under it, and up the right.
     /// It ends on the resting line. Without a camera it just crosses the pill.
     var loadingPath: [CGPoint] {
-        guard notchFrame != nil else { return [CGPoint(x: 8, y: frame.height / 2), CGPoint(x: frame.width - 8, y: frame.height / 2)] }
-        let side = frame.width - lineFrame.midX
+        guard let notchFrame else { return [CGPoint(x: HabitTrackerLayout.notchWidth + 8, y: frame.height / 2), CGPoint(x: frame.width - 8, y: frame.height / 2)] }
+        let side = notchFrame.minX - frame.minX - 12
         return [CGPoint(x: side, y: lineFrame.maxY), CGPoint(x: side, y: 5), CGPoint(x: lineFrame.midX, y: 5), CGPoint(x: lineFrame.midX, y: lineFrame.maxY)]
     }
     /// How much of that path the resting line takes up.
@@ -164,21 +164,24 @@ struct IslandLayout {
             case .audio: leftWing = 8 * energy; rightWing = 36 + 12 * energy
             case .status(let textWidth): leftWing = min(textWidth + 20, 130); rightWing = 24
             }
+            // Reserve a real part of the same black shell for the habit ring.
+            let reserved = HabitTrackerLayout.notchWidth
+            let fullLeftWing = leftWing + reserved
             // Awake/startup signals need space below the camera; voice adds only a subtle drop.
             let drop: CGFloat = awake || content == .loading ? 10 : 4 * energy
-            frame = NSRect(x: notch.minX - leftWing, y: notch.minY - drop,
-                           width: notch.width + leftWing + rightWing, height: notch.height + drop)
+            frame = NSRect(x: notch.minX - fullLeftWing, y: notch.minY - drop,
+                           width: notch.width + fullLeftWing + rightWing, height: notch.height + drop)
             cornerRadius = awake || content == .loading ? 18 : 10
             notchBridge = nil
             statusFrame = NSRect(x: 12, y: (notch.height - 18) / 2, width: max(leftWing - 20, 0), height: 18)
-            activityFrame = NSRect(x: leftWing + notch.width + (rightWing - 24) / 2,
+            activityFrame = NSRect(x: fullLeftWing + notch.width + (rightWing - 24) / 2,
                                    y: drop + (notch.height - 20) / 2, width: 24, height: 20)
-            lineFrame = awake ? NSRect(x: leftWing + (notch.width - 130) / 2, y: 4, width: 130, height: 2)
-                              : NSRect(x: leftWing + notch.width + (rightWing - 3) / 2,
+            lineFrame = awake ? NSRect(x: fullLeftWing + (notch.width - 130) / 2, y: 4, width: 130, height: 2)
+                              : NSRect(x: fullLeftWing + notch.width + (rightWing - 3) / 2,
                                        y: drop + (notch.height - 14) / 2, width: 3, height: 14)
             // At rest only the line's side reacts. Once awake, the whole island keeps it awake.
             wakeArea = awake ? NSRect(origin: .zero, size: frame.size)
-                             : NSRect(x: leftWing + notch.width, y: 0, width: rightWing, height: notch.height)
+                             : NSRect(x: fullLeftWing + notch.width, y: 0, width: rightWing, height: notch.height)
             return
         }
         cornerRadius = expanded ? ComposerGeometry.cornerRadius : 11
@@ -190,23 +193,25 @@ struct IslandLayout {
         case .audio: textWidth = 0; compactWidth = 40 + 20 * energy
         case .status(let width): textWidth = min(width, 240); compactWidth = 38 + textWidth
         }
-        let width: CGFloat = expanded ? ComposerGeometry.size.width : compactWidth
+        let leading: CGFloat = expanded ? 0 : HabitTrackerLayout.notchWidth
+        let width: CGFloat = expanded ? ComposerGeometry.size.width : compactWidth + leading
         let height: CGFloat = expanded ? ComposerGeometry.size.height : 22 + 4 * energy
         let center = notch?.midX ?? screen.midX
         let top = screen.maxY - max(safeTop, notch == nil ? 4 : 0)
         frame = NSRect(x: center - width / 2, y: top - height, width: width, height: height)
         statusFrame = expanded ? NSRect(x: 144, y: 174, width: 235, height: 20)
-                               : NSRect(x: 26, y: 2, width: textWidth, height: 18)
+                               : NSRect(x: leading + 26, y: 2, width: textWidth, height: 18)
         activityFrame = expanded ? NSRect(x: 116, y: 174, width: 24, height: 20)
-                                 : NSRect(x: (width - 24) / 2, y: (height - 20) / 2, width: 24, height: 20)
+                                 : NSRect(x: leading + (compactWidth - 24) / 2, y: (height - 20) / 2, width: 24, height: 20)
         if expanded { lineFrame = NSRect(x: 129, y: 177, width: 3, height: 14) }
-        else if awake { lineFrame = NSRect(x: 10, y: 3, width: width - 20, height: 2) }
-        else { lineFrame = NSRect(x: content == .idle || content == .loading ? (width - 3) / 2 : 12, y: (height - 14) / 2, width: 3, height: 14) }
-        wakeArea = NSRect(x: 0, y: 0, width: width, height: height)
-        // Cover only the physical camera area. Extending this black rectangle
-        // into a translucent composer leaves a visible dark block inside the glass.
+        else if awake { lineFrame = NSRect(x: leading + 10, y: 3, width: compactWidth - 20, height: 2) }
+        else { lineFrame = NSRect(x: leading + (content == .idle || content == .loading ? (compactWidth - 3) / 2 : 12), y: (height - 14) / 2, width: 3, height: 14) }
+        wakeArea = NSRect(x: leading, y: 0, width: width - leading, height: height)
+        // The same menu-bar cover includes the inset habit ring. It stops at the
+        // camera bottom, so no black rectangle extends into the glass body.
         if let notch {
-            notchBridge = notch
+            notchBridge = NSRect(x: notch.minX - HabitTrackerLayout.notchWidth, y: notch.minY,
+                                 width: notch.width + HabitTrackerLayout.notchWidth, height: notch.height)
         } else {
             notchBridge = nil
         }

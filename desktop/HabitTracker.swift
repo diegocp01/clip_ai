@@ -39,12 +39,15 @@ final class HabitStore {
 
 enum HabitTrackerLayout {
     static let size = NSSize(width: 168, height: 236)
-    /// A black wing touches the compact shell/camera cover, never the camera itself.
-    static func badge(notch: NSRect?, compact: NSRect, expanded: Bool) -> NSRect {
-        let right = expanded ? (notch?.minX ?? compact.minX) : compact.minX
-        let top = notch?.maxY ?? compact.maxY
-        let height = notch?.height ?? compact.height
-        return NSRect(x: right - 32, y: top - height, width: 32, height: height)
+    static let notchWidth: CGFloat = 48
+    /// The hit target is transparent; the existing notch shell paints all black behind it.
+    static func badge(notch: NSRect?, shell: NSRect, expanded: Bool) -> NSRect {
+        if let notch {
+            return NSRect(x: notch.minX - notchWidth + 6, y: notch.minY, width: 28, height: notch.height)
+        }
+        let height = min(24, shell.height)
+        return NSRect(x: shell.minX + (expanded ? 78 : 6),
+                      y: shell.maxY - height - (expanded ? 4 : 0), width: 28, height: height)
     }
     static func list(under badge: NSRect, visible: NSRect) -> NSRect {
         let x = min(max(badge.maxX - size.width, visible.minX + 8), visible.maxX - size.width - 8)
@@ -118,13 +121,11 @@ final class HabitTracker: NSObject {
         window = Self.panel(HabitTrackerLayout.size, level: NSWindow.Level.popUpMenu.rawValue)
         super.init()
         badgeWindow.title = "Clip habit ring"; badgeWindow.hasShadow = false
-        let black = NSView(frame: NSRect(origin: .zero, size: badgeWindow.frame.size))
-        black.wantsLayer = true; black.layer?.backgroundColor = NSColor.black.cgColor
-        black.layer?.cornerRadius = 10; black.layer?.maskedCorners = [.layerMinXMinYCorner]
-        black.layer?.masksToBounds = true; badgeWindow.contentView = black
-        badge.frame = black.bounds; badge.autoresizingMask = [.width, .height]
+        let hitTarget = NSView(frame: NSRect(origin: .zero, size: badgeWindow.frame.size))
+        badgeWindow.contentView = hitTarget
+        badge.frame = hitTarget.bounds; badge.autoresizingMask = [.width, .height]
         badge.title = ""; badge.isBordered = false; badge.target = self; badge.action = #selector(toggleList)
-        black.addSubview(badge)
+        hitTarget.addSubview(badge)
         window.title = "Clip habits"; window.hasShadow = true
         let glass = NSVisualEffectView(frame: NSRect(origin: .zero, size: HabitTrackerLayout.size))
         glass.material = .hudWindow; glass.blendingMode = .behindWindow; glass.state = .active
@@ -188,9 +189,9 @@ final class HabitTracker: NSObject {
             midnightTimer = timer; RunLoop.main.add(timer, forMode: .common)
         }
     }
-    func show(notch: NSRect?, compact: NSRect, expanded: Bool, visible: NSRect) {
+    func show(notch: NSRect?, shell: NSRect, expanded: Bool, visible: NSRect) {
         visibleFrame = visible
-        let frame = HabitTrackerLayout.badge(notch: notch, compact: compact, expanded: expanded)
+        let frame = HabitTrackerLayout.badge(notch: notch, shell: shell, expanded: expanded)
         if badgeWindow.frame != frame { badgeWindow.setFrame(frame, display: true) }
         if !badgeWindow.isVisible { refresh(); badgeWindow.orderFrontRegardless() }
         if listOpen { positionList(); if !window.isVisible { window.orderFrontRegardless() } }

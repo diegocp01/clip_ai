@@ -16,7 +16,7 @@ for origin in [NSPoint.zero, NSPoint(x: -1710, y: 250)] {
         if expanded {
             let bridge = layout.notchBridge!
             expect(layout.frame.maxY == left.minY, "Expanded controls must stay below the camera")
-            expect(bridge.minX == left.maxX && bridge.maxX == right.minX, "Expanded bridge must not cover adjacent menu items")
+            expect(bridge.minX == left.maxX - HabitTrackerLayout.notchWidth && bridge.maxX == right.minX, "Expanded black cover must contain the reserved habit area")
             expect(bridge.maxY == screen.maxY && bridge.minY == layout.frame.maxY, "Camera cover must stop at the glass edge")
             expect(!bridge.intersects(layout.frame), "Black camera cover must never show through the glass body")
         } else {
@@ -24,11 +24,11 @@ for origin in [NSPoint.zero, NSPoint(x: -1710, y: 250)] {
             expect(layout.notchBridge == nil, "Collapsed island must not leave a connector below the notch")
             let onScreen = { (rect: NSRect, layout: IslandLayout) in rect.offsetBy(dx: layout.frame.minX, dy: layout.frame.minY) }
             let resting = layout.frame.width
-            expect(resting == 185 + 24, "Resting island must be only slightly wider than the camera")
-            expect(layout.frame.minX == left.maxX, "Resting island must not extend left of the camera")
+            expect(resting == 185 + 24 + HabitTrackerLayout.notchWidth, "The resting shell must reserve black space for the ring")
+            expect(layout.frame.minX == left.maxX - HabitTrackerLayout.notchWidth, "The left habit area must belong to the resting shell")
             expect(right.contains(onScreen(layout.wakeArea, layout)), "Only the line's side may wake the island")
             let hovered = IslandLayout(screen: screen, safeTop: 33.5, leftArea: left, rightArea: right, expanded: false, content: .idle, hovered: true)
-            expect(hovered.frame.width == 185 + 48 && hovered.frame.midX == screen.midX, "Hover must grow only slightly and evenly past the camera, leaving no empty blocks")
+            expect(hovered.frame.width == 185 + 48 + HabitTrackerLayout.notchWidth && hovered.frame.midX == screen.midX - HabitTrackerLayout.notchWidth / 2, "Hover preserves the same reserved habit area")
             expect(onScreen(hovered.wakeArea, hovered) == hovered.frame, "The whole awake island must keep it awake")
             expect(hovered.frame.maxY == screen.maxY && hovered.frame.minY < left.minY, "Awake island must stay on the screen edge and hang below the camera")
             let sensing = onScreen(hovered.lineFrame, hovered)
@@ -38,7 +38,7 @@ for origin in [NSPoint.zero, NSPoint(x: -1710, y: 250)] {
             expect(right.contains(onScreen(layout.lineFrame, layout)) && layout.frame.contains(onScreen(layout.lineFrame, layout)), "Resting line must be visible entirely right of the physical camera")
             let audio = IslandLayout(screen: screen, safeTop: 33.5, leftArea: left, rightArea: right, expanded: false, content: .audio)
             expect(audio.frame.width > resting, "Audio must grow the island")
-            expect(audio.frame.minX == left.maxX, "Audio island must not extend left of the camera")
+            expect(audio.frame.minX == left.maxX - HabitTrackerLayout.notchWidth, "Audio retains the black habit area")
             expect(right.contains(onScreen(audio.activityFrame, audio)) && audio.frame.contains(onScreen(audio.activityFrame, audio)), "Activity indicator must be visible entirely right of the physical camera")
             for textWidth: CGFloat in [40, 600] {
                 let status = IslandLayout(screen: screen, safeTop: 33.5, leftArea: left, rightArea: right, expanded: false, content: .status(textWidth: textWidth))
@@ -54,7 +54,7 @@ for expanded in [false, true] {
     let layout = IslandLayout(screen: external, safeTop: 0, leftArea: nil, rightArea: nil, expanded: expanded)
     expect(layout.notchBridge == nil, "External/non-notched screens must retain a floating pill")
     expect(layout.frame.maxY == external.maxY - 4, "Floating pill keeps its top inset")
-    expect(layout.frame.width == (expanded ? ComposerGeometry.size.width : 30), "Floating pill rests at line size")
+    expect(layout.frame.width == (expanded ? ComposerGeometry.size.width : 30 + HabitTrackerLayout.notchWidth), "Floating pill rests at line size")
     expect(layout.bounds.contains(layout.lineFrame), "Line must remain inside the pill")
     expect(layout.frame.midX == external.midX, "External display origin must be respected")
 }
@@ -62,11 +62,11 @@ let unknown = IslandLayout(screen: external, safeTop: 30, leftArea: nil, rightAr
 expect(unknown.notchBridge == nil && unknown.frame.maxY == external.maxY - 30, "Missing notch bounds must fall back below the safe area")
 let audioPill = IslandLayout(screen: external, safeTop: 0, leftArea: nil, rightArea: nil, expanded: false, content: .audio)
 let hoveredPill = IslandLayout(screen: external, safeTop: 0, leftArea: nil, rightArea: nil, expanded: false, content: .idle, hovered: true)
-expect(hoveredPill.frame.width > 30 && hoveredPill.frame.midX == external.midX && hoveredPill.bounds.contains(hoveredPill.lineFrame), "Floating pill must grow around its line on hover")
+expect(hoveredPill.frame.width > 30 + HabitTrackerLayout.notchWidth && hoveredPill.frame.midX == external.midX && hoveredPill.bounds.contains(hoveredPill.lineFrame), "Floating pill must grow around its line on hover")
 expect(hoveredPill.lineFrame.width > hoveredPill.lineFrame.height, "Floating pill's awake line must lie flat")
-expect(audioPill.frame.width == 40 && audioPill.bounds.contains(audioPill.activityFrame), "Floating pill must fit the waveform")
+expect(audioPill.frame.width == 40 + HabitTrackerLayout.notchWidth && audioPill.bounds.contains(audioPill.activityFrame), "Floating pill must fit the waveform")
 let statusPill = IslandLayout(screen: external, safeTop: 0, leftArea: nil, rightArea: nil, expanded: false, content: .status(textWidth: 600))
-expect(statusPill.frame.width == 278 && statusPill.bounds.contains(statusPill.statusFrame), "Floating pill must cap and fit status text")
+expect(statusPill.frame.width == 278 + HabitTrackerLayout.notchWidth && statusPill.bounds.contains(statusPill.statusFrame), "Floating pill must cap and fit status text")
 // At startup a light sweeps around the camera, ending exactly where the resting line sits.
 do {
     let screen = NSRect(x: 0, y: 0, width: 1710, height: 1107)
@@ -76,7 +76,7 @@ do {
     let resting = IslandLayout(screen: screen, safeTop: 33.5, leftArea: left, rightArea: right, expanded: false)
     let onScreen = { (p: CGPoint) in CGPoint(x: p.x + loading.frame.minX, y: p.y + loading.frame.minY) }
     let path = loading.loadingPath.map(onScreen)
-    expect(loading.frame.midX == screen.midX && loading.frame.minY < left.minY, "The startup shape must wrap the camera evenly")
+    expect(loading.frame.midX == screen.midX - HabitTrackerLayout.notchWidth / 2 && loading.frame.minY < left.minY, "Startup retains the inset habit area while wrapping the camera")
     expect(path.count == 4 && path.allSatisfy { loading.frame.contains($0) }, "The light must stay inside the island")
     expect(path[0].x < left.maxX && path[1].x < left.maxX, "The light must start left of the camera")
     expect(path[1].y < left.minY && path[2].y < left.minY, "The light must pass under the camera, where there are pixels")
@@ -540,23 +540,41 @@ for offset in 1...100 {
     habits.toggle("read", on: habitCalendar.date(byAdding: .day, value: offset, to: habitDay)!, calendar: habitCalendar)
 }
 expect((habitDefaults.dictionary(forKey: "clip.habits.days.v1") ?? [:]).count == 90, "Saved history stays bounded")
-// The small ring belongs to the black notch; the list is a separate click-only panel.
+// Every ring is inset into an existing black surface, never attached outside it.
 for origin in [NSPoint.zero, NSPoint(x: -1710, y: 250)] {
-    let visible = NSRect(origin: origin, size: NSSize(width: 1710, height: 1073))
-    let notch = NSRect(x: origin.x + 762.5, y: origin.y + 1073, width: 185, height: 33.5)
-    for inset: CGFloat in [0, 24, 130] {
-        let compact = NSRect(x: notch.minX - inset, y: notch.minY - 10, width: notch.width + inset + 24, height: notch.height + 10)
+    let screen = NSRect(origin: origin, size: NSSize(width: 1710, height: 1107))
+    let visible = NSRect(origin: origin, size: NSSize(width: 1710, height: 1073.5))
+    let left = NSRect(x: screen.minX, y: screen.maxY - 33.5, width: 762.5, height: 33.5)
+    let right = NSRect(x: screen.minX + 947.5, y: left.minY, width: 762.5, height: 33.5)
+    for content: IslandContent in [.idle, .loading, .audio, .status(textWidth: 600)] {
         for expanded in [false, true] {
-            let badge = HabitTrackerLayout.badge(notch: notch, compact: compact, expanded: expanded)
-            expect(badge.width == 32 && badge.height == notch.height, "Habit ring stays menu-bar sized")
-            expect(!badge.intersects(notch), "Habit ring never occupies the physical camera")
-            expect(badge.maxX == (expanded ? notch.minX : compact.minX), "Black habit wing joins the shell without a gap")
-            let list = HabitTrackerLayout.list(under: badge, visible: visible)
-            expect(visible.contains(list) && list.maxY < badge.minY, "Click-open list stays below the notch and inside the display")
+            for hovered in [false, true] {
+                let layout = IslandLayout(screen: screen, safeTop: 33.5, leftArea: left, rightArea: right,
+                                          expanded: expanded, content: content, hovered: hovered, audioLevel: 1)
+                let badge = HabitTrackerLayout.badge(notch: layout.notchFrame, shell: layout.frame, expanded: expanded)
+                let black = layout.notchBridge ?? layout.frame
+                expect(black.contains(badge), "Habit hit area must be fully INSIDE the shared black notch surface")
+                expect(badge.minX >= black.minX + 6 && badge.maxX < layout.notchFrame!.minX, "Ring retains black padding and stays clear of the camera")
+                expect(!badge.intersects(layout.notchFrame!), "Habit ring must never occupy camera pixels")
+                let list = HabitTrackerLayout.list(under: badge, visible: visible)
+                expect(visible.contains(list) && list.maxY < badge.minY, "Click-open list stays on the same display below the notch")
+                if !expanded, case .status = content {
+                    let status = layout.statusFrame.offsetBy(dx: layout.frame.minX, dy: layout.frame.minY)
+                    expect(!status.intersects(badge), "Status text cannot overlap the inset ring")
+                }
+                if !expanded, content == .loading {
+                    expect(layout.loadingPath[0].x + layout.frame.minX > badge.maxX, "Startup sweep stays between the ring and camera")
+                }
+            }
         }
     }
 }
-let externalCompact = NSRect(x: 700, y: 980, width: 30, height: 22)
-let externalBadge = HabitTrackerLayout.badge(notch: nil, compact: externalCompact, expanded: false)
-expect(externalBadge.maxX == externalCompact.minX && externalBadge.maxY == externalCompact.maxY, "External-display habit ring attaches to the virtual notch")
-print("Habit persistence, undo, daily rollover, retention and integrated-notch placement passed")
+for expanded in [false, true] {
+    let layout = IslandLayout(screen: external, safeTop: 0, leftArea: nil, rightArea: nil, expanded: expanded)
+    let badge = HabitTrackerLayout.badge(notch: nil, shell: layout.frame, expanded: expanded)
+    expect(layout.frame.contains(badge), "External-display ring stays inside the pill or semicircle")
+    let relative = badge.offsetBy(dx: -layout.frame.minX, dy: -layout.frame.minY)
+    if expanded { expect(!relative.intersects(ComposerGeometry.modelCaption), "External ring stays clear of the model caption") }
+    else { expect(!relative.intersects(layout.lineFrame), "External ring and green line retain independent space") }
+}
+print("Habit persistence, undo, rollover, retention and fully inset black-notch placement passed")
