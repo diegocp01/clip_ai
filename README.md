@@ -2,7 +2,7 @@
 
 **Ask it. See it.** A macOS notch assistant that turns questions into interactive 3D scenes, diagrams, and live HTML.
 
-![A prompt becomes an interactive visual in Clip. Illustration of the Draw flow.](docs/images/draw-flow.svg)
+![Clip in the macOS menu bar: a quiet green signal when closed, expanding from the camera notch into a frosted semicircle when open. Product illustration; private habits are hidden.](docs/images/notch-hero.png)
 
 ### Try Draw
 
