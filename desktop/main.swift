@@ -497,7 +497,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
         micButton = NSButton(title: "Dictate", target: self, action: #selector(toggleDictation))
         talkButton = button("Talk", frame: ComposerGeometry.talk, action: #selector(toggleRealtimeVoice), symbol: "waveform", iconOnly: true)
-        talkButton.toolTip = "Live AI voice · separately billed API usage · click End to stop the microphone"
+        talkButton.title = ""
+        talkButton.setAccessibilityLabel("Start live voice")
+        talkButton.toolTip = "Start live voice · separately billed API usage"
         voiceButton = button("Voice on", frame: ComposerGeometry.voice, action: #selector(toggleVoice), symbol: "speaker.wave.2", iconOnly: true)
         voiceButton.contentTintColor = .systemBlue
         voiceButton.toolTip = "AI voice · " + ReplyVoice.selected().capitalized + " · click to mute"
@@ -2097,10 +2099,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
     private func updateTalkButton() {
         updateVoiceMeter()
-        talkButton.title = voiceRequested ? "End" : "Talk"
-        talkButton.image = NSImage(systemSymbolName: voiceRequested ? "stop.circle" : "waveform", accessibilityDescription: talkButton.title)
-        talkButton.contentTintColor = voiceRequested ? coral : NSColor(white: 0.76, alpha: 1)
-        talkButton.setAccessibilityLabel(voiceRequested ? "End live voice" : "Start live voice")
+        let label = voiceRequested ? "Stop live voice" : "Start live voice"
+        // Keep state labels in accessibility/help; visible titles overlap the small circular icon.
+        talkButton.title = ""
+        talkButton.image = NSImage(systemSymbolName: voiceRequested ? "stop.fill" : "waveform", accessibilityDescription: label)
+        talkButton.imagePosition = .imageOnly
+        talkButton.symbolConfiguration = .init(pointSize: voiceRequested ? 11 : 14, weight: .regular)
+        talkButton.contentTintColor = voiceRequested ? .white : NSColor(white: 0.76, alpha: 1)
+        talkButton.setAccessibilityLabel(label)
+        talkButton.toolTip = voiceRequested ? "Stop live voice · stops microphone and reply audio"
+            : "Start live voice · separately billed API usage"
     }
     private func stopRealtimeVoice() {
         voiceConnected = false; stopPointSharing(); pointShare.resetSession()
