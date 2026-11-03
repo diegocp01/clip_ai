@@ -31,7 +31,7 @@ OpenAI features use your API billing. Text chat also supports signed-in Codex or
 
 ## Try it
 
-Hover over the green line for **1 second**, or press **Control–Option–Space**. Type **“Show me how an airplane works in 3D”** and press **Return**. Rotate or zoom the result; **Continue** starts a voice follow-up with pointer sharing.
+Hover over the green line for **1 second**, or press **Control–Option–Space**. Click the **easel** to select Draw, type **“Show me how an airplane works in 3D”**, then press **Return**. Click the top caption to change Draw’s effort. Rotate or zoom the result; **Continue** starts a voice follow-up with pointer sharing.
 
 ## How it works
 

@@ -173,6 +173,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var sendButton: NSButton!
     private var sendHovered = false
     private var micButton: NSButton!
+    private var drawButton: NSButton!
+    private var drawModeSelected = false
     private var talkButton: NSButton!
     private var pointButton: NSButton!
     private let pointShare = VoicePointerShare()
@@ -266,6 +268,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             self.sendButton.image = NSImage(systemSymbolName: active ? "xmark" : "arrow.up", accessibilityDescription: active ? "Cancel text edit" : "Send")
             self.sendButton.setAccessibilityLabel(active ? "Cancel text edit" : "Send")
             self.sendButton.toolTip = active ? "Cancel text edit" : "Send · Return · automatically choose a visual or text answer"
+            self.updateDrawSelection()
         }
         NotificationCenter.default.addObserver(self, selector: #selector(menuBeganTracking), name: NSMenu.didBeginTrackingNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(menuEndedTracking), name: NSMenu.didEndTrackingNotification, object: nil)
@@ -510,9 +513,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         sendButton.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 18, weight: .thin)
         sendButton.contentTintColor = .white
         sendButton.toolTip = "Send · Return · automatically choose a visual or text answer"
-        let drawButton = button("Draw", frame: ComposerGeometry.draw, action: #selector(drawPrompt), symbol: "paintbrush.pointed", iconOnly: true)
+        drawButton = button("Draw", frame: ComposerGeometry.draw, action: #selector(toggleDrawMode), symbol: "paintbrush.pointed", iconOnly: true)
         drawButton.image = easelIcon()
-        drawButton.toolTip = "Draw your prompt · type an idea, then click Draw"
+        drawButton.setButtonType(.pushOnPushOff)
+        drawButton.title = ""
+        updateDrawSelection()
         providerControl = button("Model", frame: ComposerGeometry.provider, action: #selector(providerChanged), symbol: "cpu", iconOnly: true)
         updateProviderControl()
         _ = button("More options", frame: ComposerGeometry.more, action: #selector(showIslandOptions(_:)), symbol: "ellipsis", iconOnly: true)
@@ -1430,6 +1435,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         screenshotIndicator.stringValue = ""
         updateCaptureButton()
         prompt.stringValue = ""
+        drawModeSelected = false; updateDrawSelection(); updateModelCaption()
         setStatus("Ready")
     }
 
@@ -1500,6 +1506,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         updateDrawingSettings()
     }
     private func updateModelCaption() {
+        if drawModeSelected {
+            let speed = drawingSettings.model(for: provider.rawValue).defaultTier == "ultrafast" ? "Ultrafast" : "Fast"
+            modelCaption.title = "Draw · \(drawingSettings.caption(for: provider.rawValue)) · \(speed)"
+            modelCaption.setAccessibilityLabel("\(modelCaption.title). Choose Draw reasoning effort and model")
+            modelCaption.toolTip = "Draw settings · click or hover to change reasoning effort"
+            return
+        }
+        modelCaption.toolTip = "Hover or click to choose a chat model and reasoning effort"
         if let openingGreeting {
             modelCaption.title = openingGreeting
             modelCaption.setAccessibilityLabel("\(openingGreeting) Choose chat model and reasoning effort")
@@ -1517,6 +1531,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
     }
     private func beginOpeningGreeting() {
+        if drawModeSelected { endOpeningGreeting(); return }
         endOpeningGreeting()
         openingGreeting = openingGreetings.next()
         updateModelCaption()
@@ -1548,6 +1563,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         modelMenuLatched = true
         composerSurface.updateHover(at: nil)
         let menu = NSMenu(); menu.autoenablesItems = false
+        if drawModeSelected {
+            let model = drawingSettings.model(for: provider.rawValue)
+            let heading = NSMenuItem(title: "Draw · \(model.name)", action: nil, keyEquivalent: "")
+            heading.isEnabled = false; menu.addItem(heading)
+            let effortHeading = NSMenuItem(title: "Reasoning effort", action: nil, keyEquivalent: "")
+            effortHeading.isEnabled = false; menu.addItem(effortHeading)
+            for effort in model.efforts {
+                let item = NSMenuItem(title: DrawingPreferences.effortTitle(effort), action: #selector(selectDrawingEffort(_:)), keyEquivalent: "")
+                item.target = self; item.representedObject = effort
+                item.state = drawingSettings.effort(for: provider.rawValue) == effort ? .on : .off
+                menu.addItem(item)
+            }
+            menu.addItem(.separator())
+            let modelItem = NSMenuItem(title: "Model", action: nil, keyEquivalent: "")
+            let models = NSMenu(); models.autoenablesItems = false
+            for choice in drawingSettings.models {
+                let item = NSMenuItem(title: choice.name, action: #selector(selectDrawingModel(_:)), keyEquivalent: "")
+                item.target = self; item.representedObject = choice.id
+                item.state = model.id == choice.id ? .on : .off; models.addItem(item)
+            }
+            modelItem.submenu = models; menu.addItem(modelItem)
+            menu.popUp(positioning: nil, at: NSPoint(x: modelCaption.frame.minX, y: modelCaption.frame.minY), in: islandView)
+            return
+        }
         let heading = NSMenuItem(title: "Chat model", action: nil, keyEquivalent: "")
         heading.isEnabled = false; menu.addItem(heading)
         let auto = NSMenuItem(title: "Auto", action: #selector(selectAutoChat), keyEquivalent: "")
@@ -1709,13 +1748,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let message = prompt.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !message.isEmpty else { island.makeKey(); island.makeFirstResponder(prompt); return }
         guard message.count <= 6000 else { showError("Keep the question under 6,000 characters."); return }
-        generate(message, mode: "auto")
+        generate(message, mode: drawModeSelected ? "draw" : "auto")
     }
-    @objc private func drawPrompt() {
-        let message = prompt.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !message.isEmpty else { island.makeKey(); island.makeFirstResponder(prompt); return }
-        guard message.count <= 6000 else { showError("Keep the prompt under 6,000 characters."); return }
-        generate(message, mode: "draw")
+    @objc private func toggleDrawMode() {
+        guard !busy, !selectionEditor.automaticRunning else { updateDrawSelection(); return }
+        drawModeSelected.toggle()
+        endOpeningGreeting()
+        updateDrawSelection()
+        island.makeKey(); island.makeFirstResponder(prompt)
+    }
+    private func updateDrawSelection() {
+        guard let drawButton else { return }
+        drawButton.state = drawModeSelected ? .on : .off
+        drawButton.isEnabled = !busy && !selectionEditor.automaticRunning
+        drawButton.title = ""; drawButton.imagePosition = .imageOnly
+        drawButton.contentTintColor = drawModeSelected ? signalGreen : NSColor(white: 0.92, alpha: 1)
+        drawButton.layer?.backgroundColor = (drawModeSelected ? signalGreen.withAlphaComponent(0.14) : NSColor.white.withAlphaComponent(0.055)).cgColor
+        drawButton.layer?.borderColor = (drawModeSelected ? signalGreen.withAlphaComponent(0.65) : NSColor.white.withAlphaComponent(0.10)).cgColor
+        drawButton.setAccessibilityLabel(drawModeSelected ? "Draw selected. Click to return to Auto" : "Select Draw mode")
+        drawButton.toolTip = drawModeSelected ? "Draw selected · type a prompt and press Return · click to return to Auto" : "Select Draw · creates 3D or HTML from your next prompt"
+        if !busy && !selectionEditor.automaticRunning {
+            sendButton?.toolTip = drawModeSelected ? "Draw · Return · use the selected Draw model and effort" : "Send · Return · automatically choose a visual or text answer"
+        }
     }
     private func generate(_ message: String, mode: String = "chat") {
         guard !busy else { return }
@@ -1724,6 +1778,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         stopDictation(sendTranscript: false)
         replySpeech.stop()
         busy = true
+        updateDrawSelection()
         sendButton.title = ""
         sendButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Cancel request")
         sendButton.setAccessibilityLabel("Cancel request")
@@ -1870,8 +1925,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         if pendingComparison && !resultReceived { comparisonPanel.stop("Request ended") }
         busy = false; requestTask = nil; sendButton.title = ""
         sendButton.image = NSImage(systemSymbolName: "arrow.up", accessibilityDescription: "Send")
-        sendButton.toolTip = "Send · Return · automatically choose a visual or text answer"
         sendButton.setAccessibilityLabel("Send")
+        updateDrawSelection()
     }
     private func cancelRequest() {
         if pendingComparison { comparisonPanel.stop(); pendingComparison = false }
