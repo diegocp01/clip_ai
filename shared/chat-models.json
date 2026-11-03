@@ -1,0 +1,104 @@
+[
+  {
+    "id": "gpt-6.1-terra",
+    "name": "GPT-6.1 Terra",
+    "provider": "gpt",
+    "efforts": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+      "ultra"
+    ],
+    "autoEligible": true,
+    "description": "Codex model for programming, debugging, and technical problem solving."
+  },
+  {
+    "id": "gpt-6.1-sol",
+    "name": "GPT-6.1 Sol",
+    "provider": "gpt",
+    "efforts": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+      "ultra"
+    ],
+    "autoEligible": false,
+    "description": "Manual chat selection."
+  },
+  {
+    "id": "gpt-6-astra",
+    "name": "GPT-6 Astra",
+    "provider": "gpt",
+    "efforts": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+      "ultra"
+    ],
+    "autoEligible": true,
+    "description": "Frontier model for demanding reasoning, analysis, and difficult general questions."
+  },
+  {
+    "id": "gpt-6-luna",
+    "name": "GPT-6 Luna",
+    "provider": "gpt",
+    "efforts": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+      "ultra"
+    ],
+    "autoEligible": false,
+    "description": "Manual chat selection."
+  },
+  {
+    "id": "claude-sonnet-5-5",
+    "name": "Claude Sonnet 5.5",
+    "provider": "claude",
+    "efforts": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ],
+    "autoEligible": true,
+    "description": "Balanced Claude model for everyday conversation, writing, editing, and routine questions."
+  },
+  {
+    "id": "claude-opus-5-5",
+    "name": "Claude Opus 5.5",
+    "provider": "claude",
+    "efforts": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ],
+    "autoEligible": true,
+    "description": "High-capability Claude model for complex reasoning, nuanced synthesis, and difficult tasks."
+  },
+  {
+    "id": "claude-haiku-5-5",
+    "name": "Claude Haiku 5.5",
+    "provider": "claude",
+    "efforts": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ],
+    "autoEligible": false,
+    "description": "Manual chat selection."
+  }
+]

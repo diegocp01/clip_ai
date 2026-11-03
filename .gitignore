@@ -1,0 +1,22 @@
+node_modules/
+tools/rea/node_modules/
+research/downloads/
+research/evidence/
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.dmg
+*.app/
+.runtime/
+build/
+test-results/
+.DS_Store
+*.log
+
+# Personal opt-in feature settings stay outside the repository.
+local-features.json
+*.local.json

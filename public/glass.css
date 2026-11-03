@@ -1,0 +1,52 @@
+/* Shared web surfaces. Native island geometry and appearance are intentionally separate.
+   Visual direction: diegocp01/ai_battle_tic_tac_toe, static/css/style.css. */
+:root {
+  color-scheme: dark;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+  font-synthesis: none;
+  --ink: #f5f7fc;
+  --secondary: #c5d4e6;
+  --muted: #a9bdd4;
+  --blue: #91c4ff;
+  --line: rgb(216 233 255 / 17%);
+  --glass-solid: #172b42;
+  --glass-fill: linear-gradient(145deg, rgb(255 255 255 / 12%), rgb(255 255 255 / 3%)), rgb(13 29 48 / 82%);
+  --glass-shadow: inset 0 1px 0 rgb(255 255 255 / 48%), inset 0 -1px 0 rgb(255 255 255 / 12%), inset 0 0 18px rgb(183 220 255 / 5%), 0 16px 44px -12px rgb(0 8 20 / 45%);
+  --control: linear-gradient(180deg, rgb(255 255 255 / 15%), rgb(255 255 255 / 6%));
+}
+*, *::before, *::after { box-sizing: border-box; }
+body { color: var(--ink); -webkit-font-smoothing: antialiased; }
+button, textarea, select { font: inherit; color: inherit; }
+button, a, select { -webkit-tap-highlight-color: transparent; }
+button { cursor: pointer; border: 0; background: none; }
+button:disabled, select:disabled { opacity: .45; cursor: default; }
+a { color: inherit; }
+[hidden] { display: none !important; }
+button:focus-visible, a:focus-visible, select:focus-visible, textarea:focus-visible,
+[tabindex="0"]:focus-visible { outline: 3px solid #a4d3ff; outline-offset: 4px; }
+.glass-surface {
+  background: var(--glass-fill);
+  border: 1px solid rgb(230 242 255 / 27%);
+  box-shadow: var(--glass-shadow);
+  -webkit-backdrop-filter: blur(24px) saturate(155%);
+  backdrop-filter: blur(24px) saturate(155%);
+}
+/* SVG labels inherit the surface palette while model-generated node colors remain intact. */
+#diagram-host svg > path { stroke: var(--muted); }
+#diagram-host marker path { fill: var(--muted); }
+#diagram-host svg > text { fill: var(--secondary); stroke: var(--glass-solid); }
+#diagram-host g text { fill: var(--ink); }
+#diagram-host g:hover rect, #diagram-host g:focus-visible rect { fill-opacity: .35; stroke-width: 2.5; }
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .glass-surface { background: var(--glass-solid); }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .glass-surface { background: var(--glass-solid); -webkit-backdrop-filter: none; backdrop-filter: none; }
+}
+@media (prefers-contrast: more) {
+  :root { --secondary: #fff; --muted: #ecf4ff; --line: #8ea9c5; }
+  .glass-surface { background: #102338; border-color: #a8c5e0; -webkit-backdrop-filter: none; backdrop-filter: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}

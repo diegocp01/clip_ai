@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 340" role="img" aria-labelledby="t d">
+<title id="t">Ask it. See it.</title><desc id="d">A question in Clip's semicircle becomes an interactive three-dimensional water molecule or an HTML explanation. Illustration.</desc>
+<defs><radialGradient id="bg"><stop stop-color="#163c31"/><stop offset="1" stop-color="#081411"/></radialGradient><linearGradient id="glass" x2="0.5" y2="1"><stop stop-color="#ffffff" stop-opacity=".07"/><stop offset="1" stop-color="#ffffff" stop-opacity=".025"/></linearGradient><radialGradient id="red" cx=".3" cy=".2"><stop stop-color="#ffb3ab"/><stop offset="1" stop-color="#ac4445"/></radialGradient><radialGradient id="white" cx=".3" cy=".2"><stop stop-color="white"/><stop offset="1" stop-color="#a8c4bd"/></radialGradient></defs>
+<rect width="1000" height="340" rx="24" fill="url(#bg)"/>
+<g font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" fill="#ecf5f0">
+<path d="M45 68H430Q430 246 237 246Q45 246 45 68Z" fill="url(#glass)" stroke="#ffffff" stroke-opacity=".22"/>
+<path d="M182 68H292V81Q292 91 282 91H192Q182 91 182 81Z" fill="#000"/>
+<path d="M210 101H264" stroke="#7ee4ad" stroke-width="2" stroke-linecap="round"/>
+<text x="237" y="125" text-anchor="middle" fill="#a5b7af" font-size="11">Clip · Draw</text>
+<text x="99" y="165" font-size="16">Show a water molecule</text><path d="M90 150v19" stroke="#7ee4ad" stroke-width="2"/>
+<circle cx="369" cy="158" r="17" fill="none" stroke="#c9d9cf"/><path d="M369 167v-18m-6 6 6-6 6 6" fill="none" stroke="#ecf5f0" stroke-width="1.4"/>
+<circle cx="237" cy="219" r="14" fill="none" stroke="#e0f4e8" stroke-opacity=".2"/><path d="M228 214h18v12h-18zm4 12-3 7m13-7 3 7m-8-7v7m0-23v4" fill="none" stroke="#b8c9bf" stroke-width="1.2"/>
+<path d="M465 166h53m-8-7 8 7-8 7" fill="none" stroke="#7ee4ad" stroke-width="1.5"/>
+<rect x="555" y="40" width="402" height="260" rx="21" fill="url(#glass)" stroke="#ffffff" stroke-opacity=".14"/>
+<text x="578" y="70" font-size="12" fill="#a5b7af">INTERACTIVE VISUAL</text>
+<path d="m755 151-67 55m67-55 66 55" stroke="#a7c8ba" stroke-width="11" stroke-linecap="round"/>
+<circle cx="755" cy="151" r="30" fill="url(#red)"/><circle cx="688" cy="206" r="20" fill="url(#white)"/><circle cx="821" cy="206" r="20" fill="url(#white)"/>
+<text x="755" y="267" text-anchor="middle" font-size="14" fill="#bcd1c4">Rotate · zoom · ask a follow-up</text>
+<text x="237" y="292" text-anchor="middle" font-size="15" fill="#bcd1c4">Your question</text>
+</g></svg>
