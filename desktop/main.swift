@@ -102,6 +102,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var habitWidth: CGFloat { habitTracker == nil ? 0 : HabitTrackerLayout.notchWidth }
     private var island: FloatingPanel!
     private var notchBridge: FloatingPanel!
+    private var notchActivity: FloatingPanel!
     private var islandView: IslandView!
     private var composerSurface: ComposerSurface!
     private var composerTransition = 0
@@ -224,6 +225,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private lazy var selectionEditor = SelectionEditor(provider: { [weak self] in self?.compareBoth == true ? "both" : self?.chatProvider.rawValue ?? "gpt" }) { [weak self] text in self?.setStatus(text) }
     private var eventHandler: EventHandlerRef?
     private var ownedServer: Process?
+    private var restartPending = false
     private var requestTask: URLSessionDataTask?
     private lazy var streamingSession = URLSession(configuration: .ephemeral, delegate: self, delegateQueue: .main)
     private var requestGeneration = 0
@@ -356,6 +358,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         notchBlack.layer?.masksToBounds = true; notchBridge.contentView = notchBlack
         notchBridge.ignoresMouseEvents = true
         notchBridge.setAccessibilityElement(false)
+        // The menu-bar wing right of the camera, which holds the waveform while the composer is open.
+        notchActivity = panel(.zero, level: island.level)
+        notchActivity.title = "Clip notch activity"
+        let wingBlack = NSView(frame: .zero)
+        wingBlack.wantsLayer = true; wingBlack.layer?.backgroundColor = NSColor.black.cgColor
+        wingBlack.layer?.cornerRadius = 10; wingBlack.layer?.maskedCorners = [.layerMaxXMinYCorner]
+        notchActivity.contentView = wingBlack
+        notchActivity.ignoresMouseEvents = true
+        notchActivity.setAccessibilityElement(false)
         island.title = "Clip island"
         island.appearance = NSAppearance(named: .darkAqua)
         islandView = IslandView(frame: .zero)
@@ -602,7 +613,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         menu.addItem(.separator())
         menu.addItem(withTitle: "Proofread selection     ⌃⌥D", action: nil, keyEquivalent: "")
         menu.addItem(withTitle: "Rewrite selection          ⌃D", action: nil, keyEquivalent: "")
+        menu.addItem(.separator())
+        addRestartItem(to: menu)
         menu.popUp(positioning: nil, at: NSPoint(x: sender.frame.minX, y: sender.frame.minY), in: islandView)
+    }
+    private func addRestartItem(to menu: NSMenu) {
+        let item = menu.addItem(withTitle: "Restart Clip", action: #selector(restartApp), keyEquivalent: "")
+        item.target = self
     }
     private func addReplyVoiceMenu(to menu: NSMenu) {
         let root = NSMenuItem(title: "Reply voice · " + ReplyVoice.selected().capitalized, action: nil, keyEquivalent: "")
@@ -788,7 +805,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
     private func updateDismissButton() {
         positionCaption()
-        let showing = captions.isVisible || comparisonPanel.isVisible || (overlay.isVisible && drawingOnScreen)
+        // Only a reply, drawing or comparison you can see right now gets the X.
+        let showing = captions.isVisible || comparisonPanel.isOnScreen || (overlay.isVisible && drawingOnScreen)
         guard showing, island.isVisible, !captureInProgress, !composerTransitioning else {
             if dismissPanel.isVisible { dismissPanel.orderOut(nil) }
             return
@@ -806,6 +824,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             item.target = self
         }
         menu.addItem(.separator())
+        addRestartItem(to: menu)
         menu.addItem(withTitle: "Quit Clip", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         statusItem.menu = menu
         menu.insertItem(NSMenuItem(title: "Proofread selection: ⌃⌥D", action: nil, keyEquivalent: ""), at: 0)
@@ -826,6 +845,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             showHabits.target = self
         }
         appMenu.addItem(.separator())
+        addRestartItem(to: appMenu)
         appMenu.addItem(withTitle: "Quit Clip", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appRoot.submenu = appMenu
         main.addItem(appRoot)
@@ -874,6 +894,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let changed = expanded != value
         if !changed && composerTransitioning && animated { return }
         if changed {
+            // The menu-bar waveform belongs to the open composer; the compact shell has its own.
+            placeActivityMark(content: .idle, screen: island.screen ?? NSScreen.main ?? NSScreen.screens[0])
             selectionReadGeneration += 1
             selectionIndicator.isHidden = true
             selectionIndicator.stringValue = ""
@@ -1036,6 +1058,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
     private var talking: Bool { voiceRequested || recording || currentStatus == "Speaking" }
     // Resting: a green line. Audio live: the waveform. Anything else to say: text and line.
+    /// While the open composer speaks or listens, the waveform sits in the menu-bar notch
+    /// right of the camera, where the compact line lives, instead of over the composer.
+    private func placeActivityMark(content: IslandContent, screen: NSScreen) {
+        let compact = IslandLayout(screen: screen.frame, safeTop: screen.safeAreaInsets.top,
+                                   leftArea: screen.auxiliaryTopLeftArea, rightArea: screen.auxiliaryTopRightArea,
+                                   expanded: false, content: .audio)
+        guard expanded, content == .audio, !captureInProgress, let notch = compact.notchFrame else {
+            if activityMark.superview !== islandView { islandView.addSubview(activityMark, positioned: .above, relativeTo: statusLabel) }
+            if notchActivity.isVisible { notchActivity.orderOut(nil) }
+            return
+        }
+        let wing = NSRect(x: notch.maxX, y: compact.frame.minY, width: compact.frame.maxX - notch.maxX, height: compact.frame.height)
+        notchActivity.setFrame(wing, display: false)
+        if activityMark.superview !== notchActivity.contentView { notchActivity.contentView?.addSubview(activityMark) }
+        activityMark.frame = compact.activityFrame.offsetBy(dx: compact.frame.minX - wing.minX, dy: compact.frame.minY - wing.minY)
+        if !notchActivity.isVisible { notchActivity.orderFrontRegardless() }
+    }
     @objc private func focusHabits() { positionHabits(); habitTracker?.focus() }
     private func positionHabits(compactFrame: NSRect? = nil) {
         guard let habitTracker, !captureInProgress, let screen = island?.screen ?? NSScreen.main else { return }
@@ -1073,10 +1112,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         signalHost.layer?.maskedCorners = islandView.layer?.maskedCorners ?? []
         // Idle readiness is already represented by the compact menu-bar line.
         if case .status = content { statusLabel.isHidden = false } else { statusLabel.isHidden = true }
-        modelCaption.isHidden = !expanded || content != .idle
         pointButton.isHidden = !expanded || !voiceRequested
         providerControl.isHidden = !expanded || voiceRequested
         activityMark.isHidden = content != .audio
+        placeActivityMark(content: content, screen: screen)
+        // While speaking, the waveform sits in the menu-bar notch, so the model stays visible.
+        // Only where it still sits in the composer (no notch) would the two overlap.
+        modelCaption.isHidden = !expanded || !(content == .idle || (content == .audio && activityMark.superview !== islandView))
         islandView.toolTip = expanded ? nil : "\(currentStatus) · Hold here to open · ⌃⌥Space"
         islandView.setAccessibilityLabel("Clip: \(currentStatus)")
         wake.target = awake ? 1 : 0
@@ -2228,7 +2270,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let restoreComparison = comparisonPanel.hideForCapture()
         let overlayVisible = overlay.isVisible, captionsVisible = captions.isVisible
         habitTracker?.hide()
-        island.orderOut(nil); notchBridge.orderOut(nil); shoulderPanel.orderOut(nil); hideDwellRing(); dismissPanel.orderOut(nil); overlay.orderOut(nil); captions.orderOut(nil)
+        island.orderOut(nil); notchBridge.orderOut(nil); notchActivity.orderOut(nil); shoulderPanel.orderOut(nil); hideDwellRing(); dismissPanel.orderOut(nil); overlay.orderOut(nil); captions.orderOut(nil)
         let target = FileManager.default.temporaryDirectory.appendingPathComponent("clippy-\(UUID().uuidString).png")
         let restore = { [weak self] in
             guard let self else { return }
@@ -2347,6 +2389,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             setStatus("Review your words, then Send")
         } else { setStatus("Dictation stopped") }
         latestTranscript = ""
+    }
+    @objc private func restartApp() {
+        guard !restartPending else { return }
+        let helper = Process()
+        helper.executableURL = URL(fileURLWithPath: "/bin/sh")
+        // Wait for normal shutdown (including voice cleanup) before reopening this
+        // exact bundle. Paths and launch arguments are positional, never shell code.
+        helper.arguments = ["-c", """
+            attempts=0
+            while /bin/kill -0 "$1" 2>/dev/null; do
+                attempts=$((attempts + 1))
+                [ "$attempts" -lt 300 ] || exit 1
+                /bin/sleep 0.1
+            done
+            shift
+            exec /usr/bin/open -n "$@"
+            """, "clip-relaunch", String(ProcessInfo.processInfo.processIdentifier), Bundle.main.bundleURL.path, "--args"] + Array(ProcessInfo.processInfo.arguments.dropFirst())
+        helper.currentDirectoryURL = URL(fileURLWithPath: "/", isDirectory: true)
+        helper.standardInput = FileHandle.nullDevice
+        helper.standardOutput = FileHandle.nullDevice
+        helper.standardError = FileHandle.nullDevice
+        do {
+            try helper.run()
+            restartPending = true
+            NSApp.terminate(nil)
+        } catch {
+            showError("Could not restart Clip. Quit and open it again.")
+        }
     }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard voiceRequested else { return .terminateNow }

@@ -35,7 +35,7 @@ test('OpenAI Draw sends selected model/effort and Fast through Responses, preser
 });
 test('Draw transport honors alternate picker choices, reports the actual served tier, and never requests Ultrafast for Terra',async()=>{
   const output=await runAPIVisualStream({...base,model:'gpt-6.1-sol',reasoningEffort:'high',fetchImpl:async(_url,options)=>{
-    const request=JSON.parse(options.body);assert.equal(request.model,'gpt-6.1-sol');assert.equal(request.reasoning.effort,'high');
+    const request=JSON.parse(options.body);assert.equal(request.model,'gpt-6.1-sol');assert.equal(request.reasoning.effort,'high');assert.equal(request.service_tier,'ultrafast');
     return new Response(event(complete('{}','default')));
   }});
   assert.equal(output.serviceTier,'default');

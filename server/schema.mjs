@@ -64,7 +64,7 @@ export function normalizeRequest(value) {
   const normalized = {autoScope:null,drawing:null,mode:'draw',tier:'fast',provider:'gpt',model:null,reasoningEffort:null,history:[],previous:null,image:null,...value};
   if (normalized.previous) assertResult(normalized.previous);
   if (!validateRequest(normalized)) throw new Error('Invalid request. Check the message, image size, speed and model settings.');
-  if(normalized.mode!=='draw'&&normalized.tier==='ultrafast')throw Error('Ultrafast is available for OpenAI Draw only.');
+  if(normalized.mode!=='draw'&&normalized.tier==='ultrafast'&&!(normalized.provider==='gpt'&&normalized.model==='gpt-6.1-sol'))throw Error('Ultrafast chat requires GPT-6.1 Sol.');
   if (!normalized.message.trim()) throw new Error('Enter a question first.');
   if (normalized.previous) assertResult(normalized.previous);
   if(normalized.mode==='auto') {
@@ -78,7 +78,7 @@ export function normalizeRequest(value) {
   }
   if(normalized.autoScope!==null)throw new Error('Auto scope is only available with Auto chat models.');
   const {model,reasoningEffort,defaultTier}=(normalized.mode==='draw'?drawingSettings:chatSettings)(normalized);
-  const tier=normalized.mode==='draw'?assertDrawingTier(value.tier??defaultTier,normalized.provider,model):normalized.tier;
+  const tier=normalized.provider==='gpt'&&model==='gpt-6.1-sol'?'ultrafast':assertDrawingTier(normalized.mode==='draw'?value.tier??defaultTier:normalized.tier,normalized.provider,model);
   return {...normalized,model,reasoningEffort,tier};
 }
 export function decodeImage(url) {

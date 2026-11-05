@@ -2,12 +2,13 @@ import {readFile} from 'node:fs/promises';
 import {voiceKey} from './realtime.mjs';
 import {assertDrawingTier} from './drawing-settings.mjs';
 
-// Direct API transport for OpenAI Draw. Chat keeps its signed-in Codex transport.
+// Direct Responses API transport for visuals, Sol chat and selected-text editing.
 export async function runAPIVisualStream({input,model,reasoningEffort,tier='fast',schema,signal,onText=()=>{},fetchImpl=fetch,getKey=voiceKey}) {
+  if(model==='gpt-6.1-sol')tier='ultrafast';
   const bounded=signal?AbortSignal.any([signal,AbortSignal.timeout(120000)]):AbortSignal.timeout(120000);
   bounded.throwIfAborted();
   const key=await getKey();
-  if(!key)throw Error('Draw needs the existing OpenAI API key in .env.local.');
+  if(!key)throw Error('This request needs the existing OpenAI API key in .env.local.');
   assertDrawingTier(tier,'gpt',model);
   const content=[];
   for(const item of input){

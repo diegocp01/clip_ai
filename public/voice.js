@@ -20,7 +20,7 @@ export class VoiceConversation {
   }
   async start(continuation=null) {
     if(this.session)return;
-    const s={controller:new AbortController(),tracks:null,peer:null,channel:null,audio:null,id:null,token:null,seen:new Set(),drawing:false,drawCount:0,responding:false,userSpeaking:false,pendingResponse:false,screen:null,screenBusy:false,screenCount:0,screenTurnUsed:false,toolBatches:0,cursorCount:0,captions:new VoiceTranscript(),pointSharing:false,pointEpoch:0,pointCount:0,pointItems:[],pointBusy:false,pointLastAt:-Infinity};
+    const s={controller:new AbortController(),tracks:null,peer:null,channel:null,audio:null,id:null,token:null,seen:new Set(),drawing:false,drawCount:0,responding:false,userSpeaking:false,pendingResponse:false,screen:null,screenBusy:false,screenCount:0,screenTurnUsed:false,heard:'',hearing:null,toolBatches:0,cursorCount:0,captions:new VoiceTranscript(),pointSharing:false,pointEpoch:0,pointCount:0,pointItems:[],pointBusy:false,pointLastAt:-Infinity};
     s.continuation=continuation&&typeof continuation==='object'?{question:String(continuation.question||'').slice(0,6000),answer:String(continuation.answer||'').slice(0,3500)}:null;
     this.session=s;this.emit('connecting','Connecting live voice…');
     const stillCurrent=()=>{if(this.session!==s)throw new Error('Voice session cancelled.');};
@@ -65,8 +65,11 @@ export class VoiceConversation {
       case 'session.created':
         clearTimeout(s.startTimer);this.emit('listening','Listening · live voice');this.describeVisual(s);break;
       case 'input_audio_buffer.speech_started':
-        s.userSpeaking=true;s.screenTurnUsed=false;this.cursor?.cancel();s.captions.interrupt();this.emit('transcript-cleared');this.emit('listening','Listening…');break;
+        s.userSpeaking=true;s.screenTurnUsed=false;s.heard=null;this.cursor?.cancel();s.captions.interrupt();this.emit('transcript-cleared');this.emit('listening','Listening…');break;
       case 'input_audio_buffer.speech_stopped':s.userSpeaking=false;this.flush(s);break;
+      case 'conversation.item.input_audio_transcription.completed':
+      case 'conversation.item.input_audio_transcription.failed':
+        s.heard=String(event.transcript||'').slice(0,6000);s.hearing?.(s.heard);break;
       case 'response.created':s.responding=true;s.captions.begin(event.response?.id);this.emit('transcript-start');this.emit('thinking','Thinking…');break;
       case 'output_audio_buffer.started':this.emit('speaking','Speaking · live voice');break;
       case 'output_audio_buffer.stopped':case 'output_audio_buffer.cleared':this.emit('listening','Listening · live voice');break;
@@ -82,6 +85,8 @@ export class VoiceConversation {
         if(event.response?.status==='completed')void this.runTools(s,(event.response.output||[]).filter(item=>item.type==='function_call'));
         this.flush(s);break;
       case 'error':
+        // A reply the server already started answers this turn; ours is not needed.
+        if(event.error?.code==='conversation_already_has_active_response')break;
         if(event.error?.code!=='response_cancel_not_active')this.fail(s,new Error('Realtime voice error. Check your connection, API billing, and model access.'));
         break;
     }
@@ -182,17 +187,40 @@ export class VoiceConversation {
         output={captured:true,scope:'Use the latest already-shared pointer crop; this is not a fresh full-screen capture.'};
       } else {
         if(!this.captureScreen||s.screenBusy||s.screenTurnUsed||s.screenCount>=8)throw Error('Screen capture unavailable or limit reached.');
-        s.screenBusy=true;s.screenTurnUsed=true;ownsCapture=true;s.screenCount++;this.emit('thinking','Capturing screen…');
-        const image=await this.captureScreen({signal:s.controller.signal});
-        if(this.session!==s)return;
-        await this.shareScreen(image,true);
-        output={captured:true};
+        s.screenBusy=true;s.screenTurnUsed=true;ownsCapture=true;this.emit('thinking','Checking screen context…');
+        if(!await this.needsScreen(s,args.reason)) {
+          if(this.session!==s)return;
+          output={captured:false,skipped:true,note:'The screen is not needed for this question. Answer it directly and do not mention a screenshot.'};
+        } else {
+          s.screenCount++;this.emit('thinking','Capturing screen…');
+          const image=await this.captureScreen({signal:s.controller.signal});
+          if(this.session!==s)return;
+          await this.shareScreen(image,true);
+          output={captured:true};
+        }
       }
     }catch(error){output={captured:false,error:String(error.message||error).slice(0,300)};}
     finally{if(ownsCapture)s.screenBusy=false;}
     if(this.session!==s)return;
     this.send(s,{type:'conversation.item.create',item:{type:'function_call_output',call_id:item.call_id,output:JSON.stringify(output)}});
     s.pendingResponse=true;this.flush(s);
+  }
+  // The voice model may ask for the screen, but the Decisions API decides, from what
+  // the user actually said. Without an answer, the screen stays private.
+  async needsScreen(s,reason) {
+    const words=await this.userWords(s);
+    try {
+      const response=await this.post(s,'/api/screen-context',{message:(words||reason).slice(0,6000),hasImage:false});
+      return (await response.json()).capture===true;
+    } catch { return false; }
+  }
+  // The transcript of the user's latest turn, waiting briefly if it is still arriving.
+  userWords(s) {
+    if(s.heard!==null)return Promise.resolve(s.heard);
+    return new Promise(resolve=>{
+      const timer=setTimeout(()=>{s.hearing=null;resolve('');},2000);
+      s.hearing=text=>{clearTimeout(timer);s.hearing=null;resolve(text);};
+    });
   }
   async shareScreen(image,automatic=false) {
     const s=this.session;

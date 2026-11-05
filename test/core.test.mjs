@@ -10,8 +10,9 @@ const result={title:'Water',reply:'A schematic water molecule.',cards:[],diagram
 test('requests reject unexpected fields, large history, invalid speed and executable scene payloads',()=>{
   assert.equal(normalizeRequest({message:'hello'}).tier,'ultrafast');
   assert.equal(normalizeRequest({message:'hello',mode:'chat'}).tier,'fast');
+  for(const tier of ['standard','fast','ultrafast'])assert.equal(normalizeRequest({message:'hi',mode:'chat',model:'gpt-6.1-sol',tier}).tier,'ultrafast');
   assert.equal(normalizeRequest({message:'hello',model:'gpt-6.1-terra'}).tier,'fast');
-  for(const body of [{mode:'chat',model:'gpt-6.1-sol',tier:'ultrafast'},{mode:'draw',model:'gpt-6.1-terra',tier:'ultrafast'},{mode:'draw',provider:'claude',tier:'ultrafast'}])assert.throws(()=>normalizeRequest({message:'hello',...body}));
+  for(const body of [{mode:'chat',model:'gpt-6.1-terra',tier:'ultrafast'},{mode:'draw',model:'gpt-6.1-terra',tier:'ultrafast'},{mode:'draw',provider:'claude',tier:'ultrafast'}])assert.throws(()=>normalizeRequest({message:'hello',...body}));
   for(const body of [{message:' '},{message:'x',path:'/etc/passwd'},{message:'x',tier:'turbo'},{message:'x',history:Array(13).fill({role:'user',content:'x'})}])assert.throws(()=>normalizeRequest(body));
   assert.throws(()=>assertResult({...result,html:'<script/>'}));
   assert.throws(()=>assertResult({...result,scene:{objects:[{...result.scene.objects[0],shape:'javascript'}]}}));

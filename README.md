@@ -27,7 +27,7 @@ npm run desktop:build
 open build/Clip.app
 ```
 
-OpenAI features use your API billing. Text chat also supports signed-in Codex or Claude accounts. [Setup, permissions and shortcuts →](desktop/README.md)
+OpenAI features use your API billing, including all GPT-6.1 Sol chat and selected-text edits at Ultrafast speed. Other chat models support signed-in Codex or Claude accounts. [Setup, permissions and shortcuts →](desktop/README.md)
 
 ## Try it
 
