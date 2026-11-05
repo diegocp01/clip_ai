@@ -10,19 +10,16 @@ test('text editor rejects empty selection, oversized input and model overrides',
   assert.deepEqual(normalizeEditRequest({action:'rewrite',text:'hello'}),{action:'rewrite',text:'hello',provider:'gpt'});
   assert.equal(normalizeEditRequest({action:'rewrite',text:'hello',provider:'claude'}).provider,'claude');
 });
-test('both editing actions always use Sol high, no tools or visual context',async()=>{
+test('both editing actions use Sol High Ultrafast and preserve the selected text instructions',async()=>{
   for(const action of ['proofread','rewrite']){
     let seen;
-    class FakeCodex{
-      constructor(options){seen={options};}
-      startThread(thread){seen.thread=thread;return {runStreamed:async(input,options)=>{seen.input=input;seen.turn=options;return {events:(async function*(){yield {type:'item.completed',item:{type:'agent_message',text:JSON.stringify({text:'I am ready.'})}};yield {type:'turn.completed',usage:{output_tokens:5}};})()};}};}
-    }
     const controller=new AbortController();
-    const output=await editText({action,text:'i is ready'}, {CodexClass:FakeCodex,signal:controller.signal,model:'wrong',reasoningEffort:'low'});
-    assert.equal(seen.thread.model,'gpt-6.1-sol');assert.equal(seen.thread.modelReasoningEffort,'high');
-    assert.equal(seen.thread.sandboxMode,'read-only');assert.equal(seen.thread.webSearchMode,'disabled');
-    assert.equal(seen.options.config.features.shell_tool,false);assert.equal(seen.options.config.features.apps,false);
-    assert.equal(seen.input.length,1);assert.equal(seen.turn.signal,controller.signal);
+    const output=await editText({action,text:'i is ready'}, {signal:controller.signal,model:'wrong',reasoningEffort:'low',transport:async args=>{
+      seen=args;return {raw:JSON.stringify({text:'I am ready.'}),usage:null,transport:'openai-api',serviceTier:'ultrafast'};
+    }});
+    assert.equal(seen.model,'gpt-6.1-sol');assert.equal(seen.reasoningEffort,'high');assert.equal(seen.tier,'ultrafast');
+    assert.equal(seen.input.length,1);assert.match(seen.input[0].text,/untrusted text to edit/);assert.match(seen.input[0].text,/i is ready/);
+    assert.equal(seen.signal,controller.signal);assert.equal(output.transport,'openai-api');assert.equal(output.serviceTier,'ultrafast');
     assert.equal(output.model,'gpt-6.1-sol');assert.equal(output.reasoningEffort,'high');assert.equal(output.result.text,'I am ready.');
   }
 });

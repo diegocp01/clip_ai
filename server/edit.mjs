@@ -28,7 +28,7 @@ export function editText(request,options={}) {
   if(provider==='claude')return runClaudeStructured({type:'user',message:{role:'user',content:[{type:'text',text:message}]}},{
     ...options,onPreview:undefined,model:CLAUDE_MODEL,effort:'high',status:`${verb} · Claude…`,instructions,schema,validate,
   });
-  return generateStructured({message,tier:'standard',history:[],previous:null,image:null},{
-    ...options,model:'gpt-6.1-sol',reasoningEffort:'high',webSearch:false,status:`${verb} · Sol high…`,instructions,schema,validate,
+  return generateStructured({message,tier:'ultrafast',history:[],previous:null,image:null},{
+    ...options,model:'gpt-6.1-sol',reasoningEffort:'high',webSearch:false,status:`${verb} · Sol high · Ultrafast…`,instructions,schema,validate,
   });
 }

@@ -20,3 +20,17 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run check
+
+  # Compile AppKit code and run native layout/configuration tests on macOS.
+  native:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: xcrun swiftc --version
+      - run: bash scripts/test-island-layout.sh
+      - run: npm run desktop:build

@@ -23,7 +23,11 @@ final class ComparisonPanel: NSObject, NSWindowDelegate {
         window.isReleasedWhenClosed = false
         window.delegate = self
         window.level = .floating
-        window.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
+        // Clip never becomes the active app, and panels hide when their app is inactive by
+        // default, so without this the answers arrived in a window nobody could see.
+        window.hidesOnDeactivate = false
+        // Like captions and drawings, follow the user to whichever Space they are on.
+        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         window.titlebarAppearsTransparent = true
         window.appearance = NSAppearance(named: .darkAqua)
         let glass = NSView(frame: NSRect(x: 0, y: 0, width: 840, height: 300))
@@ -114,6 +118,8 @@ final class ComparisonPanel: NSObject, NSWindowDelegate {
         panel.setFrame(NSRect(x: frame.minX, y: frame.maxY - height, width: frame.width, height: height), display: true)
     }
     var isVisible: Bool { panel?.isVisible == true }
+    // Answers left open on another desktop Space are not on screen here.
+    var isOnScreen: Bool { isVisible && panel?.isOnActiveSpace == true }
     func dismiss() { panel?.close() }
     func stop(_ reason: String = "Cancelled") {
         for provider in pending { statuses[provider]?.stringValue = reason }

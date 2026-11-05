@@ -50,9 +50,11 @@ export const CHAT_INSTRUCTIONS = `You are Clip, a concise helpful chat assistant
 export async function generate(request,options={}) {
   const {model,reasoningEffort,name,defaultTier}=(request.mode==='chat'?chatSettings:drawingSettings)({...request,provider:'gpt'});
   request={...request,tier:request.tier??defaultTier??'fast'};
-  return generateStructured(request,{model,reasoningEffort,status:`Thinking with ${name}…`,transport:request.mode==='chat'?runVisualStream:runAPIVisualStream,...options,onText:request.mode==='chat'?()=>{}:previewEmitter(options.onPreview),instructions:request.mode==='chat'?CHAT_INSTRUCTIONS:request.visualFormat==='3d'?THREE_D_INSTRUCTIONS:VISUAL_INSTRUCTIONS,schema:request.visualFormat==='3d'?threeDResultSchema:resultSchema,validate:request.visualFormat==='3d'?assertThreeDResult:assertResult});
+  return generateStructured(request,{model,reasoningEffort,status:`Thinking with ${name}…`,transport:request.mode==='chat'&&model!=='gpt-6.1-sol'?runVisualStream:runAPIVisualStream,...options,onText:request.mode==='chat'?()=>{}:previewEmitter(options.onPreview),instructions:request.mode==='chat'?CHAT_INSTRUCTIONS:request.visualFormat==='3d'?THREE_D_INSTRUCTIONS:VISUAL_INSTRUCTIONS,schema:request.visualFormat==='3d'?threeDResultSchema:resultSchema,validate:request.visualFormat==='3d'?assertThreeDResult:assertResult});
 }
 export async function generateStructured(request,{signal,onStatus=()=>{},CodexClass=Codex,instructions,schema,validate=x=>x,webSearch=false,model=MODEL,reasoningEffort=REASONING_EFFORT,status='Thinking with GPT-6.1 Terra…',transport=null,onText=()=>{}}={}) {
+  // Sol always uses the API: Codex's signed-in transport cannot request Ultrafast.
+  if(model==='gpt-6.1-sol'){request={...request,tier:'ultrafast'};transport??=runAPIVisualStream;}
   const started=Date.now();
   const runtime=path.join(root,'.runtime');
   await mkdir(runtime,{recursive:true,mode:0o700});
